@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: legiscan-lookup
+    runtime: python
+    plan: starter
+    buildCommand: "true"
+    startCommand: "python3 app.py"
+    envVars:
+      - key: LEGISCAN_API_KEY
+        sync: false
+      - key: LOOKUP_USER
+        sync: false
+      - key: LOOKUP_PASSWORD
+        sync: false

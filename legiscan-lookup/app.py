@@ -12,6 +12,7 @@ that's not set (e.g. you're running this from a non-login shell), it falls
 back to reading the `export LEGISCAN_API_KEY=...` line out of ~/.zshrc.
 """
 
+import base64
 import json
 import os
 import re
@@ -21,8 +22,14 @@ from urllib.parse import urlencode, urlparse, parse_qs
 from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
 
-PORT = 8420
+PORT = int(os.environ.get("PORT", 8420))
 LEGISCAN_BASE = "https://api.legiscan.com/"
+
+# Optional shared-login protection. Leave LOOKUP_USER / LOOKUP_PASSWORD
+# unset for frictionless local use; set both when hosting this somewhere
+# reachable by other people.
+AUTH_USER = os.environ.get("LOOKUP_USER")
+AUTH_PASSWORD = os.environ.get("LOOKUP_PASSWORD")
 
 
 def get_api_key():
@@ -251,6 +258,28 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # keep the terminal quiet
 
+    def _authorized(self):
+        if not AUTH_USER or not AUTH_PASSWORD:
+            return True  # no shared login configured — open access (local use)
+        header = self.headers.get("Authorization", "")
+        if not header.startswith("Basic "):
+            return False
+        try:
+            decoded = base64.b64decode(header[6:]).decode("utf-8")
+            user, _, password = decoded.partition(":")
+        except Exception:
+            return False
+        return user == AUTH_USER and password == AUTH_PASSWORD
+
+    def _require_auth(self):
+        body = b"Login required."
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="LegiScan Bill Lookup"')
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _send_json(self, status, payload):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -260,6 +289,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if not self._authorized():
+            self._require_auth()
+            return
+
         parsed = urlparse(self.path)
 
         if parsed.path == "/":
@@ -295,13 +328,19 @@ def main():
         print("    Set it with: export LEGISCAN_API_KEY=your_key_here")
         print("    (the app will still start, but lookups will fail until it's set)\n")
 
-    server = HTTPServer(("127.0.0.1", PORT), Handler)
-    url = f"http://127.0.0.1:{PORT}"
-    print(f"LegiScan Bill Lookup running at {url}  (Ctrl+C to stop)")
-    try:
-        webbrowser.open(url)
-    except Exception:
-        pass
+    is_hosted = bool(os.environ.get("RENDER") or os.environ.get("PORT_ASSIGNED_BY_HOST"))
+    if (AUTH_USER or AUTH_PASSWORD) and not (AUTH_USER and AUTH_PASSWORD):
+        print("⚠️  Only one of LOOKUP_USER / LOOKUP_PASSWORD is set — both are")
+        print("    required for login protection to take effect. Running open.\n")
+
+    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    url = f"http://127.0.0.1:{PORT}" if not is_hosted else f"port {PORT}"
+    print(f"LegiScan Bill Lookup running on {url}  (Ctrl+C to stop)")
+    if not is_hosted:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
     try:
         server.serve_forever()
     except KeyboardInterrupt:
