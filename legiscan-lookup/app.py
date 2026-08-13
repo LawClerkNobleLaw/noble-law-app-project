@@ -7,6 +7,21 @@ internet access and can call the LegiScan API live, on demand, when you
 search. Start it with `python3 app.py` (or `./start.sh`), then open
 http://localhost:8420 in your browser.
 
+Two separate capabilities live here:
+
+  - Live lookup (the original feature): search a bill by state + number,
+    call LegiScan on the spot, show the result. Nothing is stored.
+  - Stored watch list (added in Phase 1, Session 5): add a bill to a
+    watch list and its current status/sponsors/history get saved to
+    db/billwatch.db. A separate daily job (refresh_watchlist.py) re-checks
+    only the bills on that list, once a day — not the whole session — to
+    stay well under LegiScan's free-tier query cap. See /watchlist.
+
+The actual "talk to LegiScan" logic lives in legiscan_client.py, and the
+database logic lives in db.py — both files are shared with
+refresh_watchlist.py so nothing here is duplicated between the live app
+and the daily job.
+
 The API key is read from the LEGISCAN_API_KEY environment variable. If
 that's not set (e.g. you're running this from a non-login shell), it falls
 back to reading the `export LEGISCAN_API_KEY=...` line out of ~/.zshrc.
@@ -15,15 +30,13 @@ back to reading the `export LEGISCAN_API_KEY=...` line out of ~/.zshrc.
 import base64
 import json
 import os
-import re
-import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlencode, urlparse, parse_qs
-from urllib.request import urlopen
-from urllib.error import URLError, HTTPError
+from urllib.parse import urlparse, parse_qs
+
+import db
+from legiscan_client import get_api_key, lookup_bill, get_bill_detail
 
 PORT = int(os.environ.get("PORT", 8420))
-LEGISCAN_BASE = "https://api.legiscan.com/"
 
 # Optional shared-login protection. Leave LOOKUP_USER / LOOKUP_PASSWORD
 # unset for frictionless local use; set both when hosting this somewhere
@@ -32,86 +45,7 @@ AUTH_USER = os.environ.get("LOOKUP_USER")
 AUTH_PASSWORD = os.environ.get("LOOKUP_PASSWORD")
 
 
-def get_api_key():
-    key = os.environ.get("LEGISCAN_API_KEY")
-    if key:
-        return key
-    # Fall back to parsing it out of ~/.zshrc, in case this was launched
-    # from a shell that never sourced the profile (e.g. double-clicked).
-    zshrc = os.path.expanduser("~/.zshrc")
-    try:
-        with open(zshrc) as f:
-            for line in f:
-                m = re.search(r'export\s+LEGISCAN_API_KEY\s*=\s*"?([^"\s]+)"?', line)
-                if m:
-                    return m.group(1)
-    except FileNotFoundError:
-        pass
-    return None
-
-
-def legiscan_call(op, **params):
-    key = get_api_key()
-    if not key:
-        raise RuntimeError(
-            "No LegiScan API key found. Set LEGISCAN_API_KEY in your "
-            "environment (or ~/.zshrc) and restart this app."
-        )
-    query = {"key": key, "op": op, **params}
-    url = LEGISCAN_BASE + "?" + urlencode(query)
-    with urlopen(url, timeout=15) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def lookup_bill(state, bill_number):
-    state = state.strip().upper()
-    bill_number = bill_number.strip().upper()
-
-    search = legiscan_call("getSearch", state=state, bill=bill_number)
-    if search.get("status") != "OK":
-        raise RuntimeError(f"LegiScan search failed: {search}")
-
-    results = search.get("searchresult", {})
-    match = None
-    for k, v in results.items():
-        if k == "summary":
-            continue
-        match = v
-        break
-    if not match:
-        raise RuntimeError(f"No bill found for {state} {bill_number}.")
-
-    bill_id = match["bill_id"]
-    detail = legiscan_call("getBill", id=bill_id)
-    if detail.get("status") != "OK":
-        raise RuntimeError(f"LegiScan getBill failed: {detail}")
-
-    bill = detail["bill"]
-    return {
-        "state": bill.get("state"),
-        "bill_number": bill.get("bill_number"),
-        "title": bill.get("title"),
-        "description": bill.get("description"),
-        "status_date": bill.get("status_date"),
-        "url": bill.get("url"),
-        "sponsors": [
-            {"name": s.get("name"), "party": s.get("party"), "role": s.get("role")}
-            for s in bill.get("sponsors", [])
-        ],
-        "history": [
-            {"date": h.get("date"), "chamber": h.get("chamber"), "action": h.get("action")}
-            for h in bill.get("history", [])
-        ],
-    }
-
-
-PAGE = """<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LegiScan Bill Lookup</title>
-<style>
+STYLE = """
   :root {
     --ink: #1c2333; --paper: #f4f5f2; --surface: #ffffff;
     --slate: #5a6272; --rule: #dcded3; --accent: #2f5d8a;
@@ -132,6 +66,9 @@ PAGE = """<!doctype html>
     font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
   .wrap { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+  .top-nav { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.25rem; }
+  .top-nav a { color: var(--accent); font-size: 0.85rem; text-decoration: none; }
+  .top-nav a:hover { text-decoration: underline; }
   h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
   .sub { color: var(--slate); margin: 0 0 2rem; font-size: 0.92rem; }
   form {
@@ -149,6 +86,8 @@ PAGE = """<!doctype html>
   }
   button:hover { opacity: 0.9; }
   button:disabled { opacity: 0.5; cursor: default; }
+  button.secondary { background: var(--accent-soft); color: var(--accent); }
+  button.danger { background: var(--error-soft); color: var(--error); }
   #result { display: none; }
   #result.show { display: block; }
   .card {
@@ -159,9 +98,15 @@ PAGE = """<!doctype html>
   .bill-title { font-size: 1.15rem; font-weight: 700; margin: 0 0 0.3rem; }
   .bill-desc { color: var(--slate); font-size: 0.9rem; }
   .bill-link { display: inline-block; margin-top: 0.6rem; font-size: 0.85rem; }
+  .status-badge {
+    display: inline-block; background: var(--accent-soft); color: var(--accent);
+    font-size: 0.75rem; font-weight: 700; padding: 0.2rem 0.55rem; border-radius: 999px;
+    margin-bottom: 0.5rem;
+  }
+  .card-actions { margin-top: 0.9rem; display: flex; gap: 0.5rem; }
   h2.section { font-size: 0.95rem; margin: 1.6rem 0 0.6rem; }
   table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
-  td { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  td, th { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--rule); vertical-align: top; text-align: left; }
   td.date { font-family: ui-monospace, monospace; white-space: nowrap; color: var(--slate); }
   td.chamber {
     white-space: nowrap; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
@@ -179,10 +124,21 @@ PAGE = """<!doctype html>
   #error.show { display: block; }
   #loading { display: none; color: var(--slate); font-size: 0.9rem; }
   #loading.show { display: block; }
-</style>
+  .empty { color: var(--slate); font-size: 0.9rem; }
+"""
+
+
+PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LegiScan Bill Lookup</title>
+<style>{STYLE}</style>
 </head>
 <body>
 <div class="wrap">
+  <div class="top-nav"><span></span><a href="/watchlist">Watch list →</a></div>
   <h1>LegiScan Bill Lookup</h1>
   <p class="sub">Runs locally on this Mac — every search calls the LegiScan API live.</p>
 
@@ -202,8 +158,9 @@ const form = document.getElementById('f');
 const resultEl = document.getElementById('result');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
+let current = null;
 
-form.addEventListener('submit', async (e) => {
+form.addEventListener('submit', async (e) => {{
   e.preventDefault();
   const state = document.getElementById('state').value.trim();
   const bill = document.getElementById('bill').value.trim();
@@ -212,42 +169,143 @@ form.addEventListener('submit', async (e) => {
   errorEl.className = ''; resultEl.className = ''; loadingEl.className = 'show';
   form.querySelector('button').disabled = true;
 
-  try {
-    const res = await fetch(`/api/bill?state=${encodeURIComponent(state)}&bill=${encodeURIComponent(bill)}`);
+  try {{
+    const res = await fetch(`/api/bill?state=${{encodeURIComponent(state)}}&bill=${{encodeURIComponent(bill)}}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Lookup failed');
+    current = data;
     render(data);
-  } catch (err) {
+  }} catch (err) {{
     errorEl.textContent = err.message;
     errorEl.className = 'show';
-  } finally {
+  }} finally {{
     loadingEl.className = '';
     form.querySelector('button').disabled = false;
-  }
-});
+  }}
+}});
 
-function render(d) {
+async function addToWatchlist() {{
+  if (!current) return;
+  const btn = document.getElementById('watch-btn');
+  btn.disabled = true;
+  btn.textContent = 'Adding…';
+  try {{
+    const res = await fetch('/api/watchlist', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ bill_id: current.id }}),
+    }});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not add to watch list');
+    btn.textContent = '✓ On watch list';
+  }} catch (err) {{
+    btn.disabled = false;
+    btn.textContent = 'Add to watch list';
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+function render(d) {{
   const sponsors = (d.sponsors || []).map(s =>
-    `<span class="sponsor">${s.name}${s.party ? ' (' + s.party + ')' : ''}</span>`
+    `<span class="sponsor">${{s.name}}${{s.party ? ' (' + s.party + ')' : ''}}</span>`
   ).join('');
 
   const history = (d.history || []).map(h =>
-    `<tr><td class="date">${h.date || ''}</td><td class="chamber">${h.chamber || ''}</td><td>${h.action || ''}</td></tr>`
+    `<tr><td class="date">${{h.date || ''}}</td><td class="chamber">${{h.chamber || ''}}</td><td>${{h.action || ''}}</td></tr>`
   ).join('');
 
   resultEl.innerHTML = `
     <div class="card">
-      <div class="bill-id">${d.state} ${d.bill_number}</div>
-      <div class="bill-title">${d.title || ''}</div>
-      <div class="bill-desc">${d.description || ''}</div>
-      ${d.url ? `<a class="bill-link" href="${d.url}" target="_blank" rel="noopener">View on LegiScan →</a>` : ''}
+      <div class="bill-id">${{d.state}} ${{d.bill_number}}</div>
+      ${{d.status_label ? `<div class="status-badge">${{d.status_label}}</div>` : ''}}
+      <div class="bill-title">${{d.title || ''}}</div>
+      <div class="bill-desc">${{d.description || ''}}</div>
+      ${{d.url ? `<a class="bill-link" href="${{d.url}}" target="_blank" rel="noopener">View on LegiScan →</a>` : ''}}
+      <div class="card-actions">
+        <button id="watch-btn" class="secondary" onclick="addToWatchlist()">Add to watch list</button>
+      </div>
     </div>
-    ${sponsors ? `<h2 class="section">Sponsors</h2><div class="sponsor-list">${sponsors}</div>` : ''}
+    ${{sponsors ? `<h2 class="section">Sponsors</h2><div class="sponsor-list">${{sponsors}}</div>` : ''}}
     <h2 class="section">History</h2>
-    <table>${history || '<tr><td>No history available.</td></tr>'}</table>
+    <table>${{history || '<tr><td>No history available.</td></tr>'}}</table>
   `;
   resultEl.className = 'show';
-}
+}}
+</script>
+</body>
+</html>
+"""
+
+
+WATCHLIST_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watch list — LegiScan Bill Lookup</title>
+<style>{STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top-nav"><a href="/">← Lookup</a><span></span></div>
+  <h1>Watch list</h1>
+  <p class="sub">Bills here are stored in the database and re-checked once a day, not looked up live.</p>
+  <div id="error"></div>
+  <div id="list"></div>
+</div>
+
+<script>
+const listEl = document.getElementById('list');
+const errorEl = document.getElementById('error');
+
+async function load() {{
+  try {{
+    const res = await fetch('/api/watchlist');
+    const rows = await res.json();
+    render(rows);
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+async function remove(billId) {{
+  try {{
+    const res = await fetch(`/api/watchlist?bill_id=${{billId}}`, {{ method: 'DELETE' }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not remove bill');
+    }}
+    load();
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+function render(rows) {{
+  if (!rows.length) {{
+    listEl.innerHTML = '<p class="empty">Nothing watched yet — look up a bill and add it from there.</p>';
+    return;
+  }}
+  listEl.innerHTML = `
+    <table>
+      <tr><th>Bill</th><th>Title</th><th>Status</th><th>Last checked</th><th></th></tr>
+      ${{rows.map(r => `
+        <tr>
+          <td class="chamber">${{r.state}} ${{r.bill_number}}</td>
+          <td>${{r.title || ''}}${{r.url ? ` — <a href="${{r.url}}" target="_blank" rel="noopener">view</a>` : ''}}</td>
+          <td>${{r.status_label || ''}}</td>
+          <td class="date">${{(r.last_checked_at || '').replace('T', ' ').slice(0, 16)}}</td>
+          <td><button class="danger" onclick="remove(${{r.bill_id}})">Remove</button></td>
+        </tr>
+      `).join('')}}
+    </table>
+  `;
+}}
+
+load();
 </script>
 </body>
 </html>
@@ -288,24 +346,37 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_html(self, status, html):
+        body = html.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_json_body(self):
+        length = int(self.headers.get("Content-Length", 0))
+        if not length:
+            return {}
+        return json.loads(self.rfile.read(length).decode("utf-8"))
+
     def do_GET(self):
         if not self._authorized():
             self._require_auth()
             return
 
         parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
 
         if parsed.path == "/":
-            body = PAGE.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_html(200, PAGE)
+            return
+
+        if parsed.path == "/watchlist":
+            self._send_html(200, WATCHLIST_PAGE)
             return
 
         if parsed.path == "/api/bill":
-            qs = parse_qs(parsed.query)
             state = (qs.get("state") or [""])[0]
             bill = (qs.get("bill") or [""])[0]
             if not state or not bill:
@@ -318,11 +389,86 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(502, {"error": str(e)})
             return
 
+        if parsed.path == "/api/watchlist":
+            conn = db.get_connection()
+            try:
+                self._send_json(200, db.list_watchlist(conn))
+            finally:
+                conn.close()
+            return
+
         self.send_response(404)
         self.end_headers()
 
+    def do_POST(self):
+        if not self._authorized():
+            self._require_auth()
+            return
+
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/watchlist":
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        try:
+            body = self._read_json_body()
+        except (ValueError, json.JSONDecodeError):
+            self._send_json(400, {"error": "Invalid JSON body."})
+            return
+
+        bill_id = body.get("bill_id")
+        if not bill_id:
+            self._send_json(400, {"error": "Missing bill_id."})
+            return
+
+        try:
+            # Re-fetch fresh from LegiScan rather than trusting whatever
+            # the client already had lying around, so what gets stored is
+            # accurate at the moment it's added.
+            bill = get_bill_detail(bill_id)
+        except Exception as e:
+            self._send_json(502, {"error": str(e)})
+            return
+
+        conn = db.get_connection()
+        try:
+            db.upsert_bill(conn, bill)
+            db.add_to_watchlist(conn, bill_id)
+            conn.commit()
+            self._send_json(200, db.list_watchlist(conn))
+        finally:
+            conn.close()
+
+    def do_DELETE(self):
+        if not self._authorized():
+            self._require_auth()
+            return
+
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        if parsed.path != "/api/watchlist":
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        bill_id = (qs.get("bill_id") or [""])[0]
+        if not bill_id:
+            self._send_json(400, {"error": "Missing bill_id parameter."})
+            return
+
+        conn = db.get_connection()
+        try:
+            db.remove_from_watchlist(conn, bill_id)
+            conn.commit()
+            self._send_json(200, db.list_watchlist(conn))
+        finally:
+            conn.close()
+
 
 def main():
+    db.init_db()
+
     if not get_api_key():
         print("⚠️  No LEGISCAN_API_KEY found in your environment or ~/.zshrc.")
         print("    Set it with: export LEGISCAN_API_KEY=your_key_here")
@@ -338,6 +484,7 @@ def main():
     print(f"LegiScan Bill Lookup running on {url}  (Ctrl+C to stop)")
     if not is_hosted:
         try:
+            import webbrowser
             webbrowser.open(url)
         except Exception:
             pass

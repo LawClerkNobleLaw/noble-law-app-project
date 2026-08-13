@@ -1,0 +1,5 @@
+# Local, per-machine runtime data — not part of the app's source.
+legiscan-lookup/db/billwatch.db
+legiscan-lookup/logs/*.log
+__pycache__/
+*.pyc
