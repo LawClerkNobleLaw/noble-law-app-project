@@ -46,6 +46,35 @@ CREATE TABLE IF NOT EXISTS bill_sponsors (
   role      TEXT
 );
 
+-- LegiScan's own amendment documents for a bill — distinct from
+-- bill_status_history's procedural events. Added for the per-bill
+-- "action report" page.
+CREATE TABLE IF NOT EXISTS bill_amendments (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  bill_id       INTEGER NOT NULL REFERENCES bills(id),
+  amendment_id  INTEGER,           -- LegiScan's own ID, if present
+  chamber       TEXT,
+  date          TEXT,
+  title         TEXT,
+  description   TEXT,
+  adopted       INTEGER,           -- 0/1
+  url           TEXT
+);
+
+-- LegiScan's `calendar` array — scheduled committee/floor events for a
+-- bill. Rows aren't limited to future dates; "upcoming" is an
+-- application-layer filter (date >= today) applied when the action
+-- report reads this table, so past hearings still stay on record.
+CREATE TABLE IF NOT EXISTS bill_hearings (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  bill_id      INTEGER NOT NULL REFERENCES bills(id),
+  event_type   TEXT,
+  date         TEXT,
+  time         TEXT,
+  location     TEXT,
+  description  TEXT
+);
+
 CREATE TABLE IF NOT EXISTS votes (
   id           INTEGER PRIMARY KEY,      -- LegiScan's roll_call_id
   bill_id      INTEGER NOT NULL REFERENCES bills(id),
@@ -195,4 +224,46 @@ CREATE TABLE IF NOT EXISTS flagged_bills (
   bill_id    INTEGER NOT NULL REFERENCES bills(id),
   flagged_at TEXT,
   UNIQUE(user_id, bill_id)
+);
+
+-- A user's own clients — one-to-many (unlike lobbyist_profiles, which
+-- is one-to-one with a user). Field names/order follow CAL-ACCESS Forms
+-- 602 (Lobbying Firm Activity Authorization — the client's own
+-- description of their industry/interests) and 603 (Lobbyist Employer
+-- Registration — name/address), same reasoning as lobbyist_profiles:
+-- language a lobbyist already recognizes from the real state forms.
+-- existing_filer_id is deliberately unused by any matching logic yet —
+-- it's stored now so a future feature can cross-check it against the
+-- filer_id already loaded into lobbying_entities by calaccess-pipeline,
+-- not built as part of this table.
+CREATE TABLE IF NOT EXISTS clients (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id            INTEGER NOT NULL REFERENCES users(id),
+  name               TEXT NOT NULL,        -- Form 603: client/employer name
+  bus_addr1          TEXT, bus_city TEXT, bus_st TEXT, bus_zip4 TEXT,  -- Form 603-style business address
+  interests          TEXT,                 -- Form 602: description of the client's industry/interests
+  existing_filer_id  TEXT,                 -- optional — for future cross-check against lobbying_entities
+  created_at         TEXT
+);
+
+-- Which of a user's own clients a flagged bill is being tracked for.
+-- Many-to-many on purpose — a bill can matter to more than one client.
+-- Both bill_id and client_id are scoped to user_id at the application
+-- layer (db.link_bill_to_client checks the client is actually theirs
+-- and the bill is actually one they've flagged before inserting), not
+-- just left to the foreign keys, since SQLite FKs alone can't express
+-- "these three all belong to the same user."
+-- position is the client's stance on this bill: 'support' | 'oppose' |
+-- 'watch' — validated in db.link_bill_to_client, not via a CHECK
+-- constraint here, same style as registrant_type above. Defaults to
+-- 'watch' (the most neutral stance) when a bill is first assigned to a
+-- client; changeable afterward through the same function/endpoint.
+CREATE TABLE IF NOT EXISTS bill_client_links (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id   INTEGER NOT NULL REFERENCES users(id),
+  bill_id   INTEGER NOT NULL REFERENCES bills(id),
+  client_id INTEGER NOT NULL REFERENCES clients(id),
+  position  TEXT NOT NULL DEFAULT 'watch',
+  linked_at TEXT,
+  UNIQUE(user_id, bill_id, client_id)
 );

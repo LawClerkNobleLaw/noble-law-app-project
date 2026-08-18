@@ -51,6 +51,17 @@ Things that live in this app:
   CAL-ACCESS Form 601-style profile step), `/login`, `/profile`. Layered
   inside the shared login below, not a replacement for it. Real
   password hashing lives in `accounts.py`.
+- **Clients** — `/clients` lets each signed-in user keep their own list
+  of clients (Form 602/603-style: name, business address, industry/
+  interests, an optional CAL-ACCESS filer ID for future cross-checking).
+  On `/flagged`, any flagged bill can be assigned to one or more of a
+  user's clients, each with its own position — Support, Oppose, or
+  Watch — changeable at any time from the same dropdown.
+- **Action report** — `/report?bill_id=...` (linked from `/flagged`)
+  rolls up everything about one bill in one place: current status, full
+  status history, amendment history, upcoming hearings, and — if it's
+  assigned to one of the signed-in user's clients — that client's name
+  and position.
 - **CAL-ACCESS lobbying data** — a separate pipeline in the sibling
   `calaccess-pipeline/` folder downloads California's daily lobbying
   disclosure export and loads it into the same database

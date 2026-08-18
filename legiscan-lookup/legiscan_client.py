@@ -83,6 +83,33 @@ def shape_bill(bill):
             {"date": h.get("date"), "chamber": h.get("chamber"), "action": h.get("action")}
             for h in bill.get("history", [])
         ],
+        # LegiScan's own amendment documents for this bill — separate from
+        # `history` (which is status/procedural events, not the amendment
+        # text itself).
+        "amendments": [
+            {
+                "amendment_id": a.get("amendment_id"),
+                "chamber": a.get("chamber"),
+                "date": a.get("date"),
+                "title": a.get("title") or a.get("description"),
+                "description": a.get("description"),
+                "adopted": bool(a.get("adopted")),
+                "url": a.get("state_link") or a.get("url"),
+            }
+            for a in bill.get("amendments", [])
+        ],
+        # LegiScan's `calendar` array — scheduled committee/floor events,
+        # which is where hearing dates actually live.
+        "hearings": [
+            {
+                "event_type": c.get("type"),
+                "date": c.get("date"),
+                "time": c.get("time"),
+                "location": c.get("location"),
+                "description": c.get("description"),
+            }
+            for c in bill.get("calendar", [])
+        ],
     }
 
 

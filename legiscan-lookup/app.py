@@ -136,10 +136,11 @@ STYLE = """
   form {
     display: flex; gap: 0.6rem; margin-bottom: 2rem; flex-wrap: wrap;
   }
-  input {
+  input, select, textarea {
     font: inherit; padding: 0.6rem 0.75rem; border: 1px solid var(--rule);
     border-radius: 8px; background: var(--surface); color: var(--ink);
   }
+  select { cursor: pointer; }
   input#bill { flex: 1; min-width: 8rem; }
   button {
     font: inherit; font-weight: 600; padding: 0.6rem 1.1rem; border: none;
@@ -149,6 +150,17 @@ STYLE = """
   button:disabled { opacity: 0.5; cursor: default; }
   button.secondary { background: var(--accent-soft); color: var(--accent); }
   button.danger { background: var(--error-soft); color: var(--error); }
+  /* Same button look for plain <a> links used as actions (e.g. "View"
+     on LegiScan, "Report" to the action-report page) — button's base
+     rule only targets <button>, so links need their own copy of the
+     same properties plus the anchor-specific reset. */
+  a.secondary, a.danger {
+    display: inline-block; font: inherit; font-weight: 600;
+    padding: 0.6rem 1.1rem; border-radius: 8px; text-decoration: none;
+  }
+  a.secondary { background: var(--accent-soft); color: var(--accent); }
+  a.danger { background: var(--error-soft); color: var(--error); }
+  a.secondary:hover, a.danger:hover { opacity: 0.9; }
   #result { display: none; }
   #result.show { display: block; }
   .card {
@@ -190,6 +202,17 @@ STYLE = """
   tr.row-link:hover { background: var(--accent-soft); }
   .tag { display: inline-block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
     color: var(--slate); background: var(--accent-soft); padding: 0.1rem 0.5rem; border-radius: 999px; }
+  /* A client's stance on a bill — same three values everywhere (the
+     /flagged position selector and the /report page's read-only badge),
+     colored consistently: support=good, oppose=error, watch=neutral. */
+  .position-badge { display: inline-block; font-size: 0.75rem; font-weight: 700;
+    padding: 0.2rem 0.6rem; border-radius: 999px; }
+  .position-badge.support { background: var(--good-soft); color: var(--good); }
+  .position-badge.oppose { background: var(--error-soft); color: var(--error); }
+  .position-badge.watch { background: var(--accent-soft); color: var(--accent); }
+  select.position-select.support { border-color: var(--good); color: var(--good); }
+  select.position-select.oppose { border-color: var(--error); color: var(--error); }
+  select.position-select.watch { border-color: var(--accent); color: var(--accent); }
   .account-menu { position: relative; font-size: 0.85rem; }
   .account-menu summary { cursor: pointer; color: var(--accent); list-style: none; }
   .account-menu summary::-webkit-details-marker { display: none; }
@@ -248,6 +271,7 @@ ACCOUNT_MENU_SCRIPT = """
             <div class="account-menu-email">Signed in as ${me.email}</div>
             <a href="/profile">View profile</a>
             <a href="/flagged">My flagged bills</a>
+            <a href="/clients">Clients</a>
             <button type="button" id="sign-out-btn">Sign out</button>
           </div>
         </details>
@@ -892,15 +916,17 @@ FLAGGED_PAGE = f"""<!doctype html>
 <script>
 const listEl = document.getElementById('list');
 const errorEl = document.getElementById('error');
+let allClients = [];
 
 async function load() {{
   try {{
-    const res = await fetch('/api/flagged');
-    if (res.status === 401) {{
+    const [flaggedRes, clientsRes] = await Promise.all([fetch('/api/flagged'), fetch('/api/clients')]);
+    if (flaggedRes.status === 401) {{
       window.location.href = '/login';
       return;
     }}
-    const rows = await res.json();
+    allClients = await clientsRes.json();
+    const rows = await flaggedRes.json();
     render(rows);
   }} catch (err) {{
     errorEl.textContent = err.message;
@@ -922,6 +948,93 @@ async function unflag(billId) {{
   }}
 }}
 
+async function assignClient(billId, selectEl) {{
+  const clientId = selectEl.value;
+  if (!clientId) return;
+  try {{
+    const res = await fetch('/api/bill-clients', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ bill_id: billId, client_id: Number(clientId) }}),
+    }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not assign client');
+    }}
+    load();
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+async function unassignClient(billId, clientId) {{
+  try {{
+    const res = await fetch(`/api/bill-clients?bill_id=${{billId}}&client_id=${{clientId}}`, {{ method: 'DELETE' }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not remove assignment');
+    }}
+    load();
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+const POSITIONS = [['watch', 'Watch'], ['support', 'Support'], ['oppose', 'Oppose']];
+
+async function setPosition(billId, clientId, position) {{
+  try {{
+    const res = await fetch('/api/bill-clients', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ bill_id: billId, client_id: clientId, position }}),
+    }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not update position');
+    }}
+    load();
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+function positionSelect(r, c) {{
+  const position = c.position || 'watch';
+  const options = POSITIONS.map(([value, label]) =>
+    `<option value="${{value}}" ${{position === value ? 'selected' : ''}}>${{label}}</option>`
+  ).join('');
+  return `<select class="position-select ${{position}}" onchange="setPosition(${{r.bill_id}}, ${{c.id}}, this.value); this.className = 'position-select ' + this.value" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${{options}}</select>`;
+}}
+
+function clientCell(r) {{
+  const chips = (r.assigned_clients || []).map(c => `
+    <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem">
+      <span>${{c.name}}</span>
+      ${{positionSelect(r, c)}}
+      <a href="#" onclick="event.preventDefault(); unassignClient(${{r.bill_id}}, ${{c.id}})" style="color:var(--slate)" title="Remove client">×</a>
+    </div>
+  `).join('');
+
+  const assignedIds = new Set((r.assigned_clients || []).map(c => c.id));
+  const available = allClients.filter(c => !assignedIds.has(c.id));
+
+  if (!allClients.length) {{
+    return chips + '<div class="empty">No clients yet — <a href="/clients">add one</a>.</div>';
+  }}
+  const options = available.map(c => `<option value="${{c.id}}">${{c.name}}</option>`).join('');
+  return `
+    <div>${{chips}}</div>
+    <select onchange="assignClient(${{r.bill_id}}, this); this.value=''" style="margin-top:0.2rem;font-size:0.8rem;padding:0.3rem 0.4rem">
+      <option value="">${{available.length ? 'Assign to client…' : 'All clients assigned'}}</option>
+      ${{options}}
+    </select>
+  `;
+}}
+
 function render(rows) {{
   if (!rows.length) {{
     listEl.innerHTML = '<p class="empty">Nothing flagged yet — look up a bill and click "Flag this bill" from there.</p>';
@@ -929,17 +1042,299 @@ function render(rows) {{
   }}
   listEl.innerHTML = `
     <table>
-      <tr><th>Bill</th><th>Title</th><th>Status</th><th>Last checked</th><th></th></tr>
+      <tr><th>Bill</th><th>Title</th><th>Status</th><th>Last checked</th><th>Client</th><th></th></tr>
       ${{rows.map(r => `
         <tr>
-          <td class="chamber">${{r.state}} ${{r.bill_number}}</td>
-          <td>${{r.title || ''}}${{r.url ? ` — <a href="${{r.url}}" target="_blank" rel="noopener">view</a>` : ''}}</td>
+          <td class="chamber">
+            ${{r.state}} ${{r.bill_number}}
+            <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.4rem;text-transform:none;font-weight:400;font-size:0.85rem">
+              ${{r.url ? `<a class="secondary" href="${{r.url}}" target="_blank" rel="noopener">View</a>` : ''}}
+              <a class="secondary" href="/report?bill_id=${{r.bill_id}}">Report</a>
+            </div>
+          </td>
+          <td>${{r.title || ''}}</td>
           <td>${{r.status_label || ''}}</td>
           <td class="date">${{(r.last_checked_at || '').replace('T', ' ').slice(0, 16)}}</td>
+          <td>${{clientCell(r)}}</td>
           <td><button class="danger" onclick="unflag(${{r.bill_id}})">Unflag</button></td>
         </tr>
       `).join('')}}
     </table>
+  `;
+}}
+
+load();
+</script>
+</body>
+</html>
+"""
+
+
+CLIENTS_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clients — Bill Search</title>
+<style>{STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+  {top_nav("/clients")}
+  <h1>Clients</h1>
+  <p class="sub">Modeled on CAL-ACCESS Forms 602/603, tied to your account.</p>
+
+  <button type="button" id="add-client-btn">+ Add client</button>
+
+  <form id="f" style="display:none;margin-top:1rem">
+    <label style="flex:1 1 100%">
+      <div class="sub" style="margin:0 0 0.3rem">Client / employer name</div>
+      <input id="name" required style="width:100%">
+    </label>
+
+    <div style="flex:1 1 100%">
+      <h2 class="section" style="margin-top:1.2rem">Business address</h2>
+    </div>
+    <input id="bus_addr1" placeholder="Street address" style="flex:1 1 100%">
+    <input id="bus_city" placeholder="City" style="flex:2">
+    <input id="bus_st" placeholder="State" maxlength="2" style="flex:1;text-transform:uppercase">
+    <input id="bus_zip4" placeholder="ZIP" style="flex:1">
+
+    <label style="flex:1 1 100%">
+      <div class="sub" style="margin:1.2rem 0 0.3rem">Description of the client's industry or interests</div>
+      <textarea id="interests" rows="2" style="width:100%"></textarea>
+    </label>
+
+    <label style="flex:1 1 100%">
+      <div class="sub" style="margin:1.2rem 0 0.3rem">California Secretary of State filer ID <span style="font-weight:400">(optional — if you know it)</span></div>
+      <input id="existing_filer_id" placeholder="e.g. 1486088" style="width:100%">
+    </label>
+
+    <button type="submit" style="margin-top:1rem">Add client →</button>
+    <button type="button" id="cancel-client-btn" class="secondary" style="margin-top:1rem">Cancel</button>
+  </form>
+
+  <div id="loading">Saving…</div>
+  <div id="error"></div>
+
+  <h2 class="section" style="margin-top:2rem">Your clients</h2>
+  <div id="list"></div>
+</div>
+
+<script>
+const form = document.getElementById('f');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+const listEl = document.getElementById('list');
+const addBtn = document.getElementById('add-client-btn');
+const cancelBtn = document.getElementById('cancel-client-btn');
+
+function showForm() {{
+  form.style.display = 'flex';
+  addBtn.style.display = 'none';
+}}
+
+function hideForm() {{
+  form.style.display = 'none';
+  addBtn.style.display = '';
+  form.reset();
+  errorEl.className = '';
+}}
+
+addBtn.addEventListener('click', showForm);
+cancelBtn.addEventListener('click', hideForm);
+
+form.addEventListener('submit', async (e) => {{
+  e.preventDefault();
+  errorEl.className = ''; loadingEl.className = 'show';
+  form.querySelector('button[type="submit"]').disabled = true;
+
+  try {{
+    const res = await fetch('/api/clients', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{
+        name: document.getElementById('name').value.trim(),
+        bus_addr1: document.getElementById('bus_addr1').value.trim(),
+        bus_city: document.getElementById('bus_city').value.trim(),
+        bus_st: document.getElementById('bus_st').value.trim(),
+        bus_zip4: document.getElementById('bus_zip4').value.trim(),
+        interests: document.getElementById('interests').value.trim(),
+        existing_filer_id: document.getElementById('existing_filer_id').value.trim(),
+      }}),
+    }});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not add client');
+    hideForm();
+    load();
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }} finally {{
+    loadingEl.className = '';
+    form.querySelector('button[type="submit"]').disabled = false;
+  }}
+}});
+
+async function removeClient(id) {{
+  try {{
+    const res = await fetch(`/api/clients?id=${{id}}`, {{ method: 'DELETE' }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not remove client');
+    }}
+    load();
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+async function load() {{
+  try {{
+    const res = await fetch('/api/clients');
+    if (res.status === 401) {{
+      window.location.href = '/login';
+      return;
+    }}
+    const rows = await res.json();
+    render(rows);
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+function render(rows) {{
+  if (!rows.length) {{
+    listEl.innerHTML = '<p class="empty">No clients added yet — use the form above.</p>';
+    return;
+  }}
+  listEl.innerHTML = `
+    <table>
+      <tr><th>Name</th><th>Business address</th><th>Industry / interests</th><th>Filer ID</th><th></th></tr>
+      ${{rows.map(c => `
+        <tr>
+          <td>${{c.name}}</td>
+          <td>${{[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', ')}}</td>
+          <td>${{c.interests || ''}}</td>
+          <td>${{c.existing_filer_id || ''}}</td>
+          <td><button class="danger" onclick="removeClient(${{c.id}})">Remove</button></td>
+        </tr>
+      `).join('')}}
+    </table>
+  `;
+}}
+
+load();
+</script>
+</body>
+</html>
+"""
+
+
+# Action report — everything about one bill in one place: current
+# status, full status history, amendment history, upcoming hearings,
+# and (if this signed-in user has assigned it to one of their own
+# clients) that client's name and current position. Reached via
+# ?bill_id=... — e.g. linked from a "Report" link on /flagged — rather
+# than being a page anyone navigates to on its own.
+REPORT_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Action Report — Bill Search</title>
+<style>{STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+  {top_nav("/report")}
+  <div id="error"></div>
+  <div id="report"></div>
+</div>
+
+<script>
+const reportEl = document.getElementById('report');
+const errorEl = document.getElementById('error');
+const billId = new URLSearchParams(window.location.search).get('bill_id');
+const POSITION_LABELS = {{ support: 'Support', oppose: 'Oppose', watch: 'Watch' }};
+
+async function load() {{
+  if (!billId) {{
+    errorEl.textContent = 'Missing bill_id in the URL.';
+    errorEl.className = 'show';
+    return;
+  }}
+  try {{
+    const res = await fetch(`/api/report?bill_id=${{billId}}`);
+    if (res.status === 401) {{ window.location.href = '/login'; return; }}
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load report');
+    render(data);
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+function render(r) {{
+  const historyRows = (r.history || []).map(h => `
+    <tr><td class="date">${{h.date || ''}}</td><td class="chamber">${{h.chamber || ''}}</td><td>${{h.action || ''}}</td></tr>
+  `).join('');
+
+  const amendmentRows = (r.amendments || []).map(a => `
+    <tr>
+      <td class="date">${{a.date || ''}}</td>
+      <td class="chamber">${{a.chamber || ''}}</td>
+      <td>${{a.title || a.description || ''}}${{a.adopted ? ' <span class="tag">Adopted</span>' : ''}}${{a.url ? ` — <a href="${{a.url}}" target="_blank" rel="noopener">view</a>` : ''}}</td>
+    </tr>
+  `).join('');
+
+  const hearingRows = (r.upcoming_hearings || []).map(h => `
+    <tr>
+      <td class="date">${{h.date || ''}}${{h.time ? ' ' + h.time : ''}}</td>
+      <td class="chamber">${{h.event_type || ''}}</td>
+      <td>${{h.description || ''}}${{h.location ? ` — ${{h.location}}` : ''}}</td>
+    </tr>
+  `).join('');
+
+  const clientBadges = (r.assigned_clients || []).map(c => {{
+    const position = c.position || 'watch';
+    return `
+      <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem">
+        <span>${{c.name}}</span>
+        <span class="position-badge ${{position}}">${{POSITION_LABELS[position] || position}}</span>
+      </div>
+    `;
+  }}).join('');
+
+  reportEl.innerHTML = `
+    <div class="card">
+      <div class="bill-id">${{r.state}} ${{r.bill_number}}</div>
+      <div class="status-badge">${{r.status_label || 'Unknown'}}${{r.status_date ? ` — as of ${{r.status_date}}` : ''}}</div>
+      <div class="bill-title">${{r.title || ''}}</div>
+      ${{r.description ? `<div class="bill-desc">${{r.description}}</div>` : ''}}
+      ${{r.url ? `<a class="bill-link" href="${{r.url}}" target="_blank" rel="noopener">View on LegiScan →</a>` : ''}}
+    </div>
+
+    <h2 class="section">Assigned client${{(r.assigned_clients || []).length === 1 ? '' : 's'}}</h2>
+    ${{clientBadges || '<p class="empty">Not currently assigned to any of your clients.</p>'}}
+
+    <h2 class="section">Status history</h2>
+    ${{historyRows
+      ? `<table><tr><th>Date</th><th>Chamber</th><th>Action</th></tr>${{historyRows}}</table>`
+      : '<p class="empty">No status history recorded yet.</p>'}}
+
+    <h2 class="section">Amendment history</h2>
+    ${{amendmentRows
+      ? `<table><tr><th>Date</th><th>Chamber</th><th>Amendment</th></tr>${{amendmentRows}}</table>`
+      : '<p class="empty">No amendments recorded.</p>'}}
+
+    <h2 class="section">Upcoming hearings</h2>
+    ${{hearingRows
+      ? `<table><tr><th>When</th><th>Type</th><th>Details</th></tr>${{hearingRows}}</table>`
+      : '<p class="empty">No upcoming hearings scheduled.</p>'}}
   `;
 }}
 
@@ -1290,6 +1685,77 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        if parsed.path == "/clients":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+            finally:
+                conn.close()
+            if not user_id:
+                self.send_response(302)
+                self.send_header("Location", "/login")
+                self.end_headers()
+                return
+            self._send_html(200, CLIENTS_PAGE)
+            return
+
+        if parsed.path == "/api/clients":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Not logged in."})
+                    return
+                self._send_json(200, db.list_clients(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/report":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+            finally:
+                conn.close()
+            if not user_id:
+                self.send_response(302)
+                self.send_header("Location", "/login")
+                self.end_headers()
+                return
+            self._send_html(200, REPORT_PAGE)
+            return
+
+        if parsed.path == "/api/report":
+            bill_id = (qs.get("bill_id") or [""])[0]
+            if not bill_id:
+                self._send_json(400, {"error": "Missing bill_id parameter."})
+                return
+            try:
+                # Cast now, not left as the raw query-string value —
+                # get_bill_report keys its client-assignment lookup off
+                # bill_id values that come back from SQLite as integers,
+                # and a str/int mismatch there silently returns "no
+                # client assigned" even when one is. Found by testing
+                # this against a real assigned bill, not assumed.
+                bill_id = int(bill_id)
+            except ValueError:
+                self._send_json(400, {"error": "bill_id must be a number."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Not logged in."})
+                    return
+                report = db.get_bill_report(conn, user_id, bill_id)
+                if not report:
+                    self._send_json(404, {"error": "No bill found with that ID."})
+                    return
+                self._send_json(200, report)
+            finally:
+                conn.close()
+            return
+
         if parsed.path == "/api/me":
             conn = db.get_connection()
             try:
@@ -1492,6 +1958,58 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        if parsed.path == "/api/clients":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            if not (body.get("name") or "").strip():
+                self._send_json(400, {"error": "Client / employer name is required."})
+                return
+
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Sign in to add clients."})
+                    return
+                db.create_client(conn, user_id, body)
+                conn.commit()
+                self._send_json(200, db.list_clients(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/bill-clients":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            bill_id, client_id = body.get("bill_id"), body.get("client_id")
+            if not bill_id or not client_id:
+                self._send_json(400, {"error": "Missing bill_id or client_id."})
+                return
+
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Sign in to assign clients."})
+                    return
+                position = body.get("position") or "watch"
+                try:
+                    db.link_bill_to_client(conn, user_id, bill_id, client_id, position)
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                conn.commit()
+                self._send_json(200, db.list_flagged_bills(conn, user_id))
+            finally:
+                conn.close()
+            return
+
         self.send_response(404)
         self.end_headers()
 
@@ -1515,6 +2033,43 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(401, {"error": "Sign in to manage flagged bills."})
                     return
                 db.unflag_bill(conn, user_id, bill_id)
+                conn.commit()
+                self._send_json(200, db.list_flagged_bills(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/clients":
+            client_id = (qs.get("id") or [""])[0]
+            if not client_id:
+                self._send_json(400, {"error": "Missing id parameter."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Sign in to manage clients."})
+                    return
+                db.delete_client(conn, user_id, client_id)
+                conn.commit()
+                self._send_json(200, db.list_clients(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/bill-clients":
+            bill_id = (qs.get("bill_id") or [""])[0]
+            client_id = (qs.get("client_id") or [""])[0]
+            if not bill_id or not client_id:
+                self._send_json(400, {"error": "Missing bill_id or client_id parameter."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Sign in to manage client assignments."})
+                    return
+                db.unlink_bill_from_client(conn, user_id, bill_id, client_id)
                 conn.commit()
                 self._send_json(200, db.list_flagged_bills(conn, user_id))
             finally:
