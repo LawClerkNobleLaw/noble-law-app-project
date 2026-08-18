@@ -138,3 +138,45 @@ CREATE TABLE IF NOT EXISTS client_interest_entities (
   entity_id   INTEGER REFERENCES lobbying_entities(id),
   PRIMARY KEY (interest_id, entity_id)
 );
+
+-- Individual accounts, layered INSIDE the site's existing shared
+-- LOOKUP_USER/PASSWORD login (see app.py's module docstring) — that
+-- outer login still gates the whole site; this is a second, personal
+-- layer inside it. password_hash is never the plain password — see
+-- accounts.py for the PBKDF2 scheme.
+CREATE TABLE IF NOT EXISTS users (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  email          TEXT NOT NULL UNIQUE,
+  password_hash  TEXT NOT NULL,
+  created_at     TEXT
+);
+
+-- One row per logged-in browser session. token is a random value set as
+-- an HttpOnly cookie — looking it up here is how a request is tied back
+-- to a user, instead of trusting anything the client claims about itself.
+CREATE TABLE IF NOT EXISTS sessions (
+  token      TEXT PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT
+);
+
+-- Sign-up step 2. Field names and order follow CAL-ACCESS Form 601 (the
+-- Lobbying Firm Registration Statement) — see reference_guide.md and
+-- calaccess-pipeline's own CVR_REGISTRATION_CD handling — so the
+-- language matches what a lobbyist already recognizes from the real
+-- state form, even though this collects it directly from the user
+-- rather than pulling it from the daily CAL-ACCESS export (which is
+-- why full street addresses are collectible here but aren't available
+-- in lobbying_entities — the daily export only has city/state/zip).
+CREATE TABLE IF NOT EXISTS lobbyist_profiles (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id            INTEGER NOT NULL UNIQUE REFERENCES users(id),
+  legal_name         TEXT NOT NULL,        -- Form 601: FILER_NAML — "legal name of firm or individual"
+  registrant_type    TEXT NOT NULL,        -- 'individual' | 'firm' — Form 601's ENTITY_CD concept
+  bus_addr1          TEXT, bus_city TEXT, bus_st TEXT, bus_zip4 TEXT,   -- Form 601: BUS_CITY/BUS_ST/BUS_ZIP4 + street
+  mail_same_as_bus   INTEGER NOT NULL DEFAULT 1,                        -- 0/1 — mailing address only if different
+  mail_addr1         TEXT, mail_city TEXT, mail_st TEXT, mail_zip4 TEXT, -- Form 601: MAIL_CITY/MAIL_ST/MAIL_ZIP4
+  bus_phone          TEXT,                 -- Form 601: BUS_PHON
+  existing_filer_id  TEXT,                 -- optional — CA SOS filer ID, if already registered
+  created_at         TEXT
+);

@@ -55,9 +55,11 @@ import json
 import os
 import sys
 import threading
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+import accounts
 import db
 import refresh_watchlist
 from legiscan_client import get_api_key, lookup_bill, get_bill_detail
@@ -169,13 +171,29 @@ STYLE = """
   tr.row-link:hover { background: var(--accent-soft); }
   .tag { display: inline-block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
     color: var(--slate); background: var(--accent-soft); padding: 0.1rem 0.5rem; border-radius: 999px; }
+  .account-menu { position: relative; font-size: 0.85rem; }
+  .account-menu summary { cursor: pointer; color: var(--accent); list-style: none; }
+  .account-menu summary::-webkit-details-marker { display: none; }
+  .account-menu-content {
+    position: absolute; right: 0; top: 1.5rem; background: var(--surface);
+    border: 1px solid var(--rule); border-radius: 8px; padding: 0.5rem 0.7rem;
+    display: flex; flex-direction: column; gap: 0.5rem; min-width: 9.5rem;
+    box-shadow: 0 4px 14px rgba(45, 43, 43, 0.16); z-index: 20;
+  }
+  .account-menu-content a, .account-menu-content button {
+    color: var(--accent); font-size: 0.85rem; background: none; border: none;
+    padding: 0; text-align: left; font-weight: 400; cursor: pointer; text-decoration: none;
+  }
+  .account-menu-content a:hover, .account-menu-content button:hover { text-decoration: underline; }
+  .account-menu-email { font-size: 0.75rem; color: var(--slate); border-bottom: 1px solid var(--rule);
+    padding-bottom: 0.4rem; margin-bottom: 0.1rem; word-break: break-all; }
 """
 
 
 def nav_links(current):
-    """The 3 pages link to whichever OTHER two pages exist — computed
+    """The 3 content pages link to whichever OTHER two exist — computed
     once per page constant below (these are built at import time, not
-    per-request, so this only ever runs 3 times total)."""
+    per-request, so this only ever runs a handful of times total)."""
     pages = [("/", "Lookup"), ("/watchlist", "Watch list"), ("/lobbying", "Lobbying search")]
     parts = []
     for href, label in pages:
@@ -183,6 +201,53 @@ def nav_links(current):
             continue
         parts.append(f'<a href="{href}">{"← " if href == "/" else ""}{label}{"" if href == "/" else " →"}</a>')
     return "".join(parts)
+
+
+# The account menu's login state is per-request (whoever's browser this
+# is), but every page constant below is a plain string built ONCE at
+# import time — so unlike nav_links() above, this can't be baked into
+# the static HTML. Instead each page ships an empty <span id="account-menu">
+# plus this same small script, which fetches /api/me itself and fills
+# the span in client-side — the same "server ships a shell, JS fetches
+# JSON and renders" pattern already used everywhere else in this app
+# (bill lookup, watch list, lobbying search), just applied to login state.
+ACCOUNT_MENU_SLOT = '<span id="account-menu" style="margin-left:auto"></span>'
+ACCOUNT_MENU_SCRIPT = """
+<script>
+(function() {
+  const el = document.getElementById('account-menu');
+  if (!el) return;
+  fetch('/api/me').then(r => r.json()).then(me => {
+    if (me.logged_in) {
+      el.innerHTML = `
+        <details class="account-menu">
+          <summary>${me.email} ▾</summary>
+          <div class="account-menu-content">
+            <div class="account-menu-email">Signed in as ${me.email}</div>
+            <a href="/profile">View profile</a>
+            <button type="button" id="sign-out-btn">Sign out</button>
+          </div>
+        </details>
+      `;
+      document.getElementById('sign-out-btn').addEventListener('click', async () => {
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.href = '/';
+      });
+    } else {
+      el.innerHTML = '<a href="/login">Sign in</a> &nbsp;<a href="/signup">Sign up</a>';
+    }
+  }).catch(() => {});
+})();
+</script>
+"""
+
+
+def top_nav(current, left_extra=""):
+    """The full top-nav row: the 3-page links (or a custom left_extra,
+    e.g. signup's "Skip for now"), plus the account menu pushed to the
+    right via the slot's own margin-left:auto."""
+    left = left_extra if left_extra else nav_links(current)
+    return f'<div class="top-nav">{left}{ACCOUNT_MENU_SLOT}</div>{ACCOUNT_MENU_SCRIPT}'
 
 
 PAGE = f"""<!doctype html>
@@ -195,7 +260,7 @@ PAGE = f"""<!doctype html>
 </head>
 <body>
 <div class="wrap">
-  <div class="top-nav">{nav_links("/")}</div>
+  {top_nav("/")}
   <h1>LegiScan Bill Lookup</h1>
 
   <form id="f">
@@ -304,7 +369,7 @@ WATCHLIST_PAGE = f"""<!doctype html>
 </head>
 <body>
 <div class="wrap">
-  <div class="top-nav">{nav_links("/watchlist")}</div>
+  {top_nav("/watchlist")}
   <h1>Watch list</h1>
   <p class="sub">Bills here are stored in the database and re-checked once a day, not looked up live.</p>
   <div id="error"></div>
@@ -378,7 +443,7 @@ LOBBYING_PAGE = f"""<!doctype html>
 </head>
 <body>
 <div class="wrap">
-  <div class="top-nav">{nav_links("/lobbying")}</div>
+  {top_nav("/lobbying")}
   <h1>Lobbying search</h1>
   <p class="sub">California lobbying firms, employers, and quarterly disclosures from CAL-ACCESS.</p>
 
@@ -500,6 +565,356 @@ function renderDetail(d) {{
     ${{relationshipRows(d.relationships, d.name)}}
   `;
 }}
+</script>
+</body>
+</html>
+"""
+
+
+SIGNUP_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign up — LegiScan Bill Lookup</title>
+<style>{STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+  {top_nav("/signup", left_extra='<a href="/">← Lookup</a><a href="/login">Log in →</a>')}
+  <h1>Create your account</h1>
+  <p class="sub">Step 1 of 2 — after this, you'll fill in your CAL-ACCESS-style registration details.</p>
+
+  <form id="f">
+    <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required style="flex:1 1 100%">
+    <input id="password" type="password" placeholder="Password (8+ characters)" autocomplete="new-password" required style="flex:1 1 100%">
+    <button type="submit">Continue →</button>
+  </form>
+
+  <div id="loading">Creating account…</div>
+  <div id="error"></div>
+</div>
+
+<script>
+const form = document.getElementById('f');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+
+form.addEventListener('submit', async (e) => {{
+  e.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+
+  errorEl.className = ''; loadingEl.className = 'show';
+  form.querySelector('button').disabled = true;
+
+  try {{
+    const res = await fetch('/api/signup', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ email, password }}),
+    }});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not create account');
+    window.location.href = '/signup/profile';
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+    loadingEl.className = '';
+    form.querySelector('button').disabled = false;
+  }}
+}});
+</script>
+</body>
+</html>
+"""
+
+
+LOGIN_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in — LegiScan Bill Lookup</title>
+<style>{STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+  {top_nav("/login", left_extra='<a href="/">← Lookup</a><a href="/signup">Sign up →</a>')}
+  <h1>Log in</h1>
+
+  <form id="f">
+    <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required style="flex:1 1 100%">
+    <input id="password" type="password" placeholder="Password" autocomplete="current-password" required style="flex:1 1 100%">
+    <button type="submit">Log in</button>
+  </form>
+
+  <div id="loading">Logging in…</div>
+  <div id="error"></div>
+</div>
+
+<script>
+const form = document.getElementById('f');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+
+form.addEventListener('submit', async (e) => {{
+  e.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+
+  errorEl.className = ''; loadingEl.className = 'show';
+  form.querySelector('button').disabled = true;
+
+  try {{
+    const res = await fetch('/api/login', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ email, password }}),
+    }});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not log in');
+    window.location.href = '/';
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+    loadingEl.className = '';
+    form.querySelector('button').disabled = false;
+  }}
+}});
+</script>
+</body>
+</html>
+"""
+
+
+PROFILE_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Registration details — LegiScan Bill Lookup</title>
+<style>{STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+  {top_nav("/signup/profile", left_extra='<a href="/">Skip for now →</a>')}
+  <h1>Registration details</h1>
+  <p class="sub">Step 2 of 2 — modeled on CAL-ACCESS Form 601 (Lobbying Firm Registration Statement), so the fields match what you'd already recognize from the state's own form.</p>
+
+  <form id="f">
+    <label style="flex:1 1 100%">
+      <div class="sub" style="margin:0 0 0.3rem">Legal name of firm or individual</div>
+      <input id="legal_name" required style="width:100%">
+    </label>
+
+    <div style="flex:1 1 100%">
+      <div class="sub" style="margin:0 0 0.3rem">Registering as</div>
+      <label style="display:inline-flex;align-items:center;gap:0.4rem;margin-right:1.2rem;font-size:0.9rem">
+        <input type="radio" name="registrant_type" value="individual" style="width:auto" required> Individual lobbyist
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:0.4rem;font-size:0.9rem">
+        <input type="radio" name="registrant_type" value="firm" style="width:auto"> Firm
+      </label>
+    </div>
+
+    <div style="flex:1 1 100%">
+      <h2 class="section" style="margin-top:1.2rem">Business address</h2>
+    </div>
+    <input id="bus_addr1" placeholder="Street address" style="flex:1 1 100%">
+    <input id="bus_city" placeholder="City" style="flex:2">
+    <input id="bus_st" placeholder="State" maxlength="2" style="flex:1;text-transform:uppercase">
+    <input id="bus_zip4" placeholder="ZIP" style="flex:1">
+
+    <div style="flex:1 1 100%">
+      <h2 class="section" style="margin-top:1.2rem">Mailing address</h2>
+      <label style="display:inline-flex;align-items:center;gap:0.4rem;font-size:0.9rem;margin-bottom:0.7rem">
+        <input type="checkbox" id="mail_same" checked style="width:auto"> Same as business address
+      </label>
+    </div>
+    <div id="mail_fields" style="display:none;flex:1 1 100%;gap:0.6rem;flex-wrap:wrap">
+      <input id="mail_addr1" placeholder="Street address" style="flex:1 1 100%">
+      <input id="mail_city" placeholder="City" style="flex:2">
+      <input id="mail_st" placeholder="State" maxlength="2" style="flex:1;text-transform:uppercase">
+      <input id="mail_zip4" placeholder="ZIP" style="flex:1">
+    </div>
+
+    <div style="flex:1 1 100%">
+      <h2 class="section" style="margin-top:1.2rem">Phone number</h2>
+    </div>
+    <input id="bus_phone" placeholder="(916) 555-0100" style="flex:1 1 100%">
+
+    <div style="flex:1 1 100%">
+      <h2 class="section" style="margin-top:1.2rem">California Secretary of State filer ID <span style="text-transform:none;font-weight:400;color:var(--slate)">(optional — if you already have one)</span></h2>
+    </div>
+    <input id="existing_filer_id" placeholder="e.g. 1486088" style="flex:1 1 100%">
+
+    <button type="submit" style="margin-top:1rem">Save and finish →</button>
+  </form>
+
+  <div id="loading">Saving…</div>
+  <div id="error"></div>
+</div>
+
+<script>
+const form = document.getElementById('f');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+const mailSame = document.getElementById('mail_same');
+const mailFields = document.getElementById('mail_fields');
+
+mailSame.addEventListener('change', () => {{
+  mailFields.style.display = mailSame.checked ? 'none' : 'flex';
+}});
+
+// This same form doubles as "edit profile" (linked from /profile) as
+// well as sign-up step 2 — if a profile already exists, pre-fill it
+// rather than showing a blank form the user has to redo from scratch.
+(async function prefill() {{
+  try {{
+    const res = await fetch('/api/profile');
+    if (!res.ok) return;
+    const {{ profile }} = await res.json();
+    if (!profile) return;
+    document.getElementById('legal_name').value = profile.legal_name || '';
+    const radio = form.querySelector(`input[name="registrant_type"][value="${{profile.registrant_type}}"]`);
+    if (radio) radio.checked = true;
+    document.getElementById('bus_addr1').value = profile.bus_addr1 || '';
+    document.getElementById('bus_city').value = profile.bus_city || '';
+    document.getElementById('bus_st').value = profile.bus_st || '';
+    document.getElementById('bus_zip4').value = profile.bus_zip4 || '';
+    mailSame.checked = !!profile.mail_same_as_bus;
+    mailFields.style.display = mailSame.checked ? 'none' : 'flex';
+    document.getElementById('mail_addr1').value = profile.mail_addr1 || '';
+    document.getElementById('mail_city').value = profile.mail_city || '';
+    document.getElementById('mail_st').value = profile.mail_st || '';
+    document.getElementById('mail_zip4').value = profile.mail_zip4 || '';
+    document.getElementById('bus_phone').value = profile.bus_phone || '';
+    document.getElementById('existing_filer_id').value = profile.existing_filer_id || '';
+    form.querySelector('button[type="submit"]').textContent = 'Save changes';
+    document.querySelector('h1').textContent = 'Edit your registration details';
+    document.querySelector('.sub').textContent =
+      'Modeled on CAL-ACCESS Form 601 (Lobbying Firm Registration Statement).';
+  }} catch (err) {{ /* no profile yet — leave the blank sign-up form as-is */ }}
+}})();
+
+form.addEventListener('submit', async (e) => {{
+  e.preventDefault();
+  const registrantType = form.querySelector('input[name="registrant_type"]:checked');
+
+  errorEl.className = ''; loadingEl.className = 'show';
+  form.querySelector('button').disabled = true;
+
+  try {{
+    const res = await fetch('/api/profile', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{
+        legal_name: document.getElementById('legal_name').value.trim(),
+        registrant_type: registrantType ? registrantType.value : '',
+        bus_addr1: document.getElementById('bus_addr1').value.trim(),
+        bus_city: document.getElementById('bus_city').value.trim(),
+        bus_st: document.getElementById('bus_st').value.trim(),
+        bus_zip4: document.getElementById('bus_zip4').value.trim(),
+        mail_same_as_bus: mailSame.checked,
+        mail_addr1: document.getElementById('mail_addr1').value.trim(),
+        mail_city: document.getElementById('mail_city').value.trim(),
+        mail_st: document.getElementById('mail_st').value.trim(),
+        mail_zip4: document.getElementById('mail_zip4').value.trim(),
+        bus_phone: document.getElementById('bus_phone').value.trim(),
+        existing_filer_id: document.getElementById('existing_filer_id').value.trim(),
+      }}),
+    }});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save');
+    window.location.href = '/profile';
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+    loadingEl.className = '';
+    form.querySelector('button').disabled = false;
+  }}
+}});
+</script>
+</body>
+</html>
+"""
+
+
+PROFILE_VIEW_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your profile — LegiScan Bill Lookup</title>
+<style>{STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+  {top_nav("/profile")}
+  <h1>Your profile</h1>
+  <div id="loading">Loading…</div>
+  <div id="error"></div>
+  <div id="content"></div>
+</div>
+
+<script>
+const contentEl = document.getElementById('content');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+
+function row(label, value) {{
+  if (!value) return '';
+  return `<div style="display:grid;grid-template-columns:11rem 1fr;padding:0.45rem 0;border-bottom:1px solid var(--rule)">
+    <div class="sub" style="margin:0">${{label}}</div><div>${{value}}</div>
+  </div>`;
+}}
+
+async function load() {{
+  try {{
+    const [meRes, profileRes] = await Promise.all([fetch('/api/me'), fetch('/api/profile')]);
+    const me = await meRes.json();
+    const {{ profile }} = await profileRes.json();
+
+    if (!profile) {{
+      contentEl.innerHTML = `
+        <p class="empty">You haven't filled in your registration details yet.</p>
+        <button type="button" onclick="window.location.href='/signup/profile'">Add registration details →</button>
+      `;
+      loadingEl.className = '';
+      return;
+    }}
+
+    const mailing = profile.mail_same_as_bus
+      ? 'Same as business address'
+      : [profile.mail_addr1, profile.mail_city, profile.mail_st, profile.mail_zip4].filter(Boolean).join(', ');
+
+    contentEl.innerHTML = `
+      <div class="card">
+        <div class="bill-id">${{me.email || ''}}</div>
+        <div class="bill-title">${{profile.legal_name}}</div>
+        <span class="tag">${{profile.registrant_type === 'firm' ? 'Firm' : 'Individual lobbyist'}}</span>
+      </div>
+      <h2 class="section">Registration details</h2>
+      <div class="card">
+        ${{row('Business address', [profile.bus_addr1, profile.bus_city, profile.bus_st, profile.bus_zip4].filter(Boolean).join(', '))}}
+        ${{row('Mailing address', mailing)}}
+        ${{row('Phone', profile.bus_phone)}}
+        ${{row('CA SOS filer ID', profile.existing_filer_id)}}
+      </div>
+      <div class="card-actions">
+        <button type="button" class="secondary" onclick="window.location.href='/signup/profile'">Edit →</button>
+      </div>
+    `;
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }} finally {{
+    loadingEl.className = '';
+  }}
+}}
+
+load();
 </script>
 </body>
 </html>
@@ -668,19 +1083,23 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_json(self, status, payload):
+    def _send_json(self, status, payload, set_cookie=None):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        if set_cookie:
+            self.send_header("Set-Cookie", set_cookie)
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_html(self, status, html):
+    def _send_html(self, status, html, set_cookie=None):
         body = html.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        if set_cookie:
+            self.send_header("Set-Cookie", set_cookie)
         self.end_headers()
         self.wfile.write(body)
 
@@ -689,6 +1108,35 @@ class Handler(BaseHTTPRequestHandler):
         if not length:
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
+
+    def _session_cookie_header(self, token, clear=False):
+        """clear=True builds an immediately-expiring cookie, for logout.
+        Secure is only set when the request actually arrived over HTTPS
+        (Render terminates TLS and forwards plain HTTP internally, so
+        this checks the standard X-Forwarded-Proto header rather than
+        self.request_version) — a Secure cookie set while testing over
+        plain http://127.0.0.1 would just get silently dropped."""
+        is_https = self.headers.get("X-Forwarded-Proto", "").lower() == "https"
+        parts = [
+            f"{accounts.SESSION_COOKIE}={'' if clear else token}",
+            "Path=/", "HttpOnly", "SameSite=Lax",
+        ]
+        if clear:
+            parts.append("Max-Age=0")
+        if is_https:
+            parts.append("Secure")
+        return "; ".join(parts)
+
+    def _current_user_id(self, conn):
+        cookie_header = self.headers.get("Cookie")
+        if not cookie_header:
+            return None
+        jar = SimpleCookie()
+        jar.load(cookie_header)
+        morsel = jar.get(accounts.SESSION_COOKIE)
+        if not morsel:
+            return None
+        return accounts.user_id_for_session(conn, morsel.value)
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -734,6 +1182,71 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/lobbying":
             self._send_html(200, LOBBYING_PAGE)
+            return
+
+        if parsed.path == "/signup":
+            self._send_html(200, SIGNUP_PAGE)
+            return
+
+        if parsed.path == "/login":
+            self._send_html(200, LOGIN_PAGE)
+            return
+
+        if parsed.path == "/signup/profile":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+            finally:
+                conn.close()
+            if not user_id:
+                # No active session — most likely someone bookmarked this
+                # or came back later without logging in. Send them to
+                # sign up rather than show a form with nothing to save
+                # against.
+                self.send_response(302)
+                self.send_header("Location", "/signup")
+                self.end_headers()
+                return
+            self._send_html(200, PROFILE_PAGE)
+            return
+
+        if parsed.path == "/profile":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+            finally:
+                conn.close()
+            if not user_id:
+                self.send_response(302)
+                self.send_header("Location", "/login")
+                self.end_headers()
+                return
+            self._send_html(200, PROFILE_VIEW_PAGE)
+            return
+
+        if parsed.path == "/api/me":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(200, {"logged_in": False})
+                    return
+                row = conn.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()
+            finally:
+                conn.close()
+            self._send_json(200, {"logged_in": True, "email": row["email"] if row else None})
+            return
+
+        if parsed.path == "/api/profile":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Not logged in."})
+                    return
+                self._send_json(200, {"profile": accounts.get_profile(conn, user_id)})
+            finally:
+                conn.close()
             return
 
         if parsed.path == "/api/lobbying/search":
@@ -814,6 +1327,80 @@ class Handler(BaseHTTPRequestHandler):
 
         if not self._authorized():
             self._require_auth()
+            return
+
+        if parsed.path == "/api/signup":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            conn = db.get_connection()
+            try:
+                try:
+                    user_id = accounts.create_user(conn, body.get("email"), body.get("password"))
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                token = accounts.create_session(conn, user_id)
+                self._send_json(200, {"status": "created"}, set_cookie=self._session_cookie_header(token))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/login":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = accounts.verify_login(conn, body.get("email"), body.get("password"))
+                if not user_id:
+                    self._send_json(401, {"error": "Incorrect email or password."})
+                    return
+                token = accounts.create_session(conn, user_id)
+                self._send_json(200, {"status": "logged in"}, set_cookie=self._session_cookie_header(token))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/logout":
+            jar = SimpleCookie()
+            jar.load(self.headers.get("Cookie") or "")
+            morsel = jar.get(accounts.SESSION_COOKIE)
+            if morsel:
+                conn = db.get_connection()
+                try:
+                    accounts.destroy_session(conn, morsel.value)
+                finally:
+                    conn.close()
+            self._send_json(200, {"status": "logged out"}, set_cookie=self._session_cookie_header(None, clear=True))
+            return
+
+        if parsed.path == "/api/profile":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "You need to sign up or log in first."})
+                    return
+                if not (body.get("legal_name") or "").strip():
+                    self._send_json(400, {"error": "Legal name is required."})
+                    return
+                if body.get("registrant_type") not in ("individual", "firm"):
+                    self._send_json(400, {"error": "Choose individual or firm."})
+                    return
+                accounts.save_profile(conn, user_id, body)
+                self._send_json(200, {"status": "saved"})
+            finally:
+                conn.close()
             return
 
         if parsed.path != "/api/watchlist":
