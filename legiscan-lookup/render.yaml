@@ -1,10 +1,25 @@
 services:
+  # The one always-on service. Holds the persistent disk, serves the site,
+  # and does the actual work for both daily refreshes when triggered by
+  # the two cron services below (see app.py's module docstring for why —
+  # Render Cron Job services can't attach a persistent disk at all, so
+  # they can't touch the database directly the way launchd scripts do
+  # locally).
   - type: web
     name: legiscan-lookup
     runtime: python
     plan: starter
     buildCommand: "true"
-    startCommand: "python3 app.py"
+    # Runs from the repo root, not rootDir: legiscan-lookup — this app now
+    # imports refresh_calaccess.py from the sibling calaccess-pipeline/
+    # folder, and Render only rebuilds a service on changes within its
+    # rootDir. Keeping rootDir at the default (repo root) means a change
+    # to either folder triggers a rebuild of this service.
+    startCommand: "cd legiscan-lookup && python3 app.py"
+    disk:
+      name: billwatch-data
+      mountPath: /var/data
+      sizeGB: 2
     envVars:
       - key: LEGISCAN_API_KEY
         sync: false
@@ -12,3 +27,60 @@ services:
         sync: false
       - key: LOOKUP_PASSWORD
         sync: false
+      # Shared with both cron services below — use the exact same value
+      # in all three when entering secrets in the Render dashboard.
+      - key: REFRESH_SECRET
+        sync: false
+      - key: BILLWATCH_DATA_DIR
+        value: /var/data
+
+  # Thin trigger only — no disk, no real logic. Just wakes up, makes one
+  # authenticated POST to the web service over Render's private network,
+  # and exits. All it needs "curl" for, so runtime/buildCommand are
+  # otherwise irrelevant; kept as python for consistency with the rest of
+  # this file.
+  - type: cron
+    name: billwatch-refresh-watchlist
+    runtime: python
+    plan: starter
+    # 7am Pacific ≈ 14:00 UTC. Render evaluates schedules in UTC with no
+    # DST awareness, so this drifts an hour off "7am Pacific" whenever
+    # daylight saving time changes — adjust manually twice a year, or
+    # switch to a UTC time you don't mind being fixed year-round.
+    schedule: "0 14 * * *"
+    buildCommand: "true"
+    startCommand: >
+      curl -fsS -X POST -H "X-Refresh-Secret: $REFRESH_SECRET"
+      "http://$WEB_HOSTPORT/internal/refresh-watchlist"
+    envVars:
+      - key: REFRESH_SECRET
+        sync: false
+      # hostport = host:port on Render's private network — not the public
+      # URL. Internal service-to-service calls don't need (or get) TLS;
+      # if this doesn't resolve for your account tier, fall back to
+      # `property: host` and call the public https:// URL instead.
+      - key: WEB_HOSTPORT
+        fromService:
+          name: legiscan-lookup
+          type: web
+          property: hostport
+
+  - type: cron
+    name: billwatch-refresh-calaccess
+    runtime: python
+    plan: starter
+    # 6am Pacific ≈ 13:00 UTC — before the watch-list job, same as locally.
+    # Same DST caveat as above.
+    schedule: "0 13 * * *"
+    buildCommand: "true"
+    startCommand: >
+      curl -fsS -X POST -H "X-Refresh-Secret: $REFRESH_SECRET"
+      "http://$WEB_HOSTPORT/internal/refresh-calaccess"
+    envVars:
+      - key: REFRESH_SECRET
+        sync: false
+      - key: WEB_HOSTPORT
+        fromService:
+          name: legiscan-lookup
+          type: web
+          property: hostport

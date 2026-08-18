@@ -7,20 +7,33 @@ internet access and can call the LegiScan API live, on demand, when you
 search. Start it with `python3 app.py` (or `./start.sh`), then open
 http://localhost:8420 in your browser.
 
-Two separate capabilities live here:
+Three capabilities live here:
 
   - Live lookup (the original feature): search a bill by state + number,
     call LegiScan on the spot, show the result. Nothing is stored.
   - Stored watch list (added in Phase 1, Session 5): add a bill to a
     watch list and its current status/sponsors/history get saved to
-    db/billwatch.db. A separate daily job (refresh_watchlist.py) re-checks
-    only the bills on that list, once a day — not the whole session — to
-    stay well under LegiScan's free-tier query cap. See /watchlist.
+    the database. See /watchlist.
+  - Internal refresh triggers (added for hosted deployment — see
+    render.yaml): when this app runs locally, the two daily refreshes
+    (LegiScan watch-list, CAL-ACCESS ingestion) are separate scripts
+    launchd runs on a schedule, each opening the database directly —
+    that only works because they're all just processes on the same Mac
+    sharing one local file. Hosted on Render, a Cron Job service can't
+    attach a persistent disk at all, so the cron jobs are just thin
+    triggers: POST /internal/refresh-watchlist and
+    /internal/refresh-calaccess, gated on a shared secret, run the exact
+    same refresh code in a background thread of THIS process — the one
+    process that actually holds the disk. Locally, with no REFRESH_SECRET
+    set, these routes don't exist at all (404) and launchd keeps working
+    exactly as before — this is purely additive.
 
 The actual "talk to LegiScan" logic lives in legiscan_client.py, and the
 database logic lives in db.py — both files are shared with
 refresh_watchlist.py so nothing here is duplicated between the live app
-and the daily job.
+and the daily job. refresh_calaccess.py (and its own calaccess_db.py) live
+in the sibling calaccess-pipeline/ folder and are imported the same way,
+via a relative path — not copied in here.
 
 The API key is read from the LEGISCAN_API_KEY environment variable. If
 that's not set (e.g. you're running this from a non-login shell), it falls
@@ -28,13 +41,20 @@ back to reading the `export LEGISCAN_API_KEY=...` line out of ~/.zshrc.
 """
 
 import base64
+import hmac
 import json
 import os
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 import db
+import refresh_watchlist
 from legiscan_client import get_api_key, lookup_bill, get_bill_detail
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "calaccess-pipeline"))
+import refresh_calaccess  # noqa: E402 — must follow the sys.path insert above
 
 PORT = int(os.environ.get("PORT", 8420))
 
@@ -43,6 +63,17 @@ PORT = int(os.environ.get("PORT", 8420))
 # reachable by other people.
 AUTH_USER = os.environ.get("LOOKUP_USER")
 AUTH_PASSWORD = os.environ.get("LOOKUP_PASSWORD")
+
+# Gates the two /internal/refresh-* routes. Unset locally on purpose —
+# see the module docstring above.
+REFRESH_SECRET = os.environ.get("REFRESH_SECRET")
+
+# Guards against a cron firing twice before the first run finishes —
+# maps job name -> bool. Not persisted; a restart just clears it, which is
+# fine, since the worst case is one extra run, not a corrupted one (every
+# refresh is upsert-based already).
+_refresh_running = {"watchlist": False, "calaccess": False}
+_refresh_lock = threading.Lock()
 
 
 STYLE = """
@@ -312,6 +343,32 @@ load();
 """
 
 
+def _trigger_refresh(job_name, target_fn):
+    """Starts target_fn() in a background thread unless that job is
+    already running. Returns False (caller should respond 409) if a run
+    is already in flight, True once a new one has been started."""
+    with _refresh_lock:
+        if _refresh_running[job_name]:
+            return False
+        _refresh_running[job_name] = True
+
+    def run():
+        try:
+            target_fn()
+        except Exception as e:
+            # Each job's own log() already records its own failures in
+            # detail (see refresh_one/sync_disclosures etc.) — this is
+            # just a backstop for anything that escapes those, e.g. a
+            # crash before that job's own logging even starts.
+            print(f"[{job_name} refresh] crashed: {e}")
+        finally:
+            with _refresh_lock:
+                _refresh_running[job_name] = False
+
+    threading.Thread(target=run, daemon=True, name=f"refresh-{job_name}").start()
+    return True
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # keep the terminal quiet
@@ -400,12 +457,37 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(404)
         self.end_headers()
 
+    def _authorized_for_refresh(self):
+        """Separate from _authorized(): the shared LOOKUP_USER/PASSWORD
+        login is for humans in a browser. These routes are hit by a cron
+        job with no browser, gated on their own secret instead — and if
+        REFRESH_SECRET was never set (the local/default case), the routes
+        don't exist at all, same as any other unrecognized path."""
+        if not REFRESH_SECRET:
+            return False
+        supplied = self.headers.get("X-Refresh-Secret", "")
+        return hmac.compare_digest(supplied, REFRESH_SECRET)
+
     def do_POST(self):
+        parsed = urlparse(self.path)
+
+        if parsed.path in ("/internal/refresh-watchlist", "/internal/refresh-calaccess"):
+            if not self._authorized_for_refresh():
+                self.send_response(404)  # not 401 — don't reveal the route exists
+                self.end_headers()
+                return
+            job = "watchlist" if parsed.path == "/internal/refresh-watchlist" else "calaccess"
+            target = refresh_watchlist.main if job == "watchlist" else refresh_calaccess.main
+            if _trigger_refresh(job, target):
+                self._send_json(202, {"status": f"{job} refresh started"})
+            else:
+                self._send_json(409, {"status": f"{job} refresh already running"})
+            return
+
         if not self._authorized():
             self._require_auth()
             return
 
-        parsed = urlparse(self.path)
         if parsed.path != "/api/watchlist":
             self.send_response(404)
             self.end_headers()
@@ -479,7 +561,14 @@ def main():
         print("⚠️  Only one of LOOKUP_USER / LOOKUP_PASSWORD is set — both are")
         print("    required for login protection to take effect. Running open.\n")
 
-    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    # ThreadingHTTPServer, not HTTPServer — a plain HTTPServer handles one
+    # request at a time, so an /internal/refresh-calaccess trigger firing
+    # off a multi-minute background job wouldn't itself block (that part
+    # runs in its own thread already), but every OTHER visitor hitting the
+    # site while that request is even being accepted would queue behind
+    # it. Threading it costs nothing for the low request volume this app
+    # actually sees.
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     url = f"http://127.0.0.1:{PORT}" if not is_hosted else f"port {PORT}"
     print(f"LegiScan Bill Lookup running on {url}  (Ctrl+C to stop)")
     if not is_hosted:

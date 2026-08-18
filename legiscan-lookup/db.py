@@ -6,14 +6,22 @@ db/schema.sql and is not committed to git — it's local, per-machine data,
 the same way the LegiScan API key itself is per-machine. Both app.py and
 refresh_watchlist.py import this file instead of each having their own copy
 of "how to open the database" or "how to save a bill."
+
+Locally, the database file lives right next to this code (db/billwatch.db).
+When hosted (Render), the code directory is rebuilt on every deploy but a
+persistent disk is mounted elsewhere — so if BILLWATCH_DATA_DIR is set,
+the database file goes there instead, surviving redeploys. schema.sql
+itself always comes from the repo checkout either way — it's source, not
+data, and isn't on the persistent disk.
 """
 
 import os
 import sqlite3
 
-DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db")
+_REPO_DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db")
+DB_DIR = os.environ.get("BILLWATCH_DATA_DIR", _REPO_DB_DIR)
 DB_PATH = os.path.join(DB_DIR, "billwatch.db")
-SCHEMA_PATH = os.path.join(DB_DIR, "schema.sql")
+SCHEMA_PATH = os.path.join(_REPO_DB_DIR, "schema.sql")
 
 
 def get_connection():

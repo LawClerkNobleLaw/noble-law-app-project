@@ -5,11 +5,15 @@
     <key>Label</key>
     <string>com.noblelaw.billwatch.refresh</string>
 
+    <!-- zsh given the script PATH as a positional argument (not -c "text")
+         reads it as a file directly — no shell re-parsing, so the spaces
+         in "noble law app project" can't get word-split. Direct exec via
+         the shebang alone (a single-element array) failed here with
+         "can't open input file", so the interpreter is named explicitly. -->
     <key>ProgramArguments</key>
     <array>
         <string>/bin/zsh</string>
-        <string>-c</string>
-        <string>/Users/daezhongilbarg/Documents/noble law app project/legiscan-lookup/refresh.sh</string>
+        <string>/Users/daezhongilbarg/Projects/noble law app project/legiscan-lookup/refresh.sh</string>
     </array>
 
     <!-- Runs once a day at 7:00am. Change Hour/Minute below to reschedule. -->
@@ -22,8 +26,8 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/daezhongilbarg/Documents/noble law app project/legiscan-lookup/logs/launchd.out.log</string>
+    <string>/Users/daezhongilbarg/Projects/noble law app project/legiscan-lookup/logs/launchd.out.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/daezhongilbarg/Documents/noble law app project/legiscan-lookup/logs/launchd.err.log</string>
+    <string>/Users/daezhongilbarg/Projects/noble law app project/legiscan-lookup/logs/launchd.err.log</string>
 </dict>
 </plist>
