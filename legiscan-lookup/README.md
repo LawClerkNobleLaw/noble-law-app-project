@@ -48,9 +48,11 @@ Things that live in this app:
   day — not the whole session — to stay well under LegiScan's free-tier
   query cap (see the math in that file's docstring).
 - **Individual accounts** — `/signup` (email + password, then a
-  CAL-ACCESS Form 601-style profile step), `/login`, `/profile`. Layered
-  inside the shared login below, not a replacement for it. Real
-  password hashing lives in `accounts.py`.
+  CAL-ACCESS Form 601-style profile step), `/login`, `/profile`. The
+  site itself doesn't require signing in to visit — the live lookup and
+  lobbying search are open to anyone with the URL — but the personal
+  features (flagged bills, clients, action reports, profile) need it.
+  Real password hashing lives in `accounts.py`.
 - **Clients** — `/clients` lets each signed-in user keep their own list
   of clients (Form 602/603-style: name, business address, industry/
   interests, an optional CAL-ACCESS filer ID for future cross-checking).
@@ -111,16 +113,16 @@ in this folder): the web app, and two thin cron triggers. Steps:
    `billwatch-refresh-calaccess`).
 4. You'll be prompted for secrets. Enter:
    - `LEGISCAN_API_KEY` — your LegiScan key (web service only)
-   - `LOOKUP_USER` / `LOOKUP_PASSWORD` — a shared login for coworkers
-     (web service only)
    - `REFRESH_SECRET` — **make one up** (anything long and random works,
      e.g. `openssl rand -hex 32` in a terminal) and **enter the exact same
      value for all three services** — the two cron jobs use it to prove
      to the web app that a refresh trigger is legitimate, not a stranger
      hitting the endpoint.
 5. Deploy. Render gives the web service a permanent URL like
-   `https://legiscan-lookup.onrender.com` — share that with coworkers,
-   along with the username/password from step 4.
+   `https://legiscan-lookup.onrender.com` — share that with coworkers.
+   The site itself is open to anyone with the link; each coworker signs
+   up for their own individual account (see Individual accounts, above)
+   to use the personal features.
 
 **What you're paying for:** the `starter` plan on the web service
 (~$7/mo, keeps it always-on instead of spinning down after 15 minutes
@@ -141,8 +143,7 @@ couldn't be verified without a real Render account:
   Render doesn't adjust for daylight saving, so they'll drift an hour
   twice a year unless you nudge them by hand in `render.yaml`.
 
-Since `LOOKUP_USER`/`LOOKUP_PASSWORD`/`REFRESH_SECRET` are all unset for
-local runs, running it locally with `./start.sh` stays exactly as
-frictionless as before, and the `/internal/refresh-*` routes simply don't
-exist locally (404) — `launchd` keeps doing the job on your Mac exactly
-as it does today.
+Since `REFRESH_SECRET` is unset for local runs, running it locally with
+`./start.sh` stays exactly as frictionless as before, and the
+`/internal/refresh-*` routes simply don't exist locally (404) —
+`launchd` keeps doing the job on your Mac exactly as it does today.

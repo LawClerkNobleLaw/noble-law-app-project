@@ -23,10 +23,6 @@ services:
     envVars:
       - key: LEGISCAN_API_KEY
         sync: false
-      - key: LOOKUP_USER
-        sync: false
-      - key: LOOKUP_PASSWORD
-        sync: false
       # Shared with both cron services below — use the exact same value
       # in all three when entering secrets in the Render dashboard.
       - key: REFRESH_SECRET

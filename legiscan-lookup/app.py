@@ -36,13 +36,16 @@ Capabilities live here:
     client_name on disclosures, and a result's detail view shows BOTH
     directions: what this entity filed (if it's a firm/employer that
     files) and where this name was mentioned as someone else's client.
-  - Individual accounts, layered inside the site's shared
-    LOOKUP_USER/PASSWORD login (see AUTH_USER/AUTH_PASSWORD below —
-    that outer gate still protects the whole site; accounts are a
-    second, personal layer inside it). /signup (email + password, then
-    a CAL-ACCESS Form 601-style profile step), /login, /profile (view
-    and edit), and the account-menu dropdown on every page (see
-    ACCOUNT_MENU_SCRIPT) — real password hashing lives in accounts.py.
+  - Individual accounts: /signup (email + password, then a CAL-ACCESS
+    Form 601-style profile step), /login, /profile (view and edit), and
+    the account-menu dropdown on every page (see ACCOUNT_MENU_SCRIPT) —
+    real password hashing lives in accounts.py. There used to also be
+    an outer shared LOOKUP_USER/PASSWORD login gating the whole site
+    (a coworker-wide Basic Auth prompt just to view anything); that's
+    gone now that individual accounts exist and actually work — the
+    site itself (lookup, lobbying search, signup/login) is open to
+    visit, and signing in is only required for the personal features
+    (flagged bills, clients, action reports, profile).
   - Internal refresh triggers (added for hosted deployment — see
     render.yaml): when this app runs locally, the two daily refreshes
     (LegiScan watch-list, CAL-ACCESS ingestion) are separate scripts
@@ -69,7 +72,6 @@ that's not set (e.g. you're running this from a non-login shell), it falls
 back to reading the `export LEGISCAN_API_KEY=...` line out of ~/.zshrc.
 """
 
-import base64
 import hmac
 import json
 import os
@@ -88,12 +90,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import refresh_calaccess  # noqa: E402 — must follow the sys.path insert above
 
 PORT = int(os.environ.get("PORT", 8420))
-
-# Optional shared-login protection. Leave LOOKUP_USER / LOOKUP_PASSWORD
-# unset for frictionless local use; set both when hosting this somewhere
-# reachable by other people.
-AUTH_USER = os.environ.get("LOOKUP_USER")
-AUTH_PASSWORD = os.environ.get("LOOKUP_PASSWORD")
 
 # Gates the two /internal/refresh-* routes. Unset locally on purpose —
 # see the module docstring above.
@@ -1485,28 +1481,6 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # keep the terminal quiet
 
-    def _authorized(self):
-        if not AUTH_USER or not AUTH_PASSWORD:
-            return True  # no shared login configured — open access (local use)
-        header = self.headers.get("Authorization", "")
-        if not header.startswith("Basic "):
-            return False
-        try:
-            decoded = base64.b64decode(header[6:]).decode("utf-8")
-            user, _, password = decoded.partition(":")
-        except Exception:
-            return False
-        return user == AUTH_USER and password == AUTH_PASSWORD
-
-    def _require_auth(self):
-        body = b"Login required."
-        self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="Bill Search"')
-        self.send_header("Content-Type", "text/plain")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
     def _send_json(self, status, payload, set_cookie=None):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -1588,10 +1562,6 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
             self._send_json(200, {"counts": counts, "refresh_running": dict(_refresh_running)})
-            return
-
-        if not self._authorized():
-            self._require_auth()
             return
 
         qs = parse_qs(parsed.query)
@@ -1822,9 +1792,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _authorized_for_refresh(self):
-        """Separate from _authorized(): the shared LOOKUP_USER/PASSWORD
-        login is for humans in a browser. These routes are hit by a cron
-        job with no browser, gated on their own secret instead — and if
+        """These routes are hit by a cron job with no browser and no
+        individual account, gated on their own secret instead — and if
         REFRESH_SECRET was never set (the local/default case), the routes
         don't exist at all, same as any other unrecognized path."""
         if not REFRESH_SECRET:
@@ -1846,10 +1815,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(202, {"status": f"{job} refresh started"})
             else:
                 self._send_json(409, {"status": f"{job} refresh already running"})
-            return
-
-        if not self._authorized():
-            self._require_auth()
             return
 
         if parsed.path == "/api/signup":
@@ -2014,10 +1979,6 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_DELETE(self):
-        if not self._authorized():
-            self._require_auth()
-            return
-
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
 
@@ -2089,9 +2050,6 @@ def main():
         print("    (the app will still start, but lookups will fail until it's set)\n")
 
     is_hosted = bool(os.environ.get("RENDER") or os.environ.get("PORT_ASSIGNED_BY_HOST"))
-    if (AUTH_USER or AUTH_PASSWORD) and not (AUTH_USER and AUTH_PASSWORD):
-        print("⚠️  Only one of LOOKUP_USER / LOOKUP_PASSWORD is set — both are")
-        print("    required for login protection to take effect. Running open.\n")
 
     # ThreadingHTTPServer, not HTTPServer — a plain HTTPServer handles one
     # request at a time, so an /internal/refresh-calaccess trigger firing
