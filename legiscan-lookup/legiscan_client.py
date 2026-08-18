@@ -94,14 +94,17 @@ def get_bill_detail(bill_id):
     return shape_bill(detail["bill"])
 
 
-def lookup_bill(state, bill_number):
-    """Resolve a human bill number (e.g. 'CA', 'SB122') to full detail.
+def lookup_bill(bill_number):
+    """Resolve a human bill number (e.g. 'SB122') to full detail.
     getBill needs LegiScan's internal bill_id, so this searches first —
-    this is the live single-lookup path the existing app uses."""
-    state = state.strip().upper()
+    this is the live single-lookup path the existing app uses.
+
+    California only, on purpose — this app is built for CA lobbyists,
+    so the state was dropped from the search entirely rather than left
+    as a field nobody but a CA lobbyist would ever change."""
     bill_number = bill_number.strip().upper()
 
-    search = legiscan_call("getSearch", state=state, bill=bill_number)
+    search = legiscan_call("getSearch", state="CA", bill=bill_number)
     if search.get("status") != "OK":
         raise RuntimeError(f"LegiScan search failed: {search}")
 
@@ -113,6 +116,6 @@ def lookup_bill(state, bill_number):
         match = v
         break
     if not match:
-        raise RuntimeError(f"No bill found for {state} {bill_number}.")
+        raise RuntimeError(f"No bill found for CA {bill_number}.")
 
     return get_bill_detail(match["bill_id"])

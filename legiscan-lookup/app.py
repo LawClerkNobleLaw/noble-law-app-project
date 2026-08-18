@@ -1,19 +1,32 @@
 #!/usr/bin/env python3
 """
-LegiScan Bill Lookup — a small local web app.
+Bill Search — a small local web app.
 
 Runs entirely on your machine (not hosted anywhere) so it has normal
 internet access and can call the LegiScan API live, on demand, when you
 search. Start it with `python3 app.py` (or `./start.sh`), then open
 http://localhost:8420 in your browser.
 
-Four capabilities live here:
+Capabilities live here:
 
-  - Live lookup (the original feature): search a bill by state + number,
-    call LegiScan on the spot, show the result. Nothing is stored.
-  - Stored watch list (added in Phase 1, Session 5): add a bill to a
-    watch list and its current status/sponsors/history get saved to
-    the database. See /watchlist.
+  - Live lookup (the original feature): search a California bill by
+    number, call LegiScan on the spot, show the result. Nothing is
+    stored by the search itself.
+  - Flagged bills: sign in (see Individual accounts below) and click
+    "Flag this bill" to add it to YOUR OWN personal list, at /flagged.
+    This replaced an earlier "stored watch list" that was one single
+    list shared by everyone with no owner — that made sense before
+    individual accounts existed, but once they did, having two
+    almost-identical buttons ("Add to watch list" vs "Flag this bill")
+    was more confusing than useful, and the ownerless shared list had a
+    real problem: anyone could silently remove a bill someone else was
+    tracking. Flagging still reuses the exact same underlying mechanism
+    (a bill gets upserted into `bills` and added to the shared
+    `watchlist` table so the daily job keeps it fresh) — `flagged_bills`
+    just adds the "which user cares about this one" layer the old
+    single shared list had no room for. /watchlist now redirects
+    (to /flagged if signed in, /login otherwise) rather than 404ing on
+    anyone with the old page bookmarked.
   - Lobbying search (/lobbying): search the CAL-ACCESS firms/employers
     (lobbying_entities) and quarterly disclosures (lobbying_disclosures)
     that calaccess-pipeline/refresh_calaccess.py loads. Since roughly a
@@ -23,6 +36,13 @@ Four capabilities live here:
     client_name on disclosures, and a result's detail view shows BOTH
     directions: what this entity filed (if it's a firm/employer that
     files) and where this name was mentioned as someone else's client.
+  - Individual accounts, layered inside the site's shared
+    LOOKUP_USER/PASSWORD login (see AUTH_USER/AUTH_PASSWORD below —
+    that outer gate still protects the whole site; accounts are a
+    second, personal layer inside it). /signup (email + password, then
+    a CAL-ACCESS Form 601-style profile step), /login, /profile (view
+    and edit), and the account-menu dropdown on every page (see
+    ACCOUNT_MENU_SCRIPT) — real password hashing lives in accounts.py.
   - Internal refresh triggers (added for hosted deployment — see
     render.yaml): when this app runs locally, the two daily refreshes
     (LegiScan watch-list, CAL-ACCESS ingestion) are separate scripts
@@ -120,7 +140,6 @@ STYLE = """
     font: inherit; padding: 0.6rem 0.75rem; border: 1px solid var(--rule);
     border-radius: 8px; background: var(--surface); color: var(--ink);
   }
-  input#state { width: 5rem; text-transform: uppercase; }
   input#bill { flex: 1; min-width: 8rem; }
   button {
     font: inherit; font-weight: 600; padding: 0.6rem 1.1rem; border: none;
@@ -191,10 +210,13 @@ STYLE = """
 
 
 def nav_links(current):
-    """The 3 content pages link to whichever OTHER two exist — computed
-    once per page constant below (these are built at import time, not
-    per-request, so this only ever runs a handful of times total)."""
-    pages = [("/", "Lookup"), ("/watchlist", "Watch list"), ("/lobbying", "Lobbying search")]
+    """Links to whichever OTHER content pages exist — computed once per
+    page constant below (these are built at import time, not
+    per-request, so this only ever runs a handful of times total).
+    Flagged bills isn't listed here on purpose — it's personal and tied
+    to login, so it lives in the account menu next to "View profile"
+    rather than in this always-visible row (see ACCOUNT_MENU_SCRIPT)."""
+    pages = [("/", "Lookup"), ("/lobbying", "Lobbying Search")]
     parts = []
     for href, label in pages:
         if href == current:
@@ -225,6 +247,7 @@ ACCOUNT_MENU_SCRIPT = """
           <div class="account-menu-content">
             <div class="account-menu-email">Signed in as ${me.email}</div>
             <a href="/profile">View profile</a>
+            <a href="/flagged">My flagged bills</a>
             <button type="button" id="sign-out-btn">Sign out</button>
           </div>
         </details>
@@ -255,16 +278,16 @@ PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LegiScan Bill Lookup</title>
+<title>Bill Search</title>
 <style>{STYLE}</style>
 </head>
 <body>
 <div class="wrap">
   {top_nav("/")}
-  <h1>LegiScan Bill Lookup</h1>
+  <h1>Bill Search</h1>
+  <p class="sub">California bill status, sponsors, and history from LegiScan.</p>
 
   <form id="f">
-    <input id="state" placeholder="CA" maxlength="2" autocomplete="off" required>
     <input id="bill" placeholder="e.g. SB122" autocomplete="off" required>
     <button type="submit">Look up</button>
   </form>
@@ -283,15 +306,14 @@ let current = null;
 
 form.addEventListener('submit', async (e) => {{
   e.preventDefault();
-  const state = document.getElementById('state').value.trim();
   const bill = document.getElementById('bill').value.trim();
-  if (!state || !bill) return;
+  if (!bill) return;
 
   errorEl.className = ''; resultEl.className = ''; loadingEl.className = 'show';
   form.querySelector('button').disabled = true;
 
   try {{
-    const res = await fetch(`/api/bill?state=${{encodeURIComponent(state)}}&bill=${{encodeURIComponent(bill)}}`);
+    const res = await fetch(`/api/bill?bill=${{encodeURIComponent(bill)}}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Lookup failed');
     current = data;
@@ -305,23 +327,26 @@ form.addEventListener('submit', async (e) => {{
   }}
 }});
 
-async function addToWatchlist() {{
+async function flagBill() {{
   if (!current) return;
-  const btn = document.getElementById('watch-btn');
+  const btn = document.getElementById('flag-btn');
   btn.disabled = true;
-  btn.textContent = 'Adding…';
+  btn.textContent = 'Flagging…';
   try {{
-    const res = await fetch('/api/watchlist', {{
+    const res = await fetch('/api/flag', {{
       method: 'POST',
       headers: {{ 'Content-Type': 'application/json' }},
       body: JSON.stringify({{ bill_id: current.id }}),
     }});
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not add to watch list');
-    btn.textContent = '✓ On watch list';
+    if (!res.ok) {{
+      if (res.status === 401) throw new Error('Sign in to flag bills — see the account menu, top right.');
+      throw new Error(data.error || 'Could not flag this bill');
+    }}
+    btn.textContent = '🚩 Flagged';
   }} catch (err) {{
     btn.disabled = false;
-    btn.textContent = 'Add to watch list';
+    btn.textContent = 'Flag this bill';
     errorEl.textContent = err.message;
     errorEl.className = 'show';
   }}
@@ -344,7 +369,7 @@ function render(d) {{
       <div class="bill-desc">${{d.description || ''}}</div>
       ${{d.url ? `<a class="bill-link" href="${{d.url}}" target="_blank" rel="noopener">View on LegiScan →</a>` : ''}}
       <div class="card-actions">
-        <button id="watch-btn" class="secondary" onclick="addToWatchlist()">Add to watch list</button>
+        <button id="flag-btn" class="secondary" onclick="flagBill()">Flag this bill</button>
       </div>
     </div>
     ${{sponsors ? `<h2 class="section">Sponsors</h2><div class="sponsor-list">${{sponsors}}</div>` : ''}}
@@ -359,92 +384,18 @@ function render(d) {{
 """
 
 
-WATCHLIST_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Watch list — LegiScan Bill Lookup</title>
-<style>{STYLE}</style>
-</head>
-<body>
-<div class="wrap">
-  {top_nav("/watchlist")}
-  <h1>Watch list</h1>
-  <p class="sub">Bills here are stored in the database and re-checked once a day, not looked up live.</p>
-  <div id="error"></div>
-  <div id="list"></div>
-</div>
-
-<script>
-const listEl = document.getElementById('list');
-const errorEl = document.getElementById('error');
-
-async function load() {{
-  try {{
-    const res = await fetch('/api/watchlist');
-    const rows = await res.json();
-    render(rows);
-  }} catch (err) {{
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
-  }}
-}}
-
-async function remove(billId) {{
-  try {{
-    const res = await fetch(`/api/watchlist?bill_id=${{billId}}`, {{ method: 'DELETE' }});
-    if (!res.ok) {{
-      const data = await res.json();
-      throw new Error(data.error || 'Could not remove bill');
-    }}
-    load();
-  }} catch (err) {{
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
-  }}
-}}
-
-function render(rows) {{
-  if (!rows.length) {{
-    listEl.innerHTML = '<p class="empty">Nothing watched yet — look up a bill and add it from there.</p>';
-    return;
-  }}
-  listEl.innerHTML = `
-    <table>
-      <tr><th>Bill</th><th>Title</th><th>Status</th><th>Last checked</th><th></th></tr>
-      ${{rows.map(r => `
-        <tr>
-          <td class="chamber">${{r.state}} ${{r.bill_number}}</td>
-          <td>${{r.title || ''}}${{r.url ? ` — <a href="${{r.url}}" target="_blank" rel="noopener">view</a>` : ''}}</td>
-          <td>${{r.status_label || ''}}</td>
-          <td class="date">${{(r.last_checked_at || '').replace('T', ' ').slice(0, 16)}}</td>
-          <td><button class="danger" onclick="remove(${{r.bill_id}})">Remove</button></td>
-        </tr>
-      `).join('')}}
-    </table>
-  `;
-}}
-
-load();
-</script>
-</body>
-</html>
-"""
-
-
 LOBBYING_PAGE = f"""<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lobbying search — LegiScan Bill Lookup</title>
+<title>Lobbying Search — Bill Search</title>
 <style>{STYLE}</style>
 </head>
 <body>
 <div class="wrap">
   {top_nav("/lobbying")}
-  <h1>Lobbying search</h1>
+  <h1>Lobbying Search</h1>
   <p class="sub">California lobbying firms, employers, and quarterly disclosures from CAL-ACCESS.</p>
 
   <form id="f">
@@ -576,7 +527,7 @@ SIGNUP_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign up — LegiScan Bill Lookup</title>
+<title>Sign up — Bill Search</title>
 <style>{STYLE}</style>
 </head>
 <body>
@@ -635,7 +586,7 @@ LOGIN_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Log in — LegiScan Bill Lookup</title>
+<title>Log in — Bill Search</title>
 <style>{STYLE}</style>
 </head>
 <body>
@@ -693,7 +644,7 @@ PROFILE_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Registration details — LegiScan Bill Lookup</title>
+<title>Registration details — Bill Search</title>
 <style>{STYLE}</style>
 </head>
 <body>
@@ -846,7 +797,7 @@ PROFILE_VIEW_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Your profile — LegiScan Bill Lookup</title>
+<title>Your profile — Bill Search</title>
 <style>{STYLE}</style>
 </head>
 <body>
@@ -912,6 +863,84 @@ async function load() {{
   }} finally {{
     loadingEl.className = '';
   }}
+}}
+
+load();
+</script>
+</body>
+</html>
+"""
+
+
+FLAGGED_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Flagged Bills — Bill Search</title>
+<style>{STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+  {top_nav("/flagged")}
+  <h1>My Flagged Bills</h1>
+  <p class="sub">Bills you've personally flagged — stored and re-checked daily the same way the shared watch list is, just scoped to your account.</p>
+  <div id="error"></div>
+  <div id="list"></div>
+</div>
+
+<script>
+const listEl = document.getElementById('list');
+const errorEl = document.getElementById('error');
+
+async function load() {{
+  try {{
+    const res = await fetch('/api/flagged');
+    if (res.status === 401) {{
+      window.location.href = '/login';
+      return;
+    }}
+    const rows = await res.json();
+    render(rows);
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+async function unflag(billId) {{
+  try {{
+    const res = await fetch(`/api/flag?bill_id=${{billId}}`, {{ method: 'DELETE' }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not unflag bill');
+    }}
+    load();
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+function render(rows) {{
+  if (!rows.length) {{
+    listEl.innerHTML = '<p class="empty">Nothing flagged yet — look up a bill and click "Flag this bill" from there.</p>';
+    return;
+  }}
+  listEl.innerHTML = `
+    <table>
+      <tr><th>Bill</th><th>Title</th><th>Status</th><th>Last checked</th><th></th></tr>
+      ${{rows.map(r => `
+        <tr>
+          <td class="chamber">${{r.state}} ${{r.bill_number}}</td>
+          <td>${{r.title || ''}}${{r.url ? ` — <a href="${{r.url}}" target="_blank" rel="noopener">view</a>` : ''}}</td>
+          <td>${{r.status_label || ''}}</td>
+          <td class="date">${{(r.last_checked_at || '').replace('T', ' ').slice(0, 16)}}</td>
+          <td><button class="danger" onclick="unflag(${{r.bill_id}})">Unflag</button></td>
+        </tr>
+      `).join('')}}
+    </table>
+  `;
 }}
 
 load();
@@ -1077,7 +1106,7 @@ class Handler(BaseHTTPRequestHandler):
     def _require_auth(self):
         body = b"Login required."
         self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="LegiScan Bill Lookup"')
+        self.send_header("WWW-Authenticate", 'Basic realm="Bill Search"')
         self.send_header("Content-Type", "text/plain")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -1177,7 +1206,18 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/watchlist":
-            self._send_html(200, WATCHLIST_PAGE)
+            # Retired — consolidated into personal flagged bills (see
+            # the module docstring). A bare 404 would be a jarring dead
+            # end for anyone with this bookmarked, so redirect somewhere
+            # that actually still exists.
+            conn = db.get_connection()
+            try:
+                logged_in = bool(self._current_user_id(conn))
+            finally:
+                conn.close()
+            self.send_response(302)
+            self.send_header("Location", "/flagged" if logged_in else "/login")
+            self.end_headers()
             return
 
         if parsed.path == "/lobbying":
@@ -1222,6 +1262,32 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
             self._send_html(200, PROFILE_VIEW_PAGE)
+            return
+
+        if parsed.path == "/flagged":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+            finally:
+                conn.close()
+            if not user_id:
+                self.send_response(302)
+                self.send_header("Location", "/login")
+                self.end_headers()
+                return
+            self._send_html(200, FLAGGED_PAGE)
+            return
+
+        if parsed.path == "/api/flagged":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Not logged in."})
+                    return
+                self._send_json(200, db.list_flagged_bills(conn, user_id))
+            finally:
+                conn.close()
             return
 
         if parsed.path == "/api/me":
@@ -1275,24 +1341,15 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/bill":
-            state = (qs.get("state") or [""])[0]
             bill = (qs.get("bill") or [""])[0]
-            if not state or not bill:
-                self._send_json(400, {"error": "Missing state or bill parameter."})
+            if not bill:
+                self._send_json(400, {"error": "Missing bill parameter."})
                 return
             try:
-                data = lookup_bill(state, bill)
+                data = lookup_bill(bill)
                 self._send_json(200, data)
             except Exception as e:
                 self._send_json(502, {"error": str(e)})
-            return
-
-        if parsed.path == "/api/watchlist":
-            conn = db.get_connection()
-            try:
-                self._send_json(200, db.list_watchlist(conn))
-            finally:
-                conn.close()
             return
 
         self.send_response(404)
@@ -1403,39 +1460,40 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
-        if parsed.path != "/api/watchlist":
-            self.send_response(404)
-            self.end_headers()
+        if parsed.path == "/api/flag":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            bill_id = body.get("bill_id")
+            if not bill_id:
+                self._send_json(400, {"error": "Missing bill_id."})
+                return
+
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Sign in to flag bills."})
+                    return
+                try:
+                    # Same "re-fetch fresh rather than trust the client"
+                    # pattern as /api/watchlist — see that route.
+                    bill = get_bill_detail(bill_id)
+                except Exception as e:
+                    self._send_json(502, {"error": str(e)})
+                    return
+                db.upsert_bill(conn, bill)
+                db.flag_bill(conn, user_id, bill_id)
+                conn.commit()
+                self._send_json(200, {"status": "flagged"})
+            finally:
+                conn.close()
             return
 
-        try:
-            body = self._read_json_body()
-        except (ValueError, json.JSONDecodeError):
-            self._send_json(400, {"error": "Invalid JSON body."})
-            return
-
-        bill_id = body.get("bill_id")
-        if not bill_id:
-            self._send_json(400, {"error": "Missing bill_id."})
-            return
-
-        try:
-            # Re-fetch fresh from LegiScan rather than trusting whatever
-            # the client already had lying around, so what gets stored is
-            # accurate at the moment it's added.
-            bill = get_bill_detail(bill_id)
-        except Exception as e:
-            self._send_json(502, {"error": str(e)})
-            return
-
-        conn = db.get_connection()
-        try:
-            db.upsert_bill(conn, bill)
-            db.add_to_watchlist(conn, bill_id)
-            conn.commit()
-            self._send_json(200, db.list_watchlist(conn))
-        finally:
-            conn.close()
+        self.send_response(404)
+        self.end_headers()
 
     def do_DELETE(self):
         if not self._authorized():
@@ -1444,23 +1502,27 @@ class Handler(BaseHTTPRequestHandler):
 
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
-        if parsed.path != "/api/watchlist":
-            self.send_response(404)
-            self.end_headers()
+
+        if parsed.path == "/api/flag":
+            bill_id = (qs.get("bill_id") or [""])[0]
+            if not bill_id:
+                self._send_json(400, {"error": "Missing bill_id parameter."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Sign in to manage flagged bills."})
+                    return
+                db.unflag_bill(conn, user_id, bill_id)
+                conn.commit()
+                self._send_json(200, db.list_flagged_bills(conn, user_id))
+            finally:
+                conn.close()
             return
 
-        bill_id = (qs.get("bill_id") or [""])[0]
-        if not bill_id:
-            self._send_json(400, {"error": "Missing bill_id parameter."})
-            return
-
-        conn = db.get_connection()
-        try:
-            db.remove_from_watchlist(conn, bill_id)
-            conn.commit()
-            self._send_json(200, db.list_watchlist(conn))
-        finally:
-            conn.close()
+        self.send_response(404)
+        self.end_headers()
 
 
 def main():
@@ -1485,7 +1547,7 @@ def main():
     # actually sees.
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     url = f"http://127.0.0.1:{PORT}" if not is_hosted else f"port {PORT}"
-    print(f"LegiScan Bill Lookup running on {url}  (Ctrl+C to stop)")
+    print(f"Bill Search running on {url}  (Ctrl+C to stop)")
     if not is_hosted:
         try:
             import webbrowser

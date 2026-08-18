@@ -180,3 +180,19 @@ CREATE TABLE IF NOT EXISTS lobbyist_profiles (
   existing_filer_id  TEXT,                 -- optional — CA SOS filer ID, if already registered
   created_at         TEXT
 );
+
+-- "Flagged bills" (the user-facing term) — a personal, per-user list,
+-- unlike `watchlist` above which is one shared list with no owner.
+-- Reuses that same underlying machinery rather than duplicating it:
+-- flagging a bill still upserts it into `bills` and adds it to the
+-- shared `watchlist` (so the daily refresh job keeps it fresh) — this
+-- table only adds the "which user cares about this bill" layer on top.
+-- Many-to-many: one bill can be flagged by many users, one user can
+-- flag many bills.
+CREATE TABLE IF NOT EXISTS flagged_bills (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id),
+  bill_id    INTEGER NOT NULL REFERENCES bills(id),
+  flagged_at TEXT,
+  UNIQUE(user_id, bill_id)
+);

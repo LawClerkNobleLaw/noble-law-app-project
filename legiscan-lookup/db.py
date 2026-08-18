@@ -106,13 +106,44 @@ def list_watchlist_bill_ids(conn):
     return [row["bill_id"] for row in conn.execute("SELECT bill_id FROM watchlist")]
 
 
-def list_watchlist(conn):
-    """Everything the /watchlist page needs to display, one row per
-    watched bill, joined against its stored bill data."""
+# ── Flagged bills — a personal, per-user list, unlike the shared
+# watchlist above. Reuses it underneath: flagging still upserts into
+# `bills` and `watchlist` (via add_to_watchlist) so the daily refresh
+# job keeps a flagged bill fresh — flagged_bills only adds "which user
+# cares about this one," a many-to-many relation the single shared
+# watchlist has no room for. ──
+
+def flag_bill(conn, user_id, bill_id):
+    add_to_watchlist(conn, bill_id)  # ensures the daily job keeps refreshing it
+    conn.execute(
+        """INSERT INTO flagged_bills (user_id, bill_id, flagged_at)
+           VALUES (?, ?, datetime('now'))
+           ON CONFLICT(user_id, bill_id) DO NOTHING""",
+        (user_id, bill_id),
+    )
+
+
+def unflag_bill(conn, user_id, bill_id):
+    conn.execute("DELETE FROM flagged_bills WHERE user_id = ? AND bill_id = ?", (user_id, bill_id))
+    still_flagged_by_someone = conn.execute(
+        "SELECT 1 FROM flagged_bills WHERE bill_id = ?", (bill_id,)
+    ).fetchone()
+    if not still_flagged_by_someone:
+        # Nobody has this one flagged anymore — stop spending daily
+        # LegiScan quota refreshing a bill nobody's tracking. Doesn't
+        # touch `bills` itself; just the "worth refreshing daily" list.
+        remove_from_watchlist(conn, bill_id)
+
+
+def list_flagged_bills(conn, user_id):
     rows = conn.execute(
-        """SELECT w.bill_id, w.added_at, w.last_checked_at,
+        """SELECT f.bill_id, f.flagged_at, w.last_checked_at,
                   b.state, b.bill_number, b.title, b.status_label, b.status_date, b.url
-           FROM watchlist w JOIN bills b ON b.id = w.bill_id
-           ORDER BY b.bill_number"""
+           FROM flagged_bills f
+           JOIN bills b ON b.id = f.bill_id
+           LEFT JOIN watchlist w ON w.bill_id = f.bill_id
+           WHERE f.user_id = ?
+           ORDER BY b.bill_number""",
+        (user_id,),
     ).fetchall()
     return [dict(r) for r in rows]

@@ -30,17 +30,27 @@ Then open **http://localhost:8420** if it doesn't open automatically.
 
 ## How it works
 
-Three things live in this app:
+Things that live in this app:
 
-- **Live lookup** (the original feature) — search a bill by state +
-  number at `/`, calls LegiScan on the spot via `getSearch`/`getBill`,
-  shows the result. Nothing is stored.
-- **Stored watch list** — add a bill from a lookup result and its
-  status/sponsors/history get saved to `db/billwatch.db`. See
-  `/watchlist`. A separate daily job, `refresh_watchlist.py`, re-checks
-  only the bills on that list once a day — not the whole session — to
-  stay well under LegiScan's free-tier query cap (see the math in that
-  file's docstring).
+- **Live lookup** (the original feature) — search a bill by number at
+  `/` (California only — the state was dropped from the search since
+  every user is a CA lobbyist), calls LegiScan on the spot via
+  `getSearch`/`getBill`, shows the result. Nothing is stored by the
+  search itself.
+- **Flagged bills** — sign in and click "Flag this bill" to add it to
+  your own personal list at `/flagged`; its status/sponsors/history get
+  saved to `db/billwatch.db` the same as before. This replaced an
+  earlier single watch list shared by everyone with no owner — that
+  made sense before individual accounts existed, but once they did, an
+  ownerless shared list where anyone could silently remove a bill
+  someone else was tracking was more liability than feature. A separate
+  daily job, `refresh_watchlist.py`, re-checks only flagged bills once a
+  day — not the whole session — to stay well under LegiScan's free-tier
+  query cap (see the math in that file's docstring).
+- **Individual accounts** — `/signup` (email + password, then a
+  CAL-ACCESS Form 601-style profile step), `/login`, `/profile`. Layered
+  inside the shared login below, not a replacement for it. Real
+  password hashing lives in `accounts.py`.
 - **CAL-ACCESS lobbying data** — a separate pipeline in the sibling
   `calaccess-pipeline/` folder downloads California's daily lobbying
   disclosure export and loads it into the same database
