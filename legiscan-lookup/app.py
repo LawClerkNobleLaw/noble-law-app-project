@@ -171,7 +171,6 @@ PAGE = f"""<!doctype html>
 <div class="wrap">
   <div class="top-nav"><span></span><a href="/watchlist">Watch list →</a></div>
   <h1>LegiScan Bill Lookup</h1>
-  <p class="sub">Runs locally on this Mac — every search calls the LegiScan API live.</p>
 
   <form id="f">
     <input id="state" placeholder="CA" maxlength="2" autocomplete="off" required>
@@ -418,11 +417,37 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
     def do_GET(self):
+        parsed = urlparse(self.path)
+
+        if parsed.path == "/internal/status":
+            # Same secret-gate as the two POST refresh routes, not the
+            # human Basic Auth login — a plain-JSON read of what's
+            # actually in the database and whether a refresh is running,
+            # so "did the last refresh actually work" doesn't depend on
+            # catching print() output in Render's log stream (which, per
+            # a real incident, can sit in a stdout buffer indefinitely
+            # inside a long-lived process — see refresh_calaccess.log()).
+            if not self._authorized_for_refresh():
+                self.send_response(404)
+                self.end_headers()
+                return
+            conn = db.get_connection()
+            try:
+                counts = {
+                    "bills": conn.execute("SELECT COUNT(*) AS n FROM bills").fetchone()["n"],
+                    "watchlist": conn.execute("SELECT COUNT(*) AS n FROM watchlist").fetchone()["n"],
+                    "lobbying_entities": conn.execute("SELECT COUNT(*) AS n FROM lobbying_entities").fetchone()["n"],
+                    "lobbying_disclosures": conn.execute("SELECT COUNT(*) AS n FROM lobbying_disclosures").fetchone()["n"],
+                }
+            finally:
+                conn.close()
+            self._send_json(200, {"counts": counts, "refresh_running": dict(_refresh_running)})
+            return
+
         if not self._authorized():
             self._require_auth()
             return
 
-        parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
 
         if parsed.path == "/":

@@ -78,7 +78,14 @@ def log(message):
     stamp = time.strftime("%b %-d, %-I:%M%p").lower()
     with open(LOG_PATH, "a") as f:
         f.write(f"{stamp} — {message}\n")
-    print(message)
+    # flush=True: stdout is block-buffered, not line-buffered, whenever
+    # it isn't attached to a terminal — exactly the case when this runs
+    # as a background thread inside app.py on Render. Real incident: an
+    # entire run's worth of log lines never appeared in Render's log
+    # stream because this job's total output was nowhere near the buffer
+    # size needed to trigger a flush on its own, and the web server
+    # process never exits to flush it at shutdown either.
+    print(message, flush=True)
 
 
 def _clean_lines(path):

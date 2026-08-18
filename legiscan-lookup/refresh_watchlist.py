@@ -38,7 +38,10 @@ def log(message):
     stamp = time.strftime("%b %-d, %-I:%M%p").lower()
     with open(LOG_PATH, "a") as f:
         f.write(f"{stamp} — {message}\n")
-    print(message)
+    # flush=True — see refresh_calaccess.py's log() for why this matters
+    # once this runs as a background thread inside app.py on Render
+    # rather than as its own short-lived local process.
+    print(message, flush=True)
 
 
 def refresh_one(conn, bill_id):
