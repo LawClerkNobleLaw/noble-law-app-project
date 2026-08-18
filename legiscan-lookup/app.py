@@ -7,13 +7,22 @@ internet access and can call the LegiScan API live, on demand, when you
 search. Start it with `python3 app.py` (or `./start.sh`), then open
 http://localhost:8420 in your browser.
 
-Three capabilities live here:
+Four capabilities live here:
 
   - Live lookup (the original feature): search a bill by state + number,
     call LegiScan on the spot, show the result. Nothing is stored.
   - Stored watch list (added in Phase 1, Session 5): add a bill to a
     watch list and its current status/sponsors/history get saved to
     the database. See /watchlist.
+  - Lobbying search (/lobbying): search the CAL-ACCESS firms/employers
+    (lobbying_entities) and quarterly disclosures (lobbying_disclosures)
+    that calaccess-pipeline/refresh_calaccess.py loads. Since roughly a
+    third of clients named in a disclosure have no independent
+    registration of their own (see that file's docstring), search
+    matches both the registered-entity name AND the free-text
+    client_name on disclosures, and a result's detail view shows BOTH
+    directions: what this entity filed (if it's a firm/employer that
+    files) and where this name was mentioned as someone else's client.
   - Internal refresh triggers (added for hosted deployment — see
     render.yaml): when this app runs locally, the two daily refreshes
     (LegiScan watch-list, CAL-ACCESS ingestion) are separate scripts
@@ -97,7 +106,7 @@ STYLE = """
     font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
   .wrap { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
-  .top-nav { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.25rem; }
+  .top-nav { display: flex; gap: 1.1rem; align-items: baseline; margin-bottom: 0.25rem; }
   .top-nav a { color: var(--accent); font-size: 0.85rem; text-decoration: none; }
   .top-nav a:hover { text-decoration: underline; }
   h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
@@ -156,7 +165,24 @@ STYLE = """
   #loading { display: none; color: var(--slate); font-size: 0.9rem; }
   #loading.show { display: block; }
   .empty { color: var(--slate); font-size: 0.9rem; }
+  tr.row-link { cursor: pointer; }
+  tr.row-link:hover { background: var(--accent-soft); }
+  .tag { display: inline-block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+    color: var(--slate); background: var(--accent-soft); padding: 0.1rem 0.5rem; border-radius: 999px; }
 """
+
+
+def nav_links(current):
+    """The 3 pages link to whichever OTHER two pages exist — computed
+    once per page constant below (these are built at import time, not
+    per-request, so this only ever runs 3 times total)."""
+    pages = [("/", "Lookup"), ("/watchlist", "Watch list"), ("/lobbying", "Lobbying search")]
+    parts = []
+    for href, label in pages:
+        if href == current:
+            continue
+        parts.append(f'<a href="{href}">{"← " if href == "/" else ""}{label}{"" if href == "/" else " →"}</a>')
+    return "".join(parts)
 
 
 PAGE = f"""<!doctype html>
@@ -169,7 +195,7 @@ PAGE = f"""<!doctype html>
 </head>
 <body>
 <div class="wrap">
-  <div class="top-nav"><span></span><a href="/watchlist">Watch list →</a></div>
+  <div class="top-nav">{nav_links("/")}</div>
   <h1>LegiScan Bill Lookup</h1>
 
   <form id="f">
@@ -278,7 +304,7 @@ WATCHLIST_PAGE = f"""<!doctype html>
 </head>
 <body>
 <div class="wrap">
-  <div class="top-nav"><a href="/">← Lookup</a><span></span></div>
+  <div class="top-nav">{nav_links("/watchlist")}</div>
   <h1>Watch list</h1>
   <p class="sub">Bills here are stored in the database and re-checked once a day, not looked up live.</p>
   <div id="error"></div>
@@ -340,6 +366,254 @@ load();
 </body>
 </html>
 """
+
+
+LOBBYING_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lobbying search — LegiScan Bill Lookup</title>
+<style>{STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top-nav">{nav_links("/lobbying")}</div>
+  <h1>Lobbying search</h1>
+  <p class="sub">California lobbying firms, employers, and quarterly disclosures from CAL-ACCESS.</p>
+
+  <form id="f">
+    <input id="q" placeholder="Firm, employer, or client name" autocomplete="off" required style="flex:1">
+    <button type="submit">Search</button>
+  </form>
+
+  <div id="loading">Searching…</div>
+  <div id="error"></div>
+  <div id="results"></div>
+  <div id="detail"></div>
+</div>
+
+<script>
+const form = document.getElementById('f');
+const resultsEl = document.getElementById('results');
+const detailEl = document.getElementById('detail');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+
+form.addEventListener('submit', async (e) => {{
+  e.preventDefault();
+  const q = document.getElementById('q').value.trim();
+  if (!q) return;
+
+  errorEl.className = ''; detailEl.innerHTML = ''; loadingEl.className = 'show';
+  form.querySelector('button').disabled = true;
+
+  try {{
+    const res = await fetch(`/api/lobbying/search?q=${{encodeURIComponent(q)}}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Search failed');
+    renderResults(data);
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }} finally {{
+    loadingEl.className = '';
+    form.querySelector('button').disabled = false;
+  }}
+}});
+
+function renderResults(rows) {{
+  if (!rows.length) {{
+    resultsEl.innerHTML = '<p class="empty">No firms, employers, or named clients match that.</p>';
+    return;
+  }}
+  resultsEl.innerHTML = `
+    <table>
+      <tr><th>Name</th><th>Type</th><th>Location</th><th>Status</th></tr>
+      ${{rows.map(r => `
+        <tr class="row-link" onclick='loadDetail(${{JSON.stringify(r).replace(/'/g, "&#39;")}})'>
+          <td>${{r.name}}</td>
+          <td>${{r.entity_type ? `<span class="tag">${{r.entity_type}}</span>` : `<span class="tag">named as client only</span>`}}</td>
+          <td>${{[r.city, r.state].filter(Boolean).join(', ')}}</td>
+          <td>${{r.registration_status || ''}}</td>
+        </tr>
+      `).join('')}}
+    </table>
+  `;
+}}
+
+async function loadDetail(r) {{
+  detailEl.innerHTML = '<p class="empty">Loading…</p>';
+  try {{
+    const params = r.id ? `id=${{encodeURIComponent(r.id)}}` : `name=${{encodeURIComponent(r.name)}}`;
+    const res = await fetch(`/api/lobbying/detail?${{params}}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load detail');
+    renderDetail(data);
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+function money(n) {{
+  return typeof n === 'number' ? '$' + n.toLocaleString(undefined, {{maximumFractionDigits: 0}}) : '';
+}}
+
+function highlight(text, name) {{
+  return (text || '').toLowerCase() === (name || '').toLowerCase() ? `<strong>${{text}}</strong>` : (text || '');
+}}
+
+function relationshipRows(rows, selectedName) {{
+  if (!rows.length) return '<p class="empty">No lobbying relationships found for this name.</p>';
+  return `
+    <table>
+      <tr><th>Firm</th><th>Client / employer</th><th>Period</th><th>Amount</th><th>Bill / activity</th></tr>
+      ${{rows.map(r => `
+        <tr>
+          <td>${{highlight(r.firm, selectedName)}}</td>
+          <td>${{highlight(r.client, selectedName)}}</td>
+          <td class="date">${{(r.period_start || '').split(' ')[0]}} – ${{(r.period_end || '').split(' ')[0]}}</td>
+          <td>${{money(r.amount_spent)}}</td>
+          <td>${{r.raw_bill_text || ''}}</td>
+        </tr>
+      `).join('')}}
+    </table>
+  `;
+}}
+
+function renderDetail(d) {{
+  const e = d.entity;
+  detailEl.innerHTML = `
+    <div class="card">
+      <div class="bill-title">${{d.name}}</div>
+      ${{e ? `
+        <div style="margin-top:0.3rem">
+          <span class="tag">${{e.entity_type || ''}}</span>
+          ${{e.registration_status ? `<span class="tag">${{e.registration_status}}</span>` : ''}}
+          ${{e.source_form ? `<span class="tag">Form ${{e.source_form}}</span>` : ''}}
+        </div>
+        <div class="bill-desc" style="margin-top:0.5rem">${{[e.city, e.state].filter(Boolean).join(', ')}}</div>
+      ` : '<div class="bill-desc" style="margin-top:0.3rem">Named as a client in a disclosure — no independent registration on file.</div>'}}
+    </div>
+    <h2 class="section">Lobbying relationships</h2>
+    ${{relationshipRows(d.relationships, d.name)}}
+  `;
+}}
+</script>
+</body>
+</html>
+"""
+
+
+def search_lobbying(conn, q):
+    """Matches BOTH the registered-entity name and the free-text
+    client_name on disclosures — see the module docstring for why the
+    second half matters (a client doesn't need its own registration to
+    be named in someone else's filing)."""
+    like = f"%{q}%"
+    entities = conn.execute(
+        "SELECT id, name, entity_type, city, state, registration_status "
+        "FROM lobbying_entities WHERE name LIKE ? ORDER BY name LIMIT 40",
+        (like,),
+    ).fetchall()
+    seen_lower = {(r["name"] or "").lower() for r in entities}
+
+    results = [
+        {
+            "kind": "entity", "id": r["id"], "name": r["name"], "entity_type": r["entity_type"],
+            "city": r["city"], "state": r["state"], "registration_status": r["registration_status"],
+        }
+        for r in entities
+    ]
+
+    client_rows = conn.execute(
+        "SELECT DISTINCT client_name FROM lobbying_disclosures WHERE client_name LIKE ? LIMIT 40",
+        (like,),
+    ).fetchall()
+    for row in client_rows:
+        name = row["client_name"]
+        if not name or name.lower() in seen_lower:
+            continue
+        seen_lower.add(name.lower())
+        results.append({
+            "kind": "client", "id": None, "name": name, "entity_type": None,
+            "city": None, "state": None, "registration_status": None,
+        })
+
+    results.sort(key=lambda r: (r["name"] or "").lower())
+    return results[:50]
+
+
+def lobbying_detail(conn, entity_id, name):
+    """Returns entity info (if this is a registered entity) plus every
+    disclosure line this name is involved in, either as the filer or as
+    the free-text 'other party' (client_name) — that second half is what
+    surfaces the ~35% of clients that only ever appear as free text on
+    someone else's filing, never independently registered.
+
+    The tricky part, found by testing against real data rather than
+    assumed from the column name: `client_name` does NOT always mean
+    "the client" — it's LPAY_CD's EMPLR_NAML field, reused across form
+    types for whichever party isn't the filer. On a firm's Form 625P2,
+    that's genuinely the paying client. On an EMPLOYER's Form 635P3B,
+    the filer already IS the employer/client, and the same field holds
+    the FIRM they paid instead — e.g. Meta Platforms' own 635P3B filings
+    list "Axiom Advisors" as client_name, meaning Meta paid Axiom, not
+    the reverse. So every row is resolved to real (firm, client) pairs
+    based on form_type, rather than assuming client_name always means
+    "the client" — labeling a firm as Meta's "client" would have been
+    backwards.
+    """
+    entity = None
+    if entity_id:
+        row = conn.execute(
+            "SELECT id, name, entity_type, city, state, registration_status, source_form "
+            "FROM lobbying_entities WHERE id = ?",
+            (entity_id,),
+        ).fetchone()
+        if row:
+            entity = dict(row)
+            name = row["name"]
+
+    raw_rows = []
+    if entity_id:
+        raw_rows += conn.execute(
+            "SELECT d.form_type, d.period_start, d.period_end, d.amount_spent, d.raw_bill_text, "
+            "d.filed_date, e.name AS filer_name, d.client_name AS other_party "
+            "FROM lobbying_disclosures d JOIN lobbying_entities e ON e.id = d.filer_entity_id "
+            "WHERE d.filer_entity_id = ? ORDER BY d.filed_date DESC LIMIT 100",
+            (entity_id,),
+        ).fetchall()
+    if name:
+        raw_rows += conn.execute(
+            "SELECT d.form_type, d.period_start, d.period_end, d.amount_spent, d.raw_bill_text, "
+            "d.filed_date, e.name AS filer_name, d.client_name AS other_party "
+            "FROM lobbying_disclosures d JOIN lobbying_entities e ON e.id = d.filer_entity_id "
+            "WHERE d.client_name = ? ORDER BY d.filed_date DESC LIMIT 100",
+            (name,),
+        ).fetchall()
+
+    relationships = []
+    for r in raw_rows:
+        row = dict(r)
+        # F625P2 = filed by the FIRM (other_party is who paid them).
+        # F635P3B = filed by the EMPLOYER (other_party is who THEY paid).
+        # Anything else: no reliable convention confirmed, so don't guess
+        # a direction — show the filer as "firm" rather than mislabel.
+        if row["form_type"] == "F635P3B":
+            firm, client = row["other_party"], row["filer_name"]
+        else:
+            firm, client = row["filer_name"], row["other_party"]
+        relationships.append({
+            "firm": firm, "client": client, "form_type": row["form_type"],
+            "period_start": row["period_start"], "period_end": row["period_end"],
+            "amount_spent": row["amount_spent"], "raw_bill_text": row["raw_bill_text"],
+            "filed_date": row["filed_date"],
+        })
+    relationships.sort(key=lambda r: r.get("filed_date") or "", reverse=True)
+
+    return {"entity": entity, "name": name, "relationships": relationships}
 
 
 def _trigger_refresh(job_name, target_fn):
@@ -456,6 +730,35 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/watchlist":
             self._send_html(200, WATCHLIST_PAGE)
+            return
+
+        if parsed.path == "/lobbying":
+            self._send_html(200, LOBBYING_PAGE)
+            return
+
+        if parsed.path == "/api/lobbying/search":
+            q = (qs.get("q") or [""])[0].strip()
+            if not q:
+                self._send_json(400, {"error": "Missing q parameter."})
+                return
+            conn = db.get_connection()
+            try:
+                self._send_json(200, search_lobbying(conn, q))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/lobbying/detail":
+            entity_id = (qs.get("id") or [""])[0]
+            name = (qs.get("name") or [""])[0].strip()
+            if not entity_id and not name:
+                self._send_json(400, {"error": "Missing id or name parameter."})
+                return
+            conn = db.get_connection()
+            try:
+                self._send_json(200, lobbying_detail(conn, entity_id, name))
+            finally:
+                conn.close()
             return
 
         if parsed.path == "/api/bill":
