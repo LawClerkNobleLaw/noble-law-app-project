@@ -9,7 +9,11 @@ services:
     name: legiscan-lookup
     runtime: python
     plan: starter
-    buildCommand: "true"
+    # pypdf (requirements.txt) is this app's one real dependency, added
+    # for pdf_forms.py's Form 601 filling — everything else is still
+    # plain standard library, so this is the first build that actually
+    # needs to install anything.
+    buildCommand: "pip install -r legiscan-lookup/requirements.txt"
     # Runs from the repo root, not rootDir: legiscan-lookup — this app now
     # imports refresh_calaccess.py from the sibling calaccess-pipeline/
     # folder, and Render only rebuilds a service on changes within its
@@ -29,6 +33,26 @@ services:
         sync: false
       - key: BILLWATCH_DATA_DIR
         value: /var/data
+      # Daily "what changed" digest email (see digest.py/mailer.py) — all
+      # optional. Leave unset and the daily refresh still runs fine; it
+      # just logs what it would have emailed instead of sending anything
+      # (see mailer.py). Any standard SMTP provider works here (Gmail,
+      # SendGrid/Postmark/SES's SMTP relay, etc.) — pick one and fill in
+      # its host/port/credentials.
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      # Used to build the "View action report" link in each digest email
+      # — not secret, just needs to match this service's real public URL.
+      - key: APP_BASE_URL
+        value: https://legiscan-lookup.onrender.com
 
   # Thin trigger only — no disk, no real logic. Just wakes up, makes one
   # authenticated POST to the web service over Render's private network,

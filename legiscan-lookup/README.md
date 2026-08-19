@@ -22,6 +22,9 @@ Then open **http://localhost:8420** if it doesn't open automatically.
 ## Requirements
 
 - Python 3 (already on macOS by default)
+- `pip3 install -r requirements.txt` — just `pypdf`, for the disclosure-form
+  PDF filling (see "Prepare my disclosure form" below). Everything else in
+  the app is plain standard library.
 - `LEGISCAN_API_KEY` set in your environment — this is already configured
   in `~/.zshrc`. If you ever need to change it:
   ```
@@ -55,27 +58,56 @@ Things that live in this app:
   Real password hashing lives in `accounts.py`.
 - **Clients** — `/clients` lets each signed-in user keep their own list
   of clients (Form 602/603-style: name, business address, industry/
-  interests, an optional CAL-ACCESS filer ID for future cross-checking).
-  On `/flagged`, any flagged bill can be assigned to one or more of a
-  user's clients, each with its own position — Support, Oppose, or
-  Watch — changeable at any time from the same dropdown.
+  interests, an optional CAL-ACCESS filer ID for future cross-checking),
+  plus three Form 601-specific fields — effective date, period of
+  contract, agencies to be lobbied — used only to pre-fill disclosure
+  forms (below). Existing clients can be edited to add these later, not
+  just set at creation. On `/flagged`, any flagged bill can be assigned
+  to one or more of a user's clients, each with its own position —
+  Support, Oppose, or Watch — changeable at any time from the same
+  dropdown.
 - **Action report** — `/report?bill_id=...` (linked from `/flagged`)
   rolls up everything about one bill in one place: current status, full
   status history, amendment history, upcoming hearings, and — if it's
   assigned to one of the signed-in user's clients — that client's name
   and position.
+- **Daily digest email** — the same daily job that re-checks flagged
+  bills (`refresh_watchlist.py`) now also diffs each bill's old state
+  against the fresh LegiScan response — status change, new amendment,
+  newly scheduled hearing, new vote (`db.snapshot_bill_state`/
+  `db.diff_bill_state`) — and emails each affected user one digest a
+  day (`digest.py`) with a one-line plain-English summary per changed
+  bill and a link straight to its `/report`. A user with nothing
+  changed on any of their flagged bills gets no email at all. Actually
+  sending requires SMTP credentials (see Hosting on Render, below) —
+  without them, it just logs what it would have sent
+  (`mailer.py`).
 - **CAL-ACCESS lobbying data** — a separate pipeline in the sibling
   `calaccess-pipeline/` folder downloads California's daily lobbying
   disclosure export and loads it into the same database
   (`lobbying_entities`, `lobbying_disclosures`), so it can eventually be
   joined against bill data. See `calaccess-pipeline/refresh_calaccess.py`
   and `client_interest_tracking_framework.md`.
+- **Prepare my disclosure form** — `/disclosures` lets a signed-in user
+  generate a real FPPC form (starting with Form 601 — Lobbying Firm
+  Registration Statement), pre-filled from their own profile and
+  clients (`pdf_forms.py`). The filled PDF is always shown for review
+  first; nothing is final until an explicit sign-off (a typed legal
+  name + a confirmation checkbox — `db.sign_off_prepared_filing`) marks
+  it "ready to file." **This app never files anything with the FPPC or
+  Secretary of State** — it only prepares the document for the user to
+  file themselves. Known gap: subcontracted clients and any individual
+  lobbyists beyond the account holder aren't collected anywhere in this
+  app's data model, so those stay blank rather than guessed — the
+  review page says so explicitly.
 
-`app.py` itself has no dependencies beyond the Python standard library.
-The actual "talk to LegiScan" logic lives in `legiscan_client.py`, and the
-database logic lives in `db.py` (and `calaccess-pipeline/calaccess_db.py`)
-— shared with the daily refresh scripts so nothing is duplicated between
-the live app and the jobs.
+`app.py` itself has no dependencies beyond the Python standard library
+— the one exception is `pypdf` (see `requirements.txt`), used only by
+`pdf_forms.py` to fill in real PDF form fields; nothing else in the app
+touches it. The actual "talk to LegiScan" logic lives in
+`legiscan_client.py`, and the database logic lives in `db.py` (and
+`calaccess-pipeline/calaccess_db.py`) — shared with the daily refresh
+scripts so nothing is duplicated between the live app and the jobs.
 
 **Locally**, both daily refreshes run via `launchd` (see `launchd/` in
 this folder and in `calaccess-pipeline/`) — independent scripts that open
@@ -118,6 +150,13 @@ in this folder): the web app, and two thin cron triggers. Steps:
      value for all three services** — the two cron jobs use it to prove
      to the web app that a refresh trigger is legitimate, not a stranger
      hitting the endpoint.
+   - `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` /
+     `EMAIL_FROM` — **optional**, web service only. Only needed for the
+     daily digest email to actually send; any standard SMTP provider
+     works (Gmail with an app password, SendGrid/Postmark/SES's SMTP
+     relay, etc.). Leave these unset and everything else still works —
+     the daily job just logs what it would have sent instead of
+     emailing anyone.
 5. Deploy. Render gives the web service a permanent URL like
    `https://legiscan-lookup.onrender.com` — share that with coworkers.
    The site itself is open to anyone with the link; each coworker signs

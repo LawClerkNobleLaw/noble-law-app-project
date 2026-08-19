@@ -15,6 +15,7 @@ itself always comes from the repo checkout either way — it's source, not
 data, and isn't on the persistent disk.
 """
 
+import json
 import os
 import sqlite3
 
@@ -57,6 +58,96 @@ def _migrate(conn):
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(bill_client_links)")}
     if "position" not in cols:
         conn.execute("ALTER TABLE bill_client_links ADD COLUMN position TEXT NOT NULL DEFAULT 'watch'")
+
+    client_cols = {row["name"] for row in conn.execute("PRAGMA table_info(clients)")}
+    for col in ("effective_date", "contract_period", "agencies_lobbied"):
+        if col not in client_cols:
+            conn.execute(f"ALTER TABLE clients ADD COLUMN {col} TEXT")
+
+
+# ── Change detection for the daily digest email — see digest.py. Both
+# functions here exist because upsert_bill() below is a full
+# replace-not-diff (same reasoning as the sponsors/history/amendments/
+# hearings/votes tables it rewrites): by the time anything could compare
+# "old vs new," the old rows would already be gone. So the caller
+# (refresh_watchlist.py) must call snapshot_bill_state() BEFORE
+# upsert_bill(), then diff_bill_state() with that snapshot and the fresh
+# bill dict AFTER — this module just supplies both halves. ──
+
+def snapshot_bill_state(conn, bill_id):
+    """Capture just enough of a bill's current state to diff against
+    after the next upsert_bill() overwrites it. Returns None if this
+    bill has never been synced before — nothing to compare against, and
+    a first sighting isn't a "change"."""
+    bill_row = conn.execute(
+        "SELECT status_code, status_label, status_date FROM bills WHERE id = ?", (bill_id,)
+    ).fetchone()
+    if not bill_row:
+        return None
+    return {
+        "status_code": bill_row["status_code"],
+        "status_label": bill_row["status_label"],
+        "status_date": bill_row["status_date"],
+        "amendment_ids": {
+            r["amendment_id"] for r in conn.execute(
+                "SELECT amendment_id FROM bill_amendments WHERE bill_id = ?", (bill_id,)
+            ).fetchall()
+            if r["amendment_id"] is not None
+        },
+        "hearing_keys": {
+            (r["date"], r["time"], r["event_type"]) for r in conn.execute(
+                "SELECT date, time, event_type FROM bill_hearings WHERE bill_id = ?", (bill_id,)
+            ).fetchall()
+        },
+        "vote_ids": {
+            r["id"] for r in conn.execute("SELECT id FROM votes WHERE bill_id = ?", (bill_id,)).fetchall()
+        },
+    }
+
+
+def diff_bill_state(before, bill):
+    """Compare a snapshot from snapshot_bill_state() against a freshly
+    fetched (not-yet-stored) bill dict from legiscan_client.get_bill_detail,
+    and return a list of plain-English one-sentence change descriptions —
+    empty if `before` is None or nothing actually changed. Four change
+    types, in the order the digest email lists them: status, amendments,
+    hearings, votes."""
+    if before is None:
+        return []
+    changes = []
+
+    if bill.get("status_code") != before["status_code"]:
+        changes.append(
+            f"Status changed from {before['status_label'] or 'Unknown'} to "
+            f"{bill.get('status_label') or 'Unknown'} (as of {bill.get('status_date') or 'an unknown date'})."
+        )
+
+    for a in bill.get("amendments", []):
+        if a.get("amendment_id") is not None and a["amendment_id"] not in before["amendment_ids"]:
+            adopted = " — adopted" if a.get("adopted") else ""
+            changes.append(
+                f"New amendment in the {a.get('chamber') or 'legislature'} "
+                f"on {a.get('date') or 'an unspecified date'}{adopted}."
+            )
+
+    for h in bill.get("hearings", []):
+        key = (h.get("date"), h.get("time"), h.get("event_type"))
+        if key not in before["hearing_keys"]:
+            when = h.get("date") or "an unspecified date"
+            if h.get("time"):
+                when += f" at {h['time']}"
+            what = f" — {h['description']}" if h.get("description") else ""
+            changes.append(f"Hearing scheduled for {when}{what}.")
+
+    for v in bill.get("votes", []):
+        if v.get("roll_call_id") is not None and v["roll_call_id"] not in before["vote_ids"]:
+            outcome = "passed" if v.get("passed") else "failed"
+            changes.append(
+                f"Vote recorded in the {v.get('chamber') or 'legislature'}: "
+                f"{outcome} {v.get('yea') or 0}-{v.get('nay') or 0}."
+            )
+
+    return changes
 
 
 def upsert_bill(conn, bill):
@@ -113,6 +204,20 @@ def upsert_bill(conn, bill):
         [
             (bill["id"], h.get("event_type"), h.get("date"), h.get("time"), h.get("location"), h.get("description"))
             for h in bill.get("hearings", [])
+        ],
+    )
+    conn.execute("DELETE FROM votes WHERE bill_id = ?", (bill["id"],))
+    conn.executemany(
+        """INSERT INTO votes (id, bill_id, date, chamber, description, yea, nay, nv, absent, total, passed)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        [
+            (
+                v["roll_call_id"], bill["id"], v.get("date"), v.get("chamber"), v.get("description"),
+                v.get("yea"), v.get("nay"), v.get("nv"), v.get("absent"), v.get("total"),
+                int(bool(v.get("passed"))),
+            )
+            for v in bill.get("votes", [])
+            if v.get("roll_call_id") is not None  # id is the primary key — can't insert without one
         ],
     )
 
@@ -191,6 +296,36 @@ def list_flagged_bills(conn, user_id):
     return result
 
 
+# ── Support for the daily digest email — see digest.py. ──
+
+def list_users_with_flagged_bills(conn):
+    """[(user_id, email), ...] for every user who currently has at least
+    one flagged bill — the candidate list the daily digest job starts
+    from, before narrowing down to only those whose bills actually
+    changed today."""
+    rows = conn.execute(
+        """SELECT DISTINCT u.id AS user_id, u.email
+           FROM users u JOIN flagged_bills f ON f.user_id = u.id"""
+    ).fetchall()
+    return [(r["user_id"], r["email"]) for r in rows]
+
+
+def list_flagged_bill_ids_for_user(conn, user_id):
+    return {r["bill_id"] for r in conn.execute(
+        "SELECT bill_id FROM flagged_bills WHERE user_id = ?", (user_id,)
+    ).fetchall()}
+
+
+def get_bill_basic(conn, bill_id):
+    """Just enough about a bill to reference it in a digest email —
+    not the full db.get_bill_report() payload, which pulls history/
+    amendments/hearings the digest doesn't need."""
+    row = conn.execute(
+        "SELECT id AS bill_id, state, bill_number, title FROM bills WHERE id = ?", (bill_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
 # ── Clients — one-to-many with a user, unlike flagged_bills (many-to-
 # many) or lobbyist_profiles (one-to-one). No cross-checking against
 # lobbying_entities yet — existing_filer_id is stored for that future
@@ -200,13 +335,16 @@ def create_client(conn, user_id, fields):
     cur = conn.execute(
         """INSERT INTO clients
              (user_id, name, bus_addr1, bus_city, bus_st, bus_zip4,
-              interests, existing_filer_id, created_at)
-           VALUES (?,?,?,?,?,?,?,?, datetime('now'))""",
+              interests, existing_filer_id, effective_date, contract_period,
+              agencies_lobbied, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?, datetime('now'))""",
         (
             user_id, fields.get("name"),
             fields.get("bus_addr1"), fields.get("bus_city"),
             fields.get("bus_st"), fields.get("bus_zip4"),
             fields.get("interests"), fields.get("existing_filer_id") or None,
+            fields.get("effective_date") or None, fields.get("contract_period") or None,
+            fields.get("agencies_lobbied") or None,
         ),
     )
     return cur.lastrowid
@@ -217,6 +355,29 @@ def list_clients(conn, user_id):
         "SELECT * FROM clients WHERE user_id = ? ORDER BY name", (user_id,)
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def update_client(conn, user_id, client_id, fields):
+    """Scoped to user_id, same reasoning as delete_client. Added so a
+    client created before effective_date/contract_period/
+    agencies_lobbied existed (or before a user had that information
+    handy) can still have them filled in later — without this, those
+    three fields could only ever be set at creation time, which would
+    leave every already-existing client permanently gapped."""
+    conn.execute(
+        """UPDATE clients
+           SET name = ?, bus_addr1 = ?, bus_city = ?, bus_st = ?, bus_zip4 = ?,
+               interests = ?, existing_filer_id = ?, effective_date = ?,
+               contract_period = ?, agencies_lobbied = ?
+           WHERE id = ? AND user_id = ?""",
+        (
+            fields.get("name"), fields.get("bus_addr1"), fields.get("bus_city"),
+            fields.get("bus_st"), fields.get("bus_zip4"), fields.get("interests"),
+            fields.get("existing_filer_id") or None, fields.get("effective_date") or None,
+            fields.get("contract_period") or None, fields.get("agencies_lobbied") or None,
+            client_id, user_id,
+        ),
+    )
 
 
 def delete_client(conn, user_id, client_id):
@@ -336,3 +497,60 @@ def get_bill_report(conn, user_id, bill_id):
     ]
     result["assigned_clients"] = clients_for_bills(conn, user_id, [bill_id]).get(bill_id, [])
     return result
+
+
+# ── "Prepare my disclosure form" — see pdf_forms.py for how field_data
+# actually turns into a filled PDF. Everything here just stores/reads
+# that JSON snapshot and the sign-off state around it. ──
+
+def _row_to_prepared_filing(row):
+    d = dict(row)
+    d["field_data"] = json.loads(d["field_data"])
+    d["confirmed_accurate"] = bool(d["confirmed_accurate"])
+    return d
+
+
+def create_prepared_filing(conn, user_id, form_type, period_label, field_data):
+    cur = conn.execute(
+        """INSERT INTO prepared_filings (user_id, form_type, period_label, field_data, created_at)
+           VALUES (?, ?, ?, ?, datetime('now'))""",
+        (user_id, form_type, period_label, json.dumps(field_data)),
+    )
+    return cur.lastrowid
+
+
+def get_prepared_filing(conn, user_id, filing_id):
+    """Scoped to user_id — same reasoning as delete_client/unflag_bill:
+    never trust a client-supplied ID alone for a per-user record."""
+    row = conn.execute(
+        "SELECT * FROM prepared_filings WHERE id = ? AND user_id = ?", (filing_id, user_id)
+    ).fetchone()
+    return _row_to_prepared_filing(row) if row else None
+
+
+def list_prepared_filings(conn, user_id):
+    rows = conn.execute(
+        "SELECT * FROM prepared_filings WHERE user_id = ? ORDER BY created_at DESC", (user_id,)
+    ).fetchall()
+    return [_row_to_prepared_filing(r) for r in rows]
+
+
+def sign_off_prepared_filing(conn, user_id, filing_id, signed_name, confirmed_accurate):
+    """The only path that can move a filing from 'draft' to
+    'ready_to_file' — both a non-empty typed name AND the checkbox have
+    to be true; either alone leaves it a draft. Raises ValueError (safe
+    to show the user) if the filing doesn't exist or isn't theirs."""
+    filing = get_prepared_filing(conn, user_id, filing_id)
+    if not filing:
+        raise ValueError("No prepared filing found.")
+    signed_name = (signed_name or "").strip()
+    if not signed_name or not confirmed_accurate:
+        raise ValueError("A typed legal name and the confirmation checkbox are both required.")
+    conn.execute(
+        """UPDATE prepared_filings
+           SET status = 'ready_to_file', signed_name = ?, confirmed_accurate = 1,
+               signed_at = datetime('now')
+           WHERE id = ? AND user_id = ?""",
+        (signed_name, filing_id, user_id),
+    )
+    return get_prepared_filing(conn, user_id, filing_id)

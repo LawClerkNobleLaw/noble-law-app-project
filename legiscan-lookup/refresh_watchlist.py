@@ -10,9 +10,17 @@ What it does, in order:
   1. Reads the list of watched bill IDs out of db/billwatch.db.
   2. Calls LegiScan once per watched bill (one query each — see the quota
      math below).
-  3. Saves the fresh status/sponsors/history via the same db.upsert_bill()
-     the live app uses when a bill is first added.
-  4. Appends one plain-English line to logs/refresh.log summarizing the
+  3. Before saving, snapshots what the bill's row already looked like
+     (db.snapshot_bill_state) and diffs it against the fresh LegiScan
+     response (db.diff_bill_state) — status change, new amendment,
+     newly scheduled hearing, new vote — then saves the fresh
+     status/sponsors/history/amendments/hearings/votes via the same
+     db.upsert_bill() the live app uses when a bill is first added.
+  4. Once every watched bill's been checked, hands the whole day's
+     changes to digest.py, which emails one "what changed" digest per
+     user per day — only to users who actually have a change on one of
+     THEIR flagged bills, nobody else.
+  5. Appends one plain-English line to logs/refresh.log summarizing the
      run, so it can be checked without reading any code.
 
 Quota math: LegiScan's free tier is 30,000 queries/month. Even a 200-bill
@@ -27,6 +35,7 @@ import os
 import time
 
 import db
+import digest
 from legiscan_client import get_bill_detail
 
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
@@ -45,15 +54,28 @@ def log(message):
 
 
 def refresh_one(conn, bill_id):
-    """Returns True if the bill's status actually changed, False if not,
-    raises on any LegiScan/network error (caller decides how to count it)."""
+    """Returns (changed, digest_changes). `changed` is True if LegiScan's
+    own change_hash moved at all (same meaning as before — drives the
+    "N changed" count in the log line). `digest_changes` is the more
+    specific status/amendment/hearing/vote breakdown the daily digest
+    email is built from — not the same thing as `changed`, since a
+    change_hash bump can happen for reasons this app doesn't have a
+    sentence for (e.g. a text-only correction), and would otherwise show
+    up as a change with nothing to say about it.
+
+    Snapshotting has to happen BEFORE upsert_bill() — that call replaces
+    the old rows outright, so this is the only point where "old" and
+    "new" both still exist to compare. Raises on any LegiScan/network
+    error (caller decides how to count it)."""
     before = conn.execute("SELECT status_code, change_hash FROM bills WHERE id = ?", (bill_id,)).fetchone()
+    before_state = db.snapshot_bill_state(conn, bill_id)
     bill = get_bill_detail(bill_id)
+    digest_changes = db.diff_bill_state(before_state, bill)
     db.upsert_bill(conn, bill)
     db.touch_watchlist(conn, bill_id)
     conn.commit()
     changed = (not before) or before["change_hash"] != bill.get("change_hash")
-    return changed
+    return changed, digest_changes
 
 
 def main():
@@ -68,10 +90,14 @@ def main():
         changed_count = 0
         error_count = 0
         errors = []
+        changes_by_bill = {}
         for bill_id in bill_ids:
             try:
-                if refresh_one(conn, bill_id):
+                changed, digest_changes = refresh_one(conn, bill_id)
+                if changed:
                     changed_count += 1
+                if digest_changes:
+                    changes_by_bill[bill_id] = digest_changes
             except Exception as e:
                 error_count += 1
                 errors.append(f"bill {bill_id}: {e}")
@@ -80,6 +106,14 @@ def main():
         log(summary)
         for err in errors:
             log(f"  error — {err}")
+
+        digest_summary = digest.send_all_digests(conn, changes_by_bill)
+        log(
+            f"digest: {digest_summary['sent']} sent, "
+            f"{digest_summary['not_configured']} not sent (SMTP unconfigured), "
+            f"{digest_summary['skipped']} skipped (no changes), "
+            f"{digest_summary['errors']} error(s)"
+        )
     finally:
         conn.close()
 

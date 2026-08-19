@@ -243,6 +243,13 @@ CREATE TABLE IF NOT EXISTS clients (
   bus_addr1          TEXT, bus_city TEXT, bus_st TEXT, bus_zip4 TEXT,  -- Form 603-style business address
   interests          TEXT,                 -- Form 602: description of the client's industry/interests
   existing_filer_id  TEXT,                 -- optional — for future cross-check against lobbying_entities
+  -- Form 601 Part II asks for these three per client relationship —
+  -- added once "Prepare my disclosure form" (pdf_forms.py) needed them;
+  -- all optional, since not every client relationship has them decided
+  -- yet and existing clients were created before these existed.
+  effective_date     TEXT,                 -- Form 601: "Effective Date" — when lobbying for this client began
+  contract_period    TEXT,                 -- Form 601: "Period of Contract" — free text (e.g. a date range, or "Ongoing")
+  agencies_lobbied   TEXT,                 -- Form 601: "Agencies to be Lobbied" on this client's behalf
   created_at         TEXT
 );
 
@@ -266,4 +273,31 @@ CREATE TABLE IF NOT EXISTS bill_client_links (
   position  TEXT NOT NULL DEFAULT 'watch',
   linked_at TEXT,
   UNIQUE(user_id, bill_id, client_id)
+);
+
+-- "Prepare my disclosure form" — one row per draft/prepared filing.
+-- field_data is a JSON snapshot of every value used to fill the PDF at
+-- the moment it was generated, not a live pointer back to the profile/
+-- clients tables — so what a user reviews and signs off on can't
+-- silently drift if they edit their profile or clients afterward. If
+-- their real data changes, they prepare a fresh filing rather than this
+-- one mutating out from under a signature.
+--
+-- status is derived, not just decorative: 'draft' until both
+-- signed_name and confirmed_accurate are set (see db.sign_off_filing),
+-- then 'ready_to_file'. There is deliberately no status beyond that —
+-- this app never submits anything to the FPPC or Secretary of State;
+-- "ready_to_file" only means "reviewed and ready for the user to go
+-- file it themselves."
+CREATE TABLE IF NOT EXISTS prepared_filings (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id            INTEGER NOT NULL REFERENCES users(id),
+  form_type          TEXT NOT NULL,            -- '601' for now — more forms later
+  period_label       TEXT,                     -- NULL when the form has no reporting period (601: none — it's session-based, computed automatically)
+  field_data         TEXT NOT NULL,            -- JSON: the exact values used to fill the PDF
+  status             TEXT NOT NULL DEFAULT 'draft',  -- 'draft' | 'ready_to_file'
+  signed_name        TEXT,
+  confirmed_accurate INTEGER NOT NULL DEFAULT 0,      -- 0/1
+  signed_at          TEXT,
+  created_at         TEXT
 );

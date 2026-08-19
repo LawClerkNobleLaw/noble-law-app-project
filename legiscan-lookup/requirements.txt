@@ -1,0 +1,5 @@
+# The only dependency this app has beyond the Python standard library —
+# used exclusively by pdf_forms.py to fill in real FPPC disclosure form
+# PDFs (starting with Form 601) with data already stored in the app.
+# See pdf_forms.py's module docstring for why this one exception exists.
+pypdf==6.16.1

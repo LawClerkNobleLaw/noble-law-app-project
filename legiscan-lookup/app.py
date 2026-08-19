@@ -72,6 +72,7 @@ that's not set (e.g. you're running this from a non-login shell), it falls
 back to reading the `export LEGISCAN_API_KEY=...` line out of ~/.zshrc.
 """
 
+import datetime
 import hmac
 import json
 import os
@@ -83,6 +84,7 @@ from urllib.parse import urlparse, parse_qs
 
 import accounts
 import db
+import pdf_forms
 import refresh_watchlist
 from legiscan_client import get_api_key, lookup_bill, get_bill_detail
 
@@ -268,6 +270,7 @@ ACCOUNT_MENU_SCRIPT = """
             <a href="/profile">View profile</a>
             <a href="/flagged">My flagged bills</a>
             <a href="/clients">Clients</a>
+            <a href="/disclosures">Disclosure forms</a>
             <button type="button" id="sign-out-btn">Sign out</button>
           </div>
         </details>
@@ -1106,7 +1109,23 @@ CLIENTS_PAGE = f"""<!doctype html>
       <input id="existing_filer_id" placeholder="e.g. 1486088" style="width:100%">
     </label>
 
-    <button type="submit" style="margin-top:1rem">Add client →</button>
+    <div style="flex:1 1 100%">
+      <h2 class="section" style="margin-top:1.2rem">For disclosure forms <span style="font-weight:400;text-transform:none">(optional — used to pre-fill Form 601, see /disclosures)</span></h2>
+    </div>
+    <label style="flex:1">
+      <div class="sub" style="margin:0 0 0.3rem">Effective date</div>
+      <input id="effective_date" type="date" style="width:100%">
+    </label>
+    <label style="flex:1">
+      <div class="sub" style="margin:0 0 0.3rem">Period of contract</div>
+      <input id="contract_period" placeholder="e.g. Ongoing, or a date range" style="width:100%">
+    </label>
+    <label style="flex:1 1 100%">
+      <div class="sub" style="margin:1.2rem 0 0.3rem">Agencies to be lobbied on this client's behalf</div>
+      <textarea id="agencies_lobbied" rows="2" style="width:100%"></textarea>
+    </label>
+
+    <button type="submit" id="submit-client-btn" style="margin-top:1rem">Add client →</button>
     <button type="button" id="cancel-client-btn" class="secondary" style="margin-top:1rem">Cancel</button>
   </form>
 
@@ -1124,6 +1143,9 @@ const loadingEl = document.getElementById('loading');
 const listEl = document.getElementById('list');
 const addBtn = document.getElementById('add-client-btn');
 const cancelBtn = document.getElementById('cancel-client-btn');
+const submitBtn = document.getElementById('submit-client-btn');
+let allClients = [];
+let editingId = null;  // null = creating a new client; otherwise the id being edited
 
 function showForm() {{
   form.style.display = 'flex';
@@ -1134,7 +1156,27 @@ function hideForm() {{
   form.style.display = 'none';
   addBtn.style.display = '';
   form.reset();
+  editingId = null;
+  submitBtn.textContent = 'Add client →';
   errorEl.className = '';
+}}
+
+function editClient(id) {{
+  const c = allClients.find(x => x.id === id);
+  if (!c) return;
+  editingId = id;
+  document.getElementById('name').value = c.name || '';
+  document.getElementById('bus_addr1').value = c.bus_addr1 || '';
+  document.getElementById('bus_city').value = c.bus_city || '';
+  document.getElementById('bus_st').value = c.bus_st || '';
+  document.getElementById('bus_zip4').value = c.bus_zip4 || '';
+  document.getElementById('interests').value = c.interests || '';
+  document.getElementById('existing_filer_id').value = c.existing_filer_id || '';
+  document.getElementById('effective_date').value = c.effective_date || '';
+  document.getElementById('contract_period').value = c.contract_period || '';
+  document.getElementById('agencies_lobbied').value = c.agencies_lobbied || '';
+  submitBtn.textContent = 'Save changes →';
+  showForm();
 }}
 
 addBtn.addEventListener('click', showForm);
@@ -1146,21 +1188,26 @@ form.addEventListener('submit', async (e) => {{
   form.querySelector('button[type="submit"]').disabled = true;
 
   try {{
+    const body = {{
+      name: document.getElementById('name').value.trim(),
+      bus_addr1: document.getElementById('bus_addr1').value.trim(),
+      bus_city: document.getElementById('bus_city').value.trim(),
+      bus_st: document.getElementById('bus_st').value.trim(),
+      bus_zip4: document.getElementById('bus_zip4').value.trim(),
+      interests: document.getElementById('interests').value.trim(),
+      existing_filer_id: document.getElementById('existing_filer_id').value.trim(),
+      effective_date: document.getElementById('effective_date').value.trim(),
+      contract_period: document.getElementById('contract_period').value.trim(),
+      agencies_lobbied: document.getElementById('agencies_lobbied').value.trim(),
+    }};
+    if (editingId) body.id = editingId;
     const res = await fetch('/api/clients', {{
       method: 'POST',
       headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{
-        name: document.getElementById('name').value.trim(),
-        bus_addr1: document.getElementById('bus_addr1').value.trim(),
-        bus_city: document.getElementById('bus_city').value.trim(),
-        bus_st: document.getElementById('bus_st').value.trim(),
-        bus_zip4: document.getElementById('bus_zip4').value.trim(),
-        interests: document.getElementById('interests').value.trim(),
-        existing_filer_id: document.getElementById('existing_filer_id').value.trim(),
-      }}),
+      body: JSON.stringify(body),
     }});
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not add client');
+    if (!res.ok) throw new Error(data.error || 'Could not save client');
     hideForm();
     load();
   }} catch (err) {{
@@ -1194,6 +1241,7 @@ async function load() {{
       return;
     }}
     const rows = await res.json();
+    allClients = rows;
     render(rows);
   }} catch (err) {{
     errorEl.textContent = err.message;
@@ -1215,7 +1263,12 @@ function render(rows) {{
           <td>${{[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', ')}}</td>
           <td>${{c.interests || ''}}</td>
           <td>${{c.existing_filer_id || ''}}</td>
-          <td><button class="danger" onclick="removeClient(${{c.id}})">Remove</button></td>
+          <td>
+            <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
+              <a class="secondary" href="#" onclick="event.preventDefault(); editClient(${{c.id}})">Edit</a>
+              <button class="danger" onclick="removeClient(${{c.id}})">Remove</button>
+            </div>
+          </td>
         </tr>
       `).join('')}}
     </table>
@@ -1331,6 +1384,272 @@ function render(r) {{
     ${{hearingRows
       ? `<table><tr><th>When</th><th>Type</th><th>Details</th></tr>${{hearingRows}}</table>`
       : '<p class="empty">No upcoming hearings scheduled.</p>'}}
+  `;
+}}
+
+load();
+</script>
+</body>
+</html>
+"""
+
+
+# "Prepare my disclosure form" — /disclosures (pick a form, generate a
+# draft, see everything you've prepared before) and /disclosures/review
+# (one draft: the actual filled PDF, known-gap notes, and the sign-off
+# step). This app never files anything itself — see pdf_forms.py and
+# db.sign_off_prepared_filing for where that boundary is enforced.
+DISCLOSURES_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Disclosure Forms — Bill Search</title>
+<style>{STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+  {top_nav("/disclosures")}
+  <h1>Disclosure Forms</h1>
+  <p class="sub">Prepare a real FPPC disclosure form, pre-filled from your profile and clients. This app never files anything on your behalf — it only prepares the document for you to review, sign off on, and file yourself.</p>
+
+  <form id="f">
+    <label style="flex:1 1 100%">
+      <div class="sub" style="margin:0 0 0.3rem">Which form do you need?</div>
+      <select id="form_type" style="width:100%">
+        <option value="601">Form 601 — Lobbying Firm Registration Statement</option>
+        <option value="" disabled>More forms coming later</option>
+      </select>
+    </label>
+    <label id="period_row" style="flex:1 1 100%;display:none">
+      <div class="sub" style="margin:1rem 0 0.3rem">Reporting period</div>
+      <input id="period_label" style="width:100%">
+    </label>
+    <div id="period_note" class="sub" style="flex:1 1 100%;margin:0.6rem 0 0">
+      Form 601 doesn't use a reporting period — it's tied to the current two-year legislative session, filled in automatically.
+    </div>
+    <button type="submit" style="margin-top:1rem">Generate draft →</button>
+  </form>
+
+  <div id="loading">Generating…</div>
+  <div id="error"></div>
+
+  <h2 class="section" style="margin-top:2rem">Your prepared filings</h2>
+  <div id="list"></div>
+</div>
+
+<script>
+// Only 601 exists today, but this stays keyed by form_type so adding a
+// form that DOES need a period later is just one more entry here.
+const FORM_META = {{
+  "601": {{ label: "Form 601 — Lobbying Firm Registration Statement", requiresPeriod: false }},
+}};
+
+const form = document.getElementById('f');
+const formType = document.getElementById('form_type');
+const periodRow = document.getElementById('period_row');
+const periodNote = document.getElementById('period_note');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+const listEl = document.getElementById('list');
+
+function syncPeriodField() {{
+  const meta = FORM_META[formType.value];
+  const needsPeriod = !!(meta && meta.requiresPeriod);
+  periodRow.style.display = needsPeriod ? 'block' : 'none';
+  periodNote.style.display = needsPeriod ? 'none' : 'block';
+}}
+formType.addEventListener('change', syncPeriodField);
+syncPeriodField();
+
+form.addEventListener('submit', async (e) => {{
+  e.preventDefault();
+  errorEl.className = ''; loadingEl.className = 'show';
+  form.querySelector('button').disabled = true;
+  try {{
+    const meta = FORM_META[formType.value];
+    const res = await fetch('/api/prepared-filings', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{
+        form_type: formType.value,
+        period_label: (meta && meta.requiresPeriod) ? document.getElementById('period_label').value.trim() : null,
+      }}),
+    }});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not generate draft');
+    window.location.href = `/disclosures/review?id=${{data.id}}`;
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }} finally {{
+    loadingEl.className = '';
+    form.querySelector('button').disabled = false;
+  }}
+}});
+
+async function load() {{
+  try {{
+    const res = await fetch('/api/prepared-filings');
+    if (res.status === 401) {{ window.location.href = '/login'; return; }}
+    const rows = await res.json();
+    render(rows);
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+function render(rows) {{
+  if (!rows.length) {{
+    listEl.innerHTML = '<p class="empty">Nothing prepared yet — use the form above.</p>';
+    return;
+  }}
+  listEl.innerHTML = `
+    <table>
+      <tr><th>Form</th><th>Period</th><th>Status</th><th>Created</th><th></th></tr>
+      ${{rows.map(r => {{
+        const meta = FORM_META[r.form_type];
+        const statusBadge = r.status === 'ready_to_file'
+          ? '<span class="position-badge support">Ready to file</span>'
+          : '<span class="position-badge watch">Draft</span>';
+        return `
+          <tr>
+            <td>${{(meta && meta.label) || ('Form ' + r.form_type)}}</td>
+            <td>${{r.period_label || '—'}}</td>
+            <td>${{statusBadge}}</td>
+            <td class="date">${{(r.created_at || '').slice(0, 16)}}</td>
+            <td><a class="secondary" href="/disclosures/review?id=${{r.id}}">Review</a></td>
+          </tr>
+        `;
+      }}).join('')}}
+    </table>
+  `;
+}}
+
+load();
+</script>
+</body>
+</html>
+"""
+
+
+DISCLOSURE_REVIEW_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review Disclosure Form — Bill Search</title>
+<style>{STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+  {top_nav("/disclosures")}
+  <div id="error"></div>
+  <div id="content"></div>
+</div>
+
+<script>
+const errorEl = document.getElementById('error');
+const contentEl = document.getElementById('content');
+const filingId = new URLSearchParams(window.location.search).get('id');
+const FORM_LABELS = {{ "601": "Form 601 — Lobbying Firm Registration Statement" }};
+
+async function load() {{
+  if (!filingId) {{
+    errorEl.textContent = 'Missing filing id in the URL.';
+    errorEl.className = 'show';
+    return;
+  }}
+  try {{
+    const res = await fetch(`/api/prepared-filings?id=${{filingId}}`);
+    if (res.status === 401) {{ window.location.href = '/login'; return; }}
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load this filing');
+    render(data);
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+async function signOff(e) {{
+  e.preventDefault();
+  const signedName = document.getElementById('signed_name').value.trim();
+  const confirmed = document.getElementById('confirmed_accurate').checked;
+  const btn = document.getElementById('sign-btn');
+  btn.disabled = true;
+  try {{
+    const res = await fetch('/api/prepared-filings/sign', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ id: Number(filingId), signed_name: signedName, confirmed_accurate: confirmed }}),
+    }});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not record sign-off');
+    render(data);
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+    btn.disabled = false;
+  }}
+}}
+
+function render(r) {{
+  const pdfUrl = `/api/prepared-filings/pdf?id=${{r.id}}`;
+  const ready = r.status === 'ready_to_file';
+  const statusBadge = ready
+    ? '<span class="position-badge support">Ready to file</span>'
+    : '<span class="position-badge watch">Draft — not yet signed off</span>';
+
+  const signOffSection = ready ? `
+    <div class="card">
+      <div class="bill-title" style="margin-bottom:0.4rem">Signed off</div>
+      <div class="bill-desc">Confirmed accurate by <strong>${{r.signed_name}}</strong> on ${{(r.signed_at || '').replace('T', ' ').slice(0, 16)}}.</div>
+      <div class="sub" style="margin:0.6rem 0 0">This app has not filed anything. Download the PDF above and file it yourself with the FPPC / Secretary of State.</div>
+    </div>
+  ` : `
+    <div class="card">
+      <div class="bill-title" style="margin-bottom:0.4rem">Sign-off — required before this can be marked ready to file</div>
+      <form id="sign-form" onsubmit="signOff(event)">
+        <label style="flex:1 1 100%">
+          <div class="sub" style="margin:0 0 0.3rem">Type your full legal name to confirm</div>
+          <input id="signed_name" required style="width:100%">
+        </label>
+        <label style="flex:1 1 100%;display:flex;align-items:flex-start;gap:0.5rem;margin-top:0.8rem;font-size:0.9rem">
+          <input type="checkbox" id="confirmed_accurate" required style="margin-top:0.2rem;width:auto">
+          <span>I confirm the information in this form is accurate to the best of my knowledge.</span>
+        </label>
+        <button type="submit" id="sign-btn" style="margin-top:1rem">Mark ready to file</button>
+      </form>
+      <div class="sub" style="margin-top:0.8rem">This only marks the draft reviewed on your end — it does not submit or send anything anywhere.</div>
+    </div>
+  `;
+
+  contentEl.innerHTML = `
+    <h1>${{FORM_LABELS[r.form_type] || ('Form ' + r.form_type)}}</h1>
+    <p class="sub">${{r.period_label ? 'Period: ' + r.period_label + ' — ' : ''}}Prepared ${{(r.created_at || '').slice(0, 16)}}.</p>
+    <div style="margin-bottom:1rem">${{statusBadge}}</div>
+
+    <div class="card">
+      <div class="bill-title" style="margin-bottom:0.4rem">Known gaps in this draft</div>
+      <div class="bill-desc">
+        This app doesn't collect every field the real form asks for. Left blank on purpose, rather than guessed:
+        subcontracted-client information, and any individual lobbyists beyond your own name.
+        Fill those in by hand before filing if they apply to you. Per-client effective date, period of
+        contract, and agencies lobbied are pulled in automatically when set on the client — add them from
+        <a href="/clients">Clients</a> if a row below looks empty.
+      </div>
+    </div>
+
+    <div class="card" style="padding:0">
+      <iframe src="${{pdfUrl}}" style="width:100%;height:70vh;border:none;border-radius:10px" title="Filled ${{r.form_type}} preview"></iframe>
+    </div>
+    <div class="card-actions" style="margin:-0.5rem 0 1.5rem">
+      <a class="secondary" href="${{pdfUrl}}" target="_blank" rel="noopener">Open PDF in a new tab →</a>
+    </div>
+
+    ${{signOffSection}}
   `;
 }}
 
@@ -1498,6 +1817,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         if set_cookie:
             self.send_header("Set-Cookie", set_cookie)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_bytes(self, status, content_type, body, filename=None):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        if filename:
+            self.send_header("Content-Disposition", f'inline; filename="{filename}"')
         self.end_headers()
         self.wfile.write(body)
 
@@ -1726,6 +2054,86 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        if parsed.path == "/disclosures":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+            finally:
+                conn.close()
+            if not user_id:
+                self.send_response(302)
+                self.send_header("Location", "/login")
+                self.end_headers()
+                return
+            self._send_html(200, DISCLOSURES_PAGE)
+            return
+
+        if parsed.path == "/disclosures/review":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+            finally:
+                conn.close()
+            if not user_id:
+                self.send_response(302)
+                self.send_header("Location", "/login")
+                self.end_headers()
+                return
+            self._send_html(200, DISCLOSURE_REVIEW_PAGE)
+            return
+
+        if parsed.path == "/api/prepared-filings":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Not logged in."})
+                    return
+                filing_id = (qs.get("id") or [""])[0]
+                if filing_id:
+                    try:
+                        filing_id = int(filing_id)
+                    except ValueError:
+                        self._send_json(400, {"error": "id must be a number."})
+                        return
+                    filing = db.get_prepared_filing(conn, user_id, filing_id)
+                    if not filing:
+                        self._send_json(404, {"error": "No prepared filing found with that id."})
+                        return
+                    self._send_json(200, filing)
+                else:
+                    self._send_json(200, db.list_prepared_filings(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/prepared-filings/pdf":
+            filing_id = (qs.get("id") or [""])[0]
+            try:
+                filing_id = int(filing_id)
+            except ValueError:
+                self._send_json(400, {"error": "Missing or invalid id parameter."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Not logged in."})
+                    return
+                filing = db.get_prepared_filing(conn, user_id, filing_id)
+            finally:
+                conn.close()
+            if not filing:
+                self._send_json(404, {"error": "No prepared filing found with that id."})
+                return
+            try:
+                pdf_bytes = pdf_forms.render_prepared_filing(filing)
+            except Exception as e:
+                self._send_json(500, {"error": f"Could not render PDF: {e}"})
+                return
+            self._send_bytes(200, "application/pdf", pdf_bytes, filename=f"form_{filing['form_type']}.pdf")
+            return
+
         if parsed.path == "/api/me":
             conn = db.get_connection()
             try:
@@ -1939,7 +2347,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not user_id:
                     self._send_json(401, {"error": "Sign in to add clients."})
                     return
-                db.create_client(conn, user_id, body)
+                client_id = body.get("id")
+                if client_id:
+                    db.update_client(conn, user_id, client_id, body)
+                else:
+                    db.create_client(conn, user_id, body)
                 conn.commit()
                 self._send_json(200, db.list_clients(conn, user_id))
             finally:
@@ -1971,6 +2383,74 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 conn.commit()
                 self._send_json(200, db.list_flagged_bills(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/prepared-filings":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            form_type = body.get("form_type")
+            if form_type not in pdf_forms.TEMPLATES_BY_FORM_TYPE:
+                self._send_json(400, {"error": "Unknown or unsupported form type."})
+                return
+
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Sign in to prepare a disclosure form."})
+                    return
+                profile = accounts.get_profile(conn, user_id)
+                if not profile:
+                    self._send_json(400, {
+                        "error": "Complete your registration profile before preparing a disclosure form.",
+                    })
+                    return
+                user_row = conn.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()
+                clients = db.list_clients(conn, user_id)
+
+                if form_type == "601":
+                    field_data = pdf_forms.values_for_form_601(
+                        profile, clients, user_row["email"], sign_off=None, today=datetime.date.today()
+                    )
+
+                filing_id = db.create_prepared_filing(conn, user_id, form_type, body.get("period_label"), field_data)
+                conn.commit()
+                self._send_json(200, db.get_prepared_filing(conn, user_id, filing_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/prepared-filings/sign":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            filing_id = body.get("id")
+            if not filing_id:
+                self._send_json(400, {"error": "Missing id."})
+                return
+
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Sign in to sign off on a filing."})
+                    return
+                try:
+                    filing = db.sign_off_prepared_filing(
+                        conn, user_id, filing_id, body.get("signed_name"), bool(body.get("confirmed_accurate")),
+                    )
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                conn.commit()
+                self._send_json(200, filing)
             finally:
                 conn.close()
             return

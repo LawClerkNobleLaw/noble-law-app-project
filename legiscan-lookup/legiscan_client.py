@@ -110,6 +110,25 @@ def shape_bill(bill):
             }
             for c in bill.get("calendar", [])
         ],
+        # LegiScan's own vote index for this bill — roll_call_id, the
+        # tally, and which chamber, already broken out per-vote by
+        # LegiScan itself (no separate getRollCall call needed for
+        # this level of detail).
+        "votes": [
+            {
+                "roll_call_id": v.get("roll_call_id"),
+                "chamber": v.get("chamber"),
+                "date": v.get("date"),
+                "description": v.get("desc"),
+                "yea": v.get("yea"),
+                "nay": v.get("nay"),
+                "nv": v.get("nv"),
+                "absent": v.get("absent"),
+                "total": v.get("total"),
+                "passed": bool(v.get("passed")),
+            }
+            for v in bill.get("votes", [])
+        ],
     }
 
 
