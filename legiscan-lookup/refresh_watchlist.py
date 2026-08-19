@@ -99,6 +99,14 @@ def main():
                 if digest_changes:
                     changes_by_bill[bill_id] = digest_changes
             except Exception as e:
+                # refresh_one() may have already run some of upsert_bill()'s
+                # DELETE/INSERT statements before raising — those writes are
+                # still pending in this shared connection's open transaction.
+                # Without rolling back here, they'd sit uncommitted until the
+                # next bill in this loop succeeds and calls conn.commit(),
+                # which would silently persist this bill's half-written,
+                # corrupted state right along with it.
+                conn.rollback()
                 error_count += 1
                 errors.append(f"bill {bill_id}: {e}")
 

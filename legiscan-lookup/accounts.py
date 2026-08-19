@@ -30,6 +30,13 @@ import time
 PBKDF2_ITERATIONS = 600_000
 SESSION_COOKIE = "session"
 
+# How long a session stays valid with no activity check beyond its own
+# existence — after this, the token is treated as if it were never
+# created. Without this, a session token was valid forever once issued,
+# so a cookie leaked via a shared machine or browser-history sync could
+# never be forced to expire short of deleting its row by hand.
+SESSION_TTL_DAYS = 30
+
 
 def _hash_password(password, salt=None):
     salt = salt or secrets.token_hex(16)
@@ -72,15 +79,27 @@ def create_user(conn, email, password):
     return cur.lastrowid
 
 
+_DUMMY_HASH = _hash_password("no-such-user-timing-decoy")
+
+
 def verify_login(conn, email, password):
     """Returns the user id on success, None on failure — deliberately
     the same return shape either way so callers can't accidentally leak
     via a different code path whether it was the email or the password
-    that was wrong."""
+    that was wrong.
+
+    Always runs a full PBKDF2 verification, even when the email doesn't
+    exist — hashing against _DUMMY_HASH instead of short-circuiting on
+    `not row`. Skipping the hash for a nonexistent email would make
+    those responses measurably faster than a real user's wrong-password
+    attempt, letting an attacker enumerate registered emails just by
+    timing /api/login."""
     row = conn.execute(
         "SELECT id, password_hash FROM users WHERE email = ?", ((email or "").strip().lower(),)
     ).fetchone()
-    if not row or not _verify_password(password, row["password_hash"]):
+    stored_hash = row["password_hash"] if row else _DUMMY_HASH
+    password_ok = _verify_password(password, stored_hash)
+    if not row or not password_ok:
         return None
     return row["id"]
 
@@ -91,6 +110,13 @@ def create_session(conn, user_id):
         "INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, datetime('now'))",
         (token, user_id),
     )
+    # Opportunistic cleanup, piggybacked on the one write that already
+    # touches this table — not a background job, just means the sessions
+    # table doesn't grow forever with rows nothing will ever accept again.
+    conn.execute(
+        "DELETE FROM sessions WHERE created_at <= datetime('now', ?)",
+        (f"-{SESSION_TTL_DAYS} days",),
+    )
     conn.commit()
     return token
 
@@ -98,7 +124,10 @@ def create_session(conn, user_id):
 def user_id_for_session(conn, token):
     if not token:
         return None
-    row = conn.execute("SELECT user_id FROM sessions WHERE token = ?", (token,)).fetchone()
+    row = conn.execute(
+        "SELECT user_id FROM sessions WHERE token = ? AND created_at > datetime('now', ?)",
+        (token, f"-{SESSION_TTL_DAYS} days"),
+    ).fetchone()
     return row["user_id"] if row else None
 
 

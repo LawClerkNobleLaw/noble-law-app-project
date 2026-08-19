@@ -84,6 +84,7 @@ from urllib.parse import urlparse, parse_qs
 
 import accounts
 import db
+import mailer
 import pdf_forms
 import refresh_watchlist
 from legiscan_client import get_api_key, lookup_bill, get_bill_detail
@@ -103,6 +104,43 @@ REFRESH_SECRET = os.environ.get("REFRESH_SECRET")
 # refresh is upsert-based already).
 _refresh_running = {"watchlist": False, "calaccess": False}
 _refresh_lock = threading.Lock()
+
+# Basic brute-force guard for /api/login — maps lowercased email to
+# (failure_count, first_failure_time). Not persisted and not shared
+# across processes, same tradeoff as _refresh_running above: a restart
+# clears it, which just means a fresh five attempts, not a security hole.
+# Keyed on email rather than IP since a home/office NAT can put many real
+# users behind one IP, and this app has no other per-request identity to
+# key on before login succeeds.
+MAX_LOGIN_ATTEMPTS = 5
+LOGIN_LOCKOUT_WINDOW = datetime.timedelta(minutes=15)
+_login_failures = {}
+_login_failures_lock = threading.Lock()
+
+
+def _login_locked_out(email):
+    with _login_failures_lock:
+        entry = _login_failures.get(email)
+        if not entry:
+            return False
+        count, first_failure = entry
+        if datetime.datetime.now() - first_failure > LOGIN_LOCKOUT_WINDOW:
+            del _login_failures[email]
+            return False
+        return count >= MAX_LOGIN_ATTEMPTS
+
+
+def _record_login_failure(email):
+    with _login_failures_lock:
+        count, first_failure = _login_failures.get(email, (0, datetime.datetime.now()))
+        if datetime.datetime.now() - first_failure > LOGIN_LOCKOUT_WINDOW:
+            count, first_failure = 0, datetime.datetime.now()
+        _login_failures[email] = (count + 1, first_failure)
+
+
+def _clear_login_failures(email):
+    with _login_failures_lock:
+        _login_failures.pop(email, None)
 
 
 STYLE = """
@@ -386,7 +424,7 @@ function render(d) {{
 
   resultEl.innerHTML = `
     <div class="card">
-      <div class="bill-id">${{d.state}} ${{d.bill_number}}</div>
+      <div class="bill-id">${{d.state}} ${{d.bill_number}}${{d.session_label ? ` — ${{d.session_label}}` : ''}}</div>
       ${{d.status_label ? `<div class="status-badge">${{d.status_label}}</div>` : ''}}
       <div class="bill-title">${{d.title || ''}}</div>
       <div class="bill-desc">${{d.description || ''}}</div>
@@ -1889,7 +1927,21 @@ class Handler(BaseHTTPRequestHandler):
                 }
             finally:
                 conn.close()
-            self._send_json(200, {"counts": counts, "refresh_running": dict(_refresh_running)})
+            self._send_json(
+                200,
+                {
+                    "counts": counts,
+                    "refresh_running": dict(_refresh_running),
+                    # Direct, unambiguous answer to "is the digest email
+                    # actually able to send" — checking this beats inferring
+                    # it from refresh.log's "digest: N sent, N not sent..."
+                    # line, which reads all-zero both when SMTP genuinely
+                    # isn't configured AND when a refresh simply found no
+                    # bill changes to send about (send_all_digests returns
+                    # early in that case, before ever checking SMTP at all).
+                    "smtp_configured": mailer.is_configured(),
+                },
+            )
             return
 
         qs = parse_qs(parsed.query)
@@ -2250,12 +2302,21 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, json.JSONDecodeError):
                 self._send_json(400, {"error": "Invalid JSON body."})
                 return
+            email = (body.get("email") or "").strip().lower()
+            if _login_locked_out(email):
+                self._send_json(
+                    429,
+                    {"error": "Too many failed attempts. Try again in a few minutes."},
+                )
+                return
             conn = db.get_connection()
             try:
-                user_id = accounts.verify_login(conn, body.get("email"), body.get("password"))
+                user_id = accounts.verify_login(conn, email, body.get("password"))
                 if not user_id:
+                    _record_login_failure(email)
                     self._send_json(401, {"error": "Incorrect email or password."})
                     return
+                _clear_login_failures(email)
                 token = accounts.create_session(conn, user_id)
                 self._send_json(200, {"status": "logged in"}, set_cookie=self._session_cookie_header(token))
             finally:

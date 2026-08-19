@@ -154,14 +154,17 @@ def lookup_bill(bill_number):
     if search.get("status") != "OK":
         raise RuntimeError(f"LegiScan search failed: {search}")
 
+    # getSearch can return the same bill number from more than one past
+    # session (bill numbers get reused every two-year session), and
+    # dict/JSON key order isn't a reliable stand-in for "best match" — so
+    # pick explicitly by LegiScan's own relevance score instead of just
+    # taking whatever happened to come first. Ties still favor whichever
+    # sorts first, but that's now an explicit, visible choice rather than
+    # an accident of dict iteration order.
     results = search.get("searchresult", {})
-    match = None
-    for k, v in results.items():
-        if k == "summary":
-            continue
-        match = v
-        break
-    if not match:
+    candidates = [v for k, v in results.items() if k != "summary"]
+    if not candidates:
         raise RuntimeError(f"No bill found for CA {bill_number}.")
+    match = max(candidates, key=lambda v: int(v.get("relevance") or 0))
 
     return get_bill_detail(match["bill_id"])
