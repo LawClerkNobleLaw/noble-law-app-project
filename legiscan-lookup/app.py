@@ -151,23 +151,36 @@ def _clear_login_failures(email):
 
 STYLE = """
   :root {
-    --ink: #1c2333; --paper: #f4f5f2; --surface: #ffffff;
-    --slate: #5a6272; --rule: #dcded3; --accent: #2f5d8a;
-    --accent-soft: #e4ecf3; --good: #2e6b45; --good-soft: #dcebe0;
-    --error: #a3372c; --error-soft: #f6e2df;
+    --ink: #14151a; --paper: #f7f7fa; --surface: #ffffff;
+    --slate: #62636f; --rule: #e4e5ec; --accent: #4f5ac0;
+    --accent-solid: var(--accent);
+    --accent-soft: #eef0fc; --good: #1a7047; --good-soft: #e6f4ec;
+    --error: #c0392b; --error-soft: #fbe9e7;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --ink: #eae7dd; --paper: #14171c; --surface: #1a1e25;
-      --slate: #9ca3b3; --rule: #2b2f38; --accent: #6ea3d6;
-      --accent-soft: #1c2d3c; --good: #78c091; --good-soft: #1d3324;
-      --error: #d9847a; --error-soft: #3a2320;
+      /* --accent is the text/link-safe shade (bright enough to read on
+         near-black); --accent-solid is a separate, deliberately darker
+         shade used only for white-on-solid fills like <button>. One
+         indigo can't satisfy both roles at once — bright enough to read
+         as text on #08090a is too light to hold 4.5:1 white text as a
+         fill (the previous single --accent here only cleared 2.67:1 for
+         button text, silently failing WCAG AA). */
+      --ink: #f4f5f6; --paper: #08090a; --surface: #111318;
+      --slate: #9a9ea8; --rule: #262933; --accent: #9a9bfb;
+      --accent-solid: #5e6ad2;
+      --accent-soft: #1c1f32; --good: #3fb984; --good-soft: #172a27;
+      --error: #e8685f; --error-soft: #2f1f22;
     }
   }
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--paper); color: var(--ink);
     font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  a:focus-visible, button:focus-visible, input:focus-visible,
+  select:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px;
   }
   .wrap { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
   .top-nav { display: flex; gap: 1.1rem; align-items: baseline; margin-bottom: 0.25rem; }
@@ -186,7 +199,7 @@ STYLE = """
   input#bill { flex: 1; min-width: 8rem; }
   button {
     font: inherit; font-weight: 600; padding: 0.6rem 1.1rem; border: none;
-    border-radius: 8px; background: var(--accent); color: white; cursor: pointer;
+    border-radius: 8px; background: var(--accent-solid); color: white; cursor: pointer;
   }
   button:hover { opacity: 0.9; }
   button:disabled { opacity: 0.5; cursor: default; }
