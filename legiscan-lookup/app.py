@@ -281,7 +281,7 @@ def nav_links(current):
     Flagged bills isn't listed here on purpose — it's personal and tied
     to login, so it lives in the account menu next to "View profile"
     rather than in this always-visible row (see ACCOUNT_MENU_SCRIPT)."""
-    pages = [("/", "Lookup"), ("/lobbying", "Lobbying Search")]
+    pages = [("/", "Lookup"), ("/lobbying", "Organization Search")]
     parts = []
     for href, label in pages:
         if href == current:
@@ -456,13 +456,13 @@ LOBBYING_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lobbying Search — Bill Search</title>
+<title>Organization Search — Bill Search</title>
 <style>{STYLE}</style>
 </head>
 <body>
 <div class="wrap">
   {top_nav("/lobbying")}
-  <h1>Lobbying Search</h1>
+  <h1>Organization Search</h1>
   <p class="sub">California lobbying firms, employers, and quarterly disclosures from CAL-ACCESS.</p>
 
   <form id="f">
@@ -470,16 +470,20 @@ LOBBYING_PAGE = f"""<!doctype html>
     <button type="submit">Search</button>
   </form>
 
+  <p class="sub" style="margin-top:-1.2rem;font-size:0.82rem">
+    <strong>Firm</strong> = hired by clients to lobby on their behalf &nbsp;·&nbsp;
+    <strong>Employer</strong> = lobbies with its own in-house staff &nbsp;·&nbsp;
+    <strong>Coalition</strong> = a group of organizations registered together
+  </p>
+
   <div id="loading">Searching…</div>
   <div id="error"></div>
   <div id="results"></div>
-  <div id="detail"></div>
 </div>
 
 <script>
 const form = document.getElementById('f');
 const resultsEl = document.getElementById('results');
-const detailEl = document.getElementById('detail');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
 
@@ -488,7 +492,7 @@ form.addEventListener('submit', async (e) => {{
   const q = document.getElementById('q').value.trim();
   if (!q) return;
 
-  errorEl.className = ''; detailEl.innerHTML = ''; loadingEl.className = 'show';
+  errorEl.className = ''; loadingEl.className = 'show';
   form.querySelector('button').disabled = true;
 
   try {{
@@ -505,6 +509,28 @@ form.addEventListener('submit', async (e) => {{
   }}
 }});
 
+function detailUrl(r) {{
+  const params = r.id ? `id=${{encodeURIComponent(r.id)}}` : `name=${{encodeURIComponent(r.name)}}`;
+  return `/lobbying/detail?${{params}}`;
+}}
+
+function locationOrContext(r) {{
+  // Entity-kind rows have a real registered address; client-only rows
+  // (named in someone else's filing, never independently registered)
+  // don't — those would otherwise show blank Location/Status next to
+  // each other for near-identical names (several "Amazon" variants
+  // that are only ever mentioned, not registered), which is exactly
+  // what made them hard to tell apart. Showing how often and how
+  // recently each one was mentioned gives a real distinguishing detail
+  // instead of a blank cell.
+  if (r.entity_type) return [r.city, r.state].filter(Boolean).join(', ');
+  if (r.mention_count) {{
+    const latest = r.latest_filed ? r.latest_filed.split(' ')[0] : 'unknown';
+    return `Mentioned ${{r.mention_count}}×, latest ${{latest}}`;
+  }}
+  return '';
+}}
+
 function renderResults(rows) {{
   if (!rows.length) {{
     resultsEl.innerHTML = '<p class="empty">No firms, employers, or named clients match that.</p>';
@@ -512,32 +538,50 @@ function renderResults(rows) {{
   }}
   resultsEl.innerHTML = `
     <table>
-      <tr><th>Name</th><th>Type</th><th>Location</th><th>Status</th></tr>
+      <tr><th>Name</th><th>Type</th><th>Location</th><th>Status</th><th></th></tr>
       ${{rows.map(r => `
-        <tr class="row-link" onclick='loadDetail(${{JSON.stringify(r).replace(/'/g, "&#39;")}})'>
-          <td>${{r.name}}</td>
+        <tr>
+          <td><a href="${{detailUrl(r)}}">${{r.name}}</a></td>
           <td>${{r.entity_type ? `<span class="tag">${{r.entity_type}}</span>` : `<span class="tag">named as client only</span>`}}</td>
-          <td>${{[r.city, r.state].filter(Boolean).join(', ')}}</td>
+          <td>${{locationOrContext(r)}}</td>
           <td>${{r.registration_status || ''}}</td>
+          <td><a class="secondary" href="/clients?prefill_name=${{encodeURIComponent(r.name)}}${{r.id ? `&prefill_entity_id=${{r.id}}` : ''}}">+ Client</a></td>
         </tr>
       `).join('')}}
     </table>
   `;
 }}
 
-async function loadDetail(r) {{
-  detailEl.innerHTML = '<p class="empty">Loading…</p>';
-  try {{
-    const params = r.id ? `id=${{encodeURIComponent(r.id)}}` : `name=${{encodeURIComponent(r.name)}}`;
-    const res = await fetch(`/api/lobbying/detail?${{params}}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not load detail');
-    renderDetail(data);
-  }} catch (err) {{
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
-  }}
-}}
+</script>
+</body>
+</html>
+"""
+
+
+# A real destination for one organization's detail, rather than an
+# in-page div appended below the whole results list — that older layout
+# meant scrolling past every result to find what you clicked. Reached
+# via ?id=... (a registered entity) or ?name=... (a client only ever
+# named in someone else's filing, never independently registered).
+LOBBYING_DETAIL_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Organization Detail — Bill Search</title>
+<style>{STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+  {top_nav("/lobbying", left_extra='<a href="/lobbying">← Organization Search</a>')}
+  <div id="error"></div>
+  <div id="detail"><p class="empty">Loading…</p></div>
+</div>
+
+<script>
+const errorEl = document.getElementById('error');
+const detailEl = document.getElementById('detail');
+const params = new URLSearchParams(window.location.search);
 
 function money(n) {{
   return typeof n === 'number' ? '$' + n.toLocaleString(undefined, {{maximumFractionDigits: 0}}) : '';
@@ -565,6 +609,12 @@ function relationshipRows(rows, selectedName) {{
   `;
 }}
 
+function addClientUrl(d) {{
+  const p = new URLSearchParams({{prefill_name: d.name}});
+  if (d.entity && d.entity.id) p.set('prefill_entity_id', d.entity.id);
+  return `/clients?${{p.toString()}}`;
+}}
+
 function renderDetail(d) {{
   const e = d.entity;
   detailEl.innerHTML = `
@@ -576,13 +626,32 @@ function renderDetail(d) {{
           ${{e.registration_status ? `<span class="tag">${{e.registration_status}}</span>` : ''}}
           ${{e.source_form ? `<span class="tag">Form ${{e.source_form}}</span>` : ''}}
         </div>
-        <div class="bill-desc" style="margin-top:0.5rem">${{[e.city, e.state].filter(Boolean).join(', ')}}</div>
+        <div class="bill-desc" style="margin-top:0.5rem">${{[e.address, e.city, e.state, e.zip].filter(Boolean).join(', ')}}</div>
       ` : '<div class="bill-desc" style="margin-top:0.3rem">Named as a client in a disclosure — no independent registration on file.</div>'}}
+      <div class="card-actions">
+        <a class="secondary" href="${{addClientUrl(d)}}">+ Add as client</a>
+      </div>
     </div>
     <h2 class="section">Lobbying relationships</h2>
     ${{relationshipRows(d.relationships, d.name)}}
   `;
 }}
+
+async function load() {{
+  try {{
+    const p = params.get('id') ? `id=${{encodeURIComponent(params.get('id'))}}` : `name=${{encodeURIComponent(params.get('name') || '')}}`;
+    const res = await fetch(`/api/lobbying/detail?${{p}}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load detail');
+    renderDetail(data);
+  }} catch (err) {{
+    detailEl.innerHTML = '';
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+load();
 </script>
 </body>
 </html>
@@ -1056,7 +1125,7 @@ function positionSelect(r, c) {{
 function clientCell(r) {{
   const chips = (r.assigned_clients || []).map(c => `
     <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem">
-      <span>${{c.name}}</span>
+      <a href="/clients/detail?id=${{c.id}}">${{c.name}}</a>
       ${{positionSelect(r, c)}}
       <a href="#" onclick="event.preventDefault(); unassignClient(${{r.bill_id}}, ${{c.id}})" style="color:var(--slate)" title="Remove client">×</a>
     </div>
@@ -1191,6 +1260,42 @@ const submitBtn = document.getElementById('submit-client-btn');
 let allClients = [];
 let editingId = null;  // null = creating a new client; otherwise the id being edited
 
+// Arriving from Organization Search's "+ Client" link (?prefill_name=...
+// and, for a registered entity, &prefill_entity_id=...) opens the form
+// pre-filled from that entity's CAL-ACCESS record instead of leaving
+// name/address/etc. to be typed in by hand. Everything stays a normal,
+// editable field either way — there's no separate "manual mode," typing
+// over a prefilled value IS completing it manually.
+const urlParams = new URLSearchParams(window.location.search);
+const prefillName = urlParams.get('prefill_name');
+const prefillEntityId = urlParams.get('prefill_entity_id');
+
+async function applyPrefill() {{
+  if (!prefillName) return;
+  showForm();
+  document.getElementById('name').value = prefillName;
+  if (!prefillEntityId) return;
+  try {{
+    const res = await fetch(`/api/lobbying/detail?id=${{encodeURIComponent(prefillEntityId)}}`);
+    const data = await res.json();
+    if (!res.ok || !data.entity) return;
+    const e = data.entity;
+    document.getElementById('bus_addr1').value = e.address || '';
+    document.getElementById('bus_city').value = e.city || '';
+    document.getElementById('bus_st').value = e.state || '';
+    document.getElementById('bus_zip4').value = e.zip || '';
+    if (e.filer_id) document.getElementById('existing_filer_id').value = e.filer_id;
+    const note = document.createElement('p');
+    note.className = 'sub';
+    note.style.marginTop = '-0.5rem';
+    note.textContent = "Prefilled from CAL-ACCESS — edit anything below if it looks wrong.";
+    form.insertBefore(note, form.firstChild);
+  }} catch (err) {{
+    // Prefill is a convenience, not a requirement — if it fails, the form
+    // is already open and named, same as clicking "+ Add client" directly.
+  }}
+}}
+
 function showForm() {{
   form.style.display = 'flex';
   addBtn.style.display = 'none';
@@ -1303,7 +1408,7 @@ function render(rows) {{
       <tr><th>Name</th><th>Business address</th><th>Industry / interests</th><th>Filer ID</th><th></th></tr>
       ${{rows.map(c => `
         <tr>
-          <td>${{c.name}}</td>
+          <td><a href="/clients/detail?id=${{c.id}}">${{c.name}}</a></td>
           <td>${{[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', ')}}</td>
           <td>${{c.interests || ''}}</td>
           <td>${{c.existing_filer_id || ''}}</td>
@@ -1318,6 +1423,181 @@ function render(rows) {{
     </table>
   `;
 }}
+
+load();
+applyPrefill();
+</script>
+</body>
+</html>
+"""
+
+
+# Action report — everything about one bill in one place: current
+# One client's own page: org info, every bill assigned to them with its
+# position, and a way to add a new bill starting from here rather than
+# only from /flagged — the reverse direction of the existing
+# flag-then-assign flow. Reached via ?id=..., e.g. from the Clients list
+# or Organization Search's "+ Add as client" link.
+CLIENT_DETAIL_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Client — Bill Search</title>
+<style>{STYLE}</style>
+</head>
+<body>
+<div class="wrap">
+  {top_nav("/clients", left_extra='<a href="/clients">← Clients</a>')}
+  <div id="error"></div>
+  <div id="client"></div>
+
+  <h2 class="section" style="margin-top:2rem">Add a bill</h2>
+  <form id="add-bill-f">
+    <input id="bill_number" placeholder="e.g. SB122" autocomplete="off" required style="flex:1;min-width:8rem">
+    <select id="add-bill-position">
+      <option value="watch">Watch</option>
+      <option value="support">Support</option>
+      <option value="oppose">Oppose</option>
+    </select>
+    <button type="submit">Add →</button>
+  </form>
+  <div id="add-bill-loading" class="empty" style="display:none">Looking up bill…</div>
+
+  <h2 class="section" style="margin-top:2rem">Bills</h2>
+  <div id="bills"></div>
+</div>
+
+<script>
+const clientId = new URLSearchParams(window.location.search).get('id');
+const errorEl = document.getElementById('error');
+const clientEl = document.getElementById('client');
+const billsEl = document.getElementById('bills');
+const addBillForm = document.getElementById('add-bill-f');
+const addBillLoading = document.getElementById('add-bill-loading');
+const POSITIONS = [['watch', 'Watch'], ['support', 'Support'], ['oppose', 'Oppose']];
+
+function renderClient(d) {{
+  const c = d.client;
+  clientEl.innerHTML = `
+    <div class="card">
+      <div class="bill-title">${{c.name}}</div>
+      <div class="bill-desc" style="margin-top:0.4rem">
+        ${{[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', ') || 'No address on file'}}
+      </div>
+      ${{c.interests ? `<div class="bill-desc" style="margin-top:0.4rem">${{c.interests}}</div>` : ''}}
+      <div class="card-actions">
+        <a class="secondary" href="/clients">Edit in Clients →</a>
+        ${{d.entity_id ? `<a class="secondary" href="/lobbying/detail?id=${{d.entity_id}}">View CAL-ACCESS record →</a>` : ''}}
+      </div>
+    </div>
+  `;
+}}
+
+function positionSelect(billId, position) {{
+  const options = POSITIONS.map(([value, label]) =>
+    `<option value="${{value}}" ${{position === value ? 'selected' : ''}}>${{label}}</option>`
+  ).join('');
+  return `<select class="position-select ${{position}}" onchange="setPosition(${{billId}}, this.value); this.className = 'position-select ' + this.value" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${{options}}</select>`;
+}}
+
+function renderBills(bills) {{
+  if (!bills.length) {{
+    billsEl.innerHTML = '<p class="empty">No bills assigned to this client yet — add one above.</p>';
+    return;
+  }}
+  billsEl.innerHTML = `
+    <table>
+      <tr><th>Bill</th><th>Title</th><th>Status</th><th>Position</th><th></th></tr>
+      ${{bills.map(b => `
+        <tr>
+          <td class="chamber">${{b.state}} ${{b.bill_number}}</td>
+          <td>${{b.title || ''}}</td>
+          <td>${{b.status_label || ''}}</td>
+          <td>${{positionSelect(b.bill_id, b.position || 'watch')}}</td>
+          <td>
+            <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
+              <a class="secondary" href="/report?bill_id=${{b.bill_id}}">Report</a>
+              <button class="danger" onclick="removeBill(${{b.bill_id}})">Remove</button>
+            </div>
+          </td>
+        </tr>
+      `).join('')}}
+    </table>
+  `;
+}}
+
+async function load() {{
+  try {{
+    const res = await fetch(`/api/clients/detail?id=${{clientId}}`);
+    if (res.status === 401) {{ window.location.href = '/login'; return; }}
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load client');
+    renderClient(data);
+    renderBills(data.bills);
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+async function setPosition(billId, position) {{
+  try {{
+    const res = await fetch('/api/bill-clients', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ bill_id: billId, client_id: Number(clientId), position }}),
+    }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not update position');
+    }}
+    load();
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+async function removeBill(billId) {{
+  try {{
+    const res = await fetch(`/api/bill-clients?bill_id=${{billId}}&client_id=${{clientId}}`, {{ method: 'DELETE' }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not remove bill');
+    }}
+    load();
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+addBillForm.addEventListener('submit', async (e) => {{
+  e.preventDefault();
+  const bill_number = document.getElementById('bill_number').value.trim();
+  if (!bill_number) return;
+  const position = document.getElementById('add-bill-position').value;
+  errorEl.className = ''; addBillLoading.style.display = 'block';
+  addBillForm.querySelector('button').disabled = true;
+  try {{
+    const res = await fetch('/api/client-bills', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ client_id: Number(clientId), bill_number, position }}),
+    }});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not add bill');
+    addBillForm.reset();
+    renderBills(data.bills);
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }} finally {{
+    addBillLoading.style.display = 'none';
+    addBillForm.querySelector('button').disabled = false;
+  }}
+}});
 
 load();
 </script>
@@ -1396,7 +1676,7 @@ function render(r) {{
     const position = c.position || 'watch';
     return `
       <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem">
-        <span>${{c.name}}</span>
+        <a href="/clients/detail?id=${{c.id}}">${{c.name}}</a>
         <span class="position-badge ${{position}}">${{POSITION_LABELS[position] || position}}</span>
       </div>
     `;
@@ -1734,9 +2014,20 @@ def search_lobbying(conn, q):
         if not name or name.lower() in seen_lower:
             continue
         seen_lower.add(name.lower())
+        # Never independently registered, so there's no address/status to
+        # show — which made near-identical names (several "Amazon"
+        # variants that only ever show up as free text on someone else's
+        # filing) impossible to tell apart. How often, and how recently,
+        # this exact name was mentioned is real distinguishing context in
+        # its place.
+        context = conn.execute(
+            "SELECT COUNT(*) AS n, MAX(filed_date) AS latest FROM lobbying_disclosures WHERE client_name = ?",
+            (name,),
+        ).fetchone()
         results.append({
             "kind": "client", "id": None, "name": name, "entity_type": None,
             "city": None, "state": None, "registration_status": None,
+            "mention_count": context["n"], "latest_filed": context["latest"],
         })
 
     results.sort(key=lambda r: (r["name"] or "").lower())
@@ -1766,7 +2057,7 @@ def lobbying_detail(conn, entity_id, name):
     entity = None
     if entity_id:
         row = conn.execute(
-            "SELECT id, name, entity_type, city, state, registration_status, source_form "
+            "SELECT id, name, entity_type, filer_id, address, city, state, zip, registration_status, source_form "
             "FROM lobbying_entities WHERE id = ?",
             (entity_id,),
         ).fetchone()
@@ -1982,6 +2273,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_html(200, LOBBYING_PAGE)
             return
 
+        if parsed.path == "/lobbying/detail":
+            self._send_html(200, LOBBYING_DETAIL_PAGE)
+            return
+
         if parsed.path == "/signup":
             self._send_html(200, SIGNUP_PAGE)
             return
@@ -2070,6 +2365,59 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(401, {"error": "Not logged in."})
                     return
                 self._send_json(200, db.list_clients(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/clients/detail":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+            finally:
+                conn.close()
+            if not user_id:
+                self.send_response(302)
+                self.send_header("Location", "/login")
+                self.end_headers()
+                return
+            self._send_html(200, CLIENT_DETAIL_PAGE)
+            return
+
+        if parsed.path == "/api/clients/detail":
+            client_id = (qs.get("id") or [""])[0]
+            if not client_id:
+                self._send_json(400, {"error": "Missing id parameter."})
+                return
+            try:
+                client_id = int(client_id)
+            except ValueError:
+                self._send_json(400, {"error": "id must be a number."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Not logged in."})
+                    return
+                client = db.get_client(conn, user_id, client_id)
+                if not client:
+                    self._send_json(404, {"error": "No client found with that ID."})
+                    return
+                bills = db.get_client_bills(conn, user_id, client_id)
+                # If this client has a CAL-ACCESS filer ID on file, resolve
+                # it to that entity's own id — completes the connection the
+                # other direction (Organization Search -> Client, added
+                # above) by letting the client page link back to its own
+                # organization's lobbying detail, instead of the two
+                # staying siblings that never reference each other.
+                entity_id = None
+                if client.get("existing_filer_id"):
+                    row = conn.execute(
+                        "SELECT id FROM lobbying_entities WHERE filer_id = ?",
+                        (client["existing_filer_id"],),
+                    ).fetchone()
+                    entity_id = row["id"] if row else None
+                self._send_json(200, {"client": client, "bills": bills, "entity_id": entity_id})
             finally:
                 conn.close()
             return
@@ -2457,6 +2805,60 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 conn.commit()
                 self._send_json(200, db.list_flagged_bills(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/client-bills":
+            # The reverse of the existing flag-then-assign flow: add a
+            # bill starting from a client's own page (search LegiScan by
+            # number, flag it, and link it to this client's position) in
+            # one request, instead of three separate trips through
+            # /flagged. Same three underlying operations either way —
+            # this just does them together for this specific entry point.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            client_id, bill_number = body.get("client_id"), body.get("bill_number")
+            if not client_id or not bill_number:
+                self._send_json(400, {"error": "Missing client_id or bill_number."})
+                return
+            try:
+                client_id = int(client_id)
+            except (ValueError, TypeError):
+                self._send_json(400, {"error": "client_id must be a number."})
+                return
+
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Sign in to add bills to a client."})
+                    return
+                if not db.get_client(conn, user_id, client_id):
+                    self._send_json(404, {"error": "No client found with that ID."})
+                    return
+                try:
+                    bill = lookup_bill(bill_number)
+                except Exception as e:
+                    self._send_json(502, {"error": str(e)})
+                    return
+                db.upsert_bill(conn, bill)
+                db.flag_bill(conn, user_id, bill["id"])
+                position = body.get("position") or "watch"
+                try:
+                    db.link_bill_to_client(conn, user_id, bill["id"], client_id, position)
+                except ValueError as e:
+                    conn.commit()  # keep the flag even if the position was invalid
+                    self._send_json(400, {"error": str(e)})
+                    return
+                conn.commit()
+                self._send_json(200, {
+                    "client": db.get_client(conn, user_id, client_id),
+                    "bills": db.get_client_bills(conn, user_id, client_id),
+                })
             finally:
                 conn.close()
             return

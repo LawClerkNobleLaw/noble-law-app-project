@@ -357,6 +357,32 @@ def list_clients(conn, user_id):
     return [dict(r) for r in rows]
 
 
+def get_client(conn, user_id, client_id):
+    """Scoped to user_id, same reasoning as delete_client — one account
+    can't view another's client just by guessing/incrementing an id."""
+    row = conn.execute(
+        "SELECT * FROM clients WHERE id = ? AND user_id = ?", (client_id, user_id)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_client_bills(conn, user_id, client_id):
+    """Every bill this client is currently linked to, with its own
+    position — the reverse direction of clients_for_bills() above (that
+    one goes bill -> clients; this one goes client -> bills), for the
+    client detail page."""
+    rows = conn.execute(
+        """SELECT b.id AS bill_id, b.state, b.bill_number, b.title,
+                  b.status_label, b.status_date, l.position
+           FROM bill_client_links l
+           JOIN bills b ON b.id = l.bill_id
+           WHERE l.user_id = ? AND l.client_id = ?
+           ORDER BY b.bill_number""",
+        (user_id, client_id),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def update_client(conn, user_id, client_id, fields):
     """Scoped to user_id, same reasoning as delete_client. Added so a
     client created before effective_date/contract_period/
