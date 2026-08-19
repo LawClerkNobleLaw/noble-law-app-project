@@ -85,7 +85,7 @@ def main():
         bill_ids = db.list_watchlist_bill_ids(conn)
         if not bill_ids:
             log("checked 0 bills — watch list is empty")
-            return
+            return {"checked": 0, "changed": 0, "errors": 0, "digest": None}
 
         changed_count = 0
         error_count = 0
@@ -122,6 +122,12 @@ def main():
             f"{digest_summary['skipped']} skipped (no changes), "
             f"{digest_summary['errors']} error(s)"
         )
+        return {
+            "checked": len(bill_ids),
+            "changed": changed_count,
+            "errors": error_count,
+            "digest": digest_summary,
+        }
     finally:
         conn.close()
 

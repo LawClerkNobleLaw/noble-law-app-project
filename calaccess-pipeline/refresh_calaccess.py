@@ -367,7 +367,7 @@ def main():
             download_export(zip_path)
         except Exception as e:
             log(f"download failed — {e}")
-            return
+            return {"ok": False, "stage": "download", "error": str(e)}
 
         log("extracting needed files…")
         paths = extract_needed(zip_path, tmp_dir)
@@ -395,6 +395,15 @@ def main():
             f"{unmatched_filer} skipped (firm not registered), "
             f"{unmatched_filing} skipped (filing not found) — {elapsed:.0f}s"
         )
+        return {
+            "ok": True,
+            "entities": entity_count,
+            "new_disclosures": new_c,
+            "updated_disclosures": updated_c,
+            "unmatched_filer": unmatched_filer,
+            "unmatched_filing": unmatched_filing,
+            "elapsed_seconds": round(elapsed),
+        }
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 

@@ -1,12 +1,16 @@
 """
-accounts.py — individual accounts, layered inside the site's existing
-shared LOOKUP_USER/PASSWORD login.
+accounts.py — individual, per-person accounts.
 
-That outer Basic Auth login (see app.py) still gates the whole site —
-this is a second, personal layer inside it: real per-person accounts,
-so an account can hold its own lobbyist_profiles row (the Form
-601-style firm info collected at sign-up) rather than everything being
-anonymous behind one shared password.
+The site itself (live lookup, lobbying search, signup/login) is open to
+anyone with the URL — there's no outer shared login gating it. This
+module is the actual access boundary for the personal features (flagged
+bills, clients, action reports, profile): real per-person accounts, so
+an account can hold its own lobbyist_profiles row (the Form 601-style
+firm info collected at sign-up) rather than everything being anonymous
+behind one shared password. (An earlier shared LOOKUP_USER/PASSWORD
+Basic Auth gate existed before individual accounts matured into this
+real per-user boundary; see app.py's module docstring — it was removed
+once it became redundant.)
 
 Passwords are hashed with PBKDF2-HMAC-SHA256 (Python's own hashlib,
 no new dependency — matches this whole project's "boring, well-

@@ -103,6 +103,12 @@ REFRESH_SECRET = os.environ.get("REFRESH_SECRET")
 # fine, since the worst case is one extra run, not a corrupted one (every
 # refresh is upsert-based already).
 _refresh_running = {"watchlist": False, "calaccess": False}
+
+# What /internal/status reports back for "did the last refresh actually
+# work" — filled in by _trigger_refresh's run() below. Not persisted,
+# same tradeoff as _refresh_running: a restart just means this is empty
+# until the next refresh runs, not a corrupted answer.
+_last_refresh = {"watchlist": None, "calaccess": None}
 _refresh_lock = threading.Lock()
 
 # Basic brute-force guard for /api/login — maps lowercased email to
@@ -1819,13 +1825,15 @@ def _trigger_refresh(job_name, target_fn):
 
     def run():
         try:
-            target_fn()
+            result = target_fn()
+            _last_refresh[job_name] = {"at": datetime.datetime.now().isoformat(), "crashed": False, "result": result}
         except Exception as e:
             # Each job's own log() already records its own failures in
             # detail (see refresh_one/sync_disclosures etc.) — this is
             # just a backstop for anything that escapes those, e.g. a
             # crash before that job's own logging even starts.
             print(f"[{job_name} refresh] crashed: {e}")
+            _last_refresh[job_name] = {"at": datetime.datetime.now().isoformat(), "crashed": True, "error": str(e)}
         finally:
             with _refresh_lock:
                 _refresh_running[job_name] = False
@@ -1940,6 +1948,11 @@ class Handler(BaseHTTPRequestHandler):
                     # bill changes to send about (send_all_digests returns
                     # early in that case, before ever checking SMTP at all).
                     "smtp_configured": mailer.is_configured(),
+                    # Timestamp + outcome of the last refresh of each job —
+                    # None until the first one runs after a restart. Same
+                    # motivation as smtp_configured above: a direct answer
+                    # instead of having to dig through Render's log stream.
+                    "last_refresh": dict(_last_refresh),
                 },
             )
             return
@@ -2528,6 +2541,16 @@ class Handler(BaseHTTPRequestHandler):
             if not bill_id:
                 self._send_json(400, {"error": "Missing bill_id parameter."})
                 return
+            try:
+                # Cast now, not left as the raw query-string value — same
+                # str/int mismatch class /api/report was bitten by (see
+                # that route's comment). Working today only because
+                # SQLite's implicit type affinity happens to coerce the
+                # comparison; an explicit cast doesn't depend on that.
+                bill_id = int(bill_id)
+            except ValueError:
+                self._send_json(400, {"error": "bill_id must be a number."})
+                return
             conn = db.get_connection()
             try:
                 user_id = self._current_user_id(conn)
@@ -2545,6 +2568,11 @@ class Handler(BaseHTTPRequestHandler):
             client_id = (qs.get("id") or [""])[0]
             if not client_id:
                 self._send_json(400, {"error": "Missing id parameter."})
+                return
+            try:
+                client_id = int(client_id)
+            except ValueError:
+                self._send_json(400, {"error": "id must be a number."})
                 return
             conn = db.get_connection()
             try:
@@ -2564,6 +2592,12 @@ class Handler(BaseHTTPRequestHandler):
             client_id = (qs.get("client_id") or [""])[0]
             if not bill_id or not client_id:
                 self._send_json(400, {"error": "Missing bill_id or client_id parameter."})
+                return
+            try:
+                bill_id = int(bill_id)
+                client_id = int(client_id)
+            except ValueError:
+                self._send_json(400, {"error": "bill_id and client_id must be numbers."})
                 return
             conn = db.get_connection()
             try:
