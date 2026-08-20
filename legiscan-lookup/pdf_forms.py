@@ -48,7 +48,7 @@ FORM_601_TEMPLATE = os.path.join(FORMS_DIR, "form_601.pdf")
 # present whether or not sign-off is complete, since this app never
 # files anything itself either way (see app.py's /disclosures docs).
 _DISCLAIMER = (
-    "Prepared via Bill Search — draft for your own review. "
+    "Prepared via Rotunda — draft for your own review. "
     "Not filed with the FPPC or Secretary of State. You must file this yourself."
 )
 

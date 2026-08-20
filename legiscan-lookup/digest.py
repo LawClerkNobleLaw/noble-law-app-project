@@ -58,7 +58,7 @@ def build_user_digest(conn, user_id, changes_by_bill):
         return None
 
     plural = "s" if len(rows) != 1 else ""
-    subject = f"Bill Search: {len(rows)} update{plural} on your flagged bills"
+    subject = f"Rotunda: {len(rows)} update{plural} on your flagged bills"
 
     text_lines = [f"{len(rows)} of your flagged bills changed today:", ""]
     for r in rows:
@@ -71,25 +71,25 @@ def build_user_digest(conn, user_id, changes_by_bill):
     html_rows = "".join(
         f"""
       <tr>
-        <td style="padding:14px 0;border-bottom:1px solid #dcded3">
-          <div style="font-family:ui-monospace,monospace;font-size:12px;color:#2f5d8a;margin-bottom:2px">{html.escape(r['label'])}</div>
-          <div style="font-size:15px;font-weight:700;color:#1c2333;margin-bottom:6px">{html.escape(r['title'])}</div>
-          <div style="font-size:14px;color:#5a6272;margin-bottom:8px">{html.escape(r['summary'])}</div>
-          <a href="{r['url']}" style="font-size:13px;color:#2f5d8a;text-decoration:none;font-weight:600">View action report &rarr;</a>
+        <td style="padding:14px 0;border-bottom:1px solid #e5e5e5">
+          <div style="font-family:ui-monospace,monospace;font-size:12px;color:#6b6b6b;margin-bottom:2px">{html.escape(r['label'])}</div>
+          <div style="font-size:15px;font-weight:700;color:#171717;margin-bottom:6px">{html.escape(r['title'])}</div>
+          <div style="font-size:14px;color:#6b6b6b;margin-bottom:8px">{html.escape(r['summary'])}</div>
+          <a href="{r['url']}" style="font-size:13px;color:#6b6b6b;text-decoration:none;font-weight:600">View action report &rarr;</a>
         </td>
       </tr>"""
         for r in rows
     )
     html_body = f"""<!doctype html>
-<html><body style="margin:0;background:#f4f5f2;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1c2333">
+<html><body style="margin:0;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#171717">
   <div style="max-width:36rem;margin:0 auto;padding:2rem 1.25rem">
-    <div style="font-size:13px;color:#5a6272;text-transform:uppercase;letter-spacing:0.03em;font-weight:700;margin-bottom:0.5rem">Bill Search — Daily Digest</div>
+    <div style="font-size:13px;color:#6b6b6b;text-transform:uppercase;letter-spacing:0.03em;font-weight:700;margin-bottom:0.5rem">Rotunda — Daily Digest</div>
     <h1 style="font-size:20px;margin:0 0 1.25rem">{len(rows)} update{plural} on your flagged bills</h1>
     <table style="width:100%;border-collapse:collapse">{html_rows}</table>
-    <p style="font-size:12px;color:#5a6272;margin-top:2rem">
-      You're getting this because you have bills flagged in Bill Search.
+    <p style="font-size:12px;color:#6b6b6b;margin-top:2rem">
+      You're getting this because you have bills flagged in Rotunda.
       Manage what you're tracking at
-      <a href="{APP_BASE_URL}/flagged" style="color:#2f5d8a">{APP_BASE_URL}/flagged</a>.
+      <a href="{APP_BASE_URL}/flagged" style="color:#6b6b6b">{APP_BASE_URL}/flagged</a>.
     </p>
   </div>
 </body></html>"""

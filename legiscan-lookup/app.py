@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bill Search — a small local web app.
+Rotunda (formerly "Bill Search") — a small local web app.
 
 Runs entirely on your machine (not hosted anywhere) so it has normal
 internet access and can call the LegiScan API live, on demand, when you
@@ -183,7 +183,7 @@ STYLE = """
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; background: var(--paper); color: var(--ink);
+    margin: 0; background: var(--content-bg); color: var(--ink);
     font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
   /* A handful of plain, unclassed <a> tags (e.g. a client's name in the
@@ -198,9 +198,28 @@ STYLE = """
     outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px;
   }
   .wrap { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
-  .top-nav { display: flex; gap: 1.1rem; align-items: baseline; margin-bottom: 0.25rem; }
+  /* A full-width bar, same grammar as the signed-in shell's .app-topbar
+     (fixed height, border-bottom, solid --paper against the page's
+     --content-bg) — public pages don't get the sidebar, but the top
+     chrome should still read as "this app's header," not a different
+     product's thin link row. The inner div re-centers content at the
+     same width as .wrap so the bar's contents still line up with the
+     page below it. */
+  .top-nav {
+    height: 4rem; display: flex; align-items: center; background: var(--paper);
+    border-bottom: 1px solid var(--rule);
+  }
+  .top-nav-inner {
+    width: 100%; max-width: 46rem; margin: 0 auto; padding: 0 1.5rem;
+    display: flex; gap: 1.1rem; align-items: center;
+  }
   .top-nav a { color: var(--accent); font-size: 0.85rem; text-decoration: none; }
   .top-nav a:hover { text-decoration: underline; }
+  .top-brand {
+    display: flex; align-items: center; gap: 0.5rem; font-weight: 600; font-size: 0.9rem;
+    color: var(--ink); margin-right: 0.4rem;
+  }
+  .top-brand svg { color: var(--ink); }
   h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
   .sub { color: var(--slate); margin: 0 0 2rem; font-size: 0.92rem; }
   form {
@@ -564,12 +583,27 @@ ACCOUNT_MENU_SCRIPT = """
 """
 
 
+TOP_BRAND = """<span class="top-brand">
+  <svg width="18" height="11" viewBox="0 0 180 112" fill="none">
+    <path d="M14 100 A76 76 0 0 1 82 24" stroke="currentColor" stroke-width="19"/>
+    <path d="M98 24 A76 76 0 0 1 166 100" stroke="currentColor" stroke-width="19"/>
+    <rect x="14" y="98.5" width="152" height="13.5" fill="currentColor"/>
+  </svg>
+  Rotunda
+</span>"""
+
+
 def top_nav(current, left_extra=""):
-    """The full top-nav row: the 3-page links (or a custom left_extra,
-    e.g. signup's "Skip for now"), plus the account menu pushed to the
-    right via the slot's own margin-left:auto."""
+    """The full top-nav bar: the brand mark, the 3-page links (or a
+    custom left_extra, e.g. signup's "Skip for now"), plus the account
+    menu pushed to the right via the slot's own margin-left:auto. Meant
+    to sit directly in <body>, outside .wrap — it's a full-width bar,
+    not part of the centered content column."""
     left = left_extra if left_extra else nav_links(current)
-    return f'<div class="top-nav">{left}{ACCOUNT_MENU_SLOT}</div>{ACCOUNT_MENU_SCRIPT}'
+    return (
+        f'<div class="top-nav"><div class="top-nav-inner">{TOP_BRAND}{left}{ACCOUNT_MENU_SLOT}'
+        f'</div></div>{ACCOUNT_MENU_SCRIPT}'
+    )
 
 
 # ── Sidebar app shell — for signed-in pages only, rolled out one page
@@ -713,19 +747,21 @@ PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bill Search</title>
+<title>Rotunda</title>
 <style>{STYLE}</style>
 </head>
 <body>
+{top_nav("/")}
 <div class="wrap">
-  {top_nav("/")}
-  <h1>Bill Search</h1>
+  <h1>Look up a bill</h1>
   <p class="sub">California bill status, sponsors, and history from LegiScan.</p>
 
-  <form id="f">
-    <input id="bill" placeholder="e.g. SB122" autocomplete="off" required>
-    <button type="submit">Look up</button>
-  </form>
+  <div class="card">
+    <form id="f" style="margin:0">
+      <input id="bill" placeholder="e.g. SB122" autocomplete="off" required>
+      <button type="submit">Look up</button>
+    </form>
+  </div>
 
   <div id="loading">Searching LegiScan…</div>
   <div id="error"></div>
@@ -808,8 +844,10 @@ function render(d) {{
       </div>
     </div>
     ${{sponsors ? `<h2 class="section">Sponsors</h2><div class="sponsor-list">${{sponsors}}</div>` : ''}}
-    <h2 class="section">History</h2>
-    <table>${{history || '<tr><td>No history available.</td></tr>'}}</table>
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">History</div></div>
+      <table>${{history || '<tr><td style="padding:1rem 1.15rem">No history available.</td></tr>'}}</table>
+    </div>
   `;
   resultEl.className = 'show';
 }}
@@ -824,25 +862,26 @@ LOBBYING_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Organization Search — Bill Search</title>
+<title>Organization Search — Rotunda</title>
 <style>{STYLE}</style>
 </head>
 <body>
+{top_nav("/lobbying")}
 <div class="wrap">
-  {top_nav("/lobbying")}
   <h1>Organization Search</h1>
   <p class="sub">California lobbying firms, employers, and quarterly disclosures from CAL-ACCESS.</p>
 
-  <form id="f">
-    <input id="q" placeholder="Firm, employer, or client name" autocomplete="off" required style="flex:1">
-    <button type="submit">Search</button>
-  </form>
-
-  <p class="sub" style="margin-top:-1.2rem;font-size:0.82rem">
-    <strong>Firm</strong> = hired by clients to lobby on their behalf &nbsp;·&nbsp;
-    <strong>Employer</strong> = lobbies with its own in-house staff &nbsp;·&nbsp;
-    <strong>Coalition</strong> = a group of organizations registered together
-  </p>
+  <div class="card">
+    <form id="f" style="margin:0 0 1rem">
+      <input id="q" placeholder="Firm, employer, or client name" autocomplete="off" required style="flex:1">
+      <button type="submit">Search</button>
+    </form>
+    <p class="sub" style="margin:0;font-size:0.82rem">
+      <strong>Firm</strong> = hired by clients to lobby on their behalf &nbsp;·&nbsp;
+      <strong>Employer</strong> = lobbies with its own in-house staff &nbsp;·&nbsp;
+      <strong>Coalition</strong> = a group of organizations registered together
+    </p>
+  </div>
 
   <div id="loading">Searching…</div>
   <div id="error"></div>
@@ -905,18 +944,22 @@ function renderResults(rows) {{
     return;
   }}
   resultsEl.innerHTML = `
-    <table>
-      <tr><th>Name</th><th>Type</th><th>Location</th><th>Status</th><th></th></tr>
-      ${{rows.map(r => `
-        <tr>
-          <td><a href="${{detailUrl(r)}}">${{r.name}}</a></td>
-          <td>${{r.entity_type ? `<span class="tag">${{r.entity_type}}</span>` : `<span class="tag">named as client only</span>`}}</td>
-          <td>${{locationOrContext(r)}}</td>
-          <td>${{r.registration_status || ''}}</td>
-          <td><a class="secondary" href="/clients?prefill_name=${{encodeURIComponent(r.name)}}${{r.id ? `&prefill_entity_id=${{r.id}}` : ''}}">+ Client</a></td>
-        </tr>
-      `).join('')}}
-    </table>
+    <div class="panel">
+      <table>
+        <thead><tr><th>Name</th><th>Type</th><th>Location</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+        ${{rows.map(r => `
+          <tr>
+            <td><a href="${{detailUrl(r)}}">${{r.name}}</a></td>
+            <td>${{r.entity_type ? `<span class="tag">${{r.entity_type}}</span>` : `<span class="tag">named as client only</span>`}}</td>
+            <td>${{locationOrContext(r)}}</td>
+            <td>${{r.registration_status || ''}}</td>
+            <td><a class="secondary" href="/clients?prefill_name=${{encodeURIComponent(r.name)}}${{r.id ? `&prefill_entity_id=${{r.id}}` : ''}}">+ Client</a></td>
+          </tr>
+        `).join('')}}
+        </tbody>
+      </table>
+    </div>
   `;
 }}
 
@@ -936,12 +979,12 @@ LOBBYING_DETAIL_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Organization Detail — Bill Search</title>
+<title>Organization Detail — Rotunda</title>
 <style>{STYLE}</style>
 </head>
 <body>
+{top_nav("/lobbying", left_extra='<a href="/lobbying">← Organization Search</a>')}
 <div class="wrap">
-  {top_nav("/lobbying", left_extra='<a href="/lobbying">← Organization Search</a>')}
   <div id="error"></div>
   <div id="detail"><p class="empty">Loading…</p></div>
 </div>
@@ -960,20 +1003,25 @@ function highlight(text, name) {{
 }}
 
 function relationshipRows(rows, selectedName) {{
-  if (!rows.length) return '<p class="empty">No lobbying relationships found for this name.</p>';
+  if (!rows.length) return '<div class="panel" style="padding:1rem 1.15rem"><p class="empty">No lobbying relationships found for this name.</p></div>';
   return `
-    <table>
-      <tr><th>Firm</th><th>Client / employer</th><th>Period</th><th>Amount</th><th>Bill / activity</th></tr>
-      ${{rows.map(r => `
-        <tr>
-          <td>${{highlight(r.firm, selectedName)}}</td>
-          <td>${{highlight(r.client, selectedName)}}</td>
-          <td class="date">${{(r.period_start || '').split(' ')[0]}} – ${{(r.period_end || '').split(' ')[0]}}</td>
-          <td>${{money(r.amount_spent)}}</td>
-          <td>${{r.raw_bill_text || ''}}</td>
-        </tr>
-      `).join('')}}
-    </table>
+    <div class="panel">
+      <div class="panel-head"><div class="title">Lobbying relationships</div></div>
+      <table>
+        <thead><tr><th>Firm</th><th>Client / employer</th><th>Period</th><th>Amount</th><th>Bill / activity</th></tr></thead>
+        <tbody>
+        ${{rows.map(r => `
+          <tr>
+            <td>${{highlight(r.firm, selectedName)}}</td>
+            <td>${{highlight(r.client, selectedName)}}</td>
+            <td class="date">${{(r.period_start || '').split(' ')[0]}} – ${{(r.period_end || '').split(' ')[0]}}</td>
+            <td>${{money(r.amount_spent)}}</td>
+            <td>${{r.raw_bill_text || ''}}</td>
+          </tr>
+        `).join('')}}
+        </tbody>
+      </table>
+    </div>
   `;
 }}
 
@@ -1000,8 +1048,7 @@ function renderDetail(d) {{
         <a class="secondary" href="${{addClientUrl(d)}}">+ Add as client</a>
       </div>
     </div>
-    <h2 class="section">Lobbying relationships</h2>
-    ${{relationshipRows(d.relationships, d.name)}}
+    <div style="margin-top:1rem">${{relationshipRows(d.relationships, d.name)}}</div>
   `;
 }}
 
@@ -1031,20 +1078,22 @@ SIGNUP_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign up — Bill Search</title>
+<title>Sign up — Rotunda</title>
 <style>{STYLE}</style>
 </head>
 <body>
+{top_nav("/signup", left_extra='<a href="/">← Lookup</a><a href="/login">Log in →</a>')}
 <div class="wrap">
-  {top_nav("/signup", left_extra='<a href="/">← Lookup</a><a href="/login">Log in →</a>')}
   <h1>Create your account</h1>
   <p class="sub">Step 1 of 2 — after this, you'll fill in your CAL-ACCESS-style registration details.</p>
 
-  <form id="f">
-    <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required style="flex:1 1 100%">
-    <input id="password" type="password" placeholder="Password (8+ characters)" autocomplete="new-password" required style="flex:1 1 100%">
-    <button type="submit">Continue →</button>
-  </form>
+  <div class="card">
+    <form id="f" style="margin:0">
+      <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required style="flex:1 1 100%">
+      <input id="password" type="password" placeholder="Password (8+ characters)" autocomplete="new-password" required style="flex:1 1 100%">
+      <button type="submit">Continue →</button>
+    </form>
+  </div>
 
   <div id="loading">Creating account…</div>
   <div id="error"></div>
@@ -1090,19 +1139,21 @@ LOGIN_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Log in — Bill Search</title>
+<title>Log in — Rotunda</title>
 <style>{STYLE}</style>
 </head>
 <body>
+{top_nav("/login", left_extra='<a href="/">← Lookup</a><a href="/signup">Sign up →</a>')}
 <div class="wrap">
-  {top_nav("/login", left_extra='<a href="/">← Lookup</a><a href="/signup">Sign up →</a>')}
   <h1>Log in</h1>
 
-  <form id="f">
-    <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required style="flex:1 1 100%">
-    <input id="password" type="password" placeholder="Password" autocomplete="current-password" required style="flex:1 1 100%">
-    <button type="submit">Log in</button>
-  </form>
+  <div class="card">
+    <form id="f" style="margin:0">
+      <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required style="flex:1 1 100%">
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password" required style="flex:1 1 100%">
+      <button type="submit">Log in</button>
+    </form>
+  </div>
 
   <div id="loading">Logging in…</div>
   <div id="error"></div>
@@ -1148,15 +1199,16 @@ PROFILE_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Registration details — Bill Search</title>
+<title>Registration details — Rotunda</title>
 <style>{STYLE}</style>
 </head>
 <body>
+{top_nav("/signup/profile", left_extra='<a href="/">Skip for now →</a>')}
 <div class="wrap">
-  {top_nav("/signup/profile", left_extra='<a href="/">Skip for now →</a>')}
   <h1>Registration details</h1>
   <p class="sub">Step 2 of 2 — modeled on CAL-ACCESS Form 601 (Lobbying Firm Registration Statement), so the fields match what you'd already recognize from the state's own form.</p>
 
+  <div class="card">
   <form id="f">
     <label style="flex:1 1 100%">
       <div class="sub" style="margin:0 0 0.3rem">Legal name of firm or individual</div>
@@ -1206,6 +1258,7 @@ PROFILE_PAGE = f"""<!doctype html>
 
     <button type="submit" style="margin-top:1rem">Save and finish →</button>
   </form>
+  </div>
 
   <div id="loading">Saving…</div>
   <div id="error"></div>
@@ -1376,7 +1429,7 @@ PROFILE_VIEW_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Your profile — Bill Search</title>
+<title>Your profile — Rotunda</title>
 <style>{STYLE}</style>
 </head>
 <body>
@@ -1695,7 +1748,7 @@ FLAGGED_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>My Flagged Bills — Bill Search</title>
+<title>My Flagged Bills — Rotunda</title>
 <style>{STYLE}</style>
 </head>
 <body>
@@ -1996,7 +2049,7 @@ CLIENTS_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Clients — Bill Search</title>
+<title>Clients — Rotunda</title>
 <style>{STYLE}</style>
 </head>
 <body>
@@ -2192,7 +2245,7 @@ CLIENT_DETAIL_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Client — Bill Search</title>
+<title>Client — Rotunda</title>
 <style>{STYLE}</style>
 </head>
 <body>
@@ -2316,7 +2369,7 @@ REPORT_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Action Report — Bill Search</title>
+<title>Action Report — Rotunda</title>
 <style>{STYLE}</style>
 </head>
 <body>
@@ -2501,7 +2554,7 @@ DISCLOSURES_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Disclosure Forms — Bill Search</title>
+<title>Disclosure Forms — Rotunda</title>
 <style>{STYLE}</style>
 </head>
 <body>
@@ -2629,7 +2682,7 @@ DISCLOSURE_REVIEW_PAGE = f"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Review Disclosure Form — Bill Search</title>
+<title>Review Disclosure Form — Rotunda</title>
 <style>{STYLE}</style>
 </head>
 <body>
@@ -3692,7 +3745,7 @@ def main():
     # actually sees.
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     url = f"http://127.0.0.1:{PORT}" if not is_hosted else f"port {PORT}"
-    print(f"Bill Search running on {url}  (Ctrl+C to stop)")
+    print(f"Rotunda running on {url}  (Ctrl+C to stop)")
     if not is_hosted:
         try:
             import webbrowser
