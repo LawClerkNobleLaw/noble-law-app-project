@@ -151,26 +151,34 @@ def _clear_login_failures(email):
 
 STYLE = """
   :root {
-    --ink: #14151a; --paper: #f7f7fa; --surface: #ffffff;
-    --slate: #62636f; --rule: #e4e5ec; --accent: #4f5ac0;
-    --accent-solid: var(--accent);
-    --accent-soft: #eef0fc; --good: #1a7047; --good-soft: #e6f4ec;
-    --error: #c0392b; --error-soft: #fbe9e7;
+    /* Monochrome — replaces the earlier indigo/Linear palette. No brand
+       accent hue anywhere; --accent is now just an alias for --slate
+       (kept as its own variable since several rules below reference it
+       by name for what used to be a colored "watch/neutral" role — a
+       plain "In committee" style tag reads better as neutral gray than
+       as a leftover colored one). --accent-solid/--accent-solid-text
+       are the button-fill pair, kept separate from --accent because in
+       dark mode the fill inverts (light pill, dark text) while --accent
+       stays a light-on-dark text color — one variable can't do both.
+       --content-bg is only used by the sidebar-shell pages (app_shell())
+       for the slightly-off-white area behind the shell's cards. */
+    --ink: #171717; --paper: #ffffff; --content-bg: #fafafa; --surface: #ffffff;
+    --slate: #6b6b6b; --rule: #e5e5e5; --accent: var(--slate);
+    --accent-solid: #171717; --accent-solid-text: #ffffff;
+    --accent-soft: #f5f5f5; --good: #15803d; --good-soft: #dcfce7;
+    --error: #b91c1c; --error-soft: #fee2e2;
+    --shadow-rest: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.03);
+    --shadow-hover: 0 4px 12px rgba(0,0,0,0.06);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      /* --accent is the text/link-safe shade (bright enough to read on
-         near-black); --accent-solid is a separate, deliberately darker
-         shade used only for white-on-solid fills like <button>. One
-         indigo can't satisfy both roles at once — bright enough to read
-         as text on #08090a is too light to hold 4.5:1 white text as a
-         fill (the previous single --accent here only cleared 2.67:1 for
-         button text, silently failing WCAG AA). */
-      --ink: #f4f5f6; --paper: #08090a; --surface: #111318;
-      --slate: #9a9ea8; --rule: #262933; --accent: #9a9bfb;
-      --accent-solid: #5e6ad2;
-      --accent-soft: #1c1f32; --good: #3fb984; --good-soft: #172a27;
-      --error: #e8685f; --error-soft: #2f1f22;
+      --ink: #f5f5f5; --paper: #0a0a0a; --content-bg: #171717; --surface: #0a0a0a;
+      --slate: #a3a3a3; --rule: #262626; --accent: var(--slate);
+      --accent-solid: #f5f5f5; --accent-solid-text: #171717;
+      --accent-soft: #262626; --good: #4ade80; --good-soft: #0e2817;
+      --error: #f87171; --error-soft: #2f1313;
+      --shadow-rest: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
+      --shadow-hover: 0 4px 14px rgba(0,0,0,0.5);
     }
   }
   * { box-sizing: border-box; }
@@ -178,6 +186,13 @@ STYLE = """
     margin: 0; background: var(--paper); color: var(--ink);
     font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
+  /* A handful of plain, unclassed <a> tags (e.g. a client's name in the
+     flagged-bills list) had no color rule anywhere, so they fell back to
+     the browser's own default link blue instead of the app's palette —
+     this is the one place that acts as a fallback for those. Anywhere
+     that already sets its own color (.secondary, .primary, .panel-link,
+     etc.) keeps doing so — a class selector beats this bare-tag one. */
+  a { color: var(--accent); }
   a:focus-visible, button:focus-visible, input:focus-visible,
   select:focus-visible, summary:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px;
@@ -199,7 +214,7 @@ STYLE = """
   input#bill { flex: 1; min-width: 8rem; }
   button {
     font: inherit; font-weight: 600; padding: 0.6rem 1.1rem; border: none;
-    border-radius: 8px; background: var(--accent-solid); color: white; cursor: pointer;
+    border-radius: 8px; background: var(--accent-solid); color: var(--accent-solid-text); cursor: pointer;
   }
   button:hover { opacity: 0.9; }
   button:disabled { opacity: 0.5; cursor: default; }
@@ -215,22 +230,36 @@ STYLE = """
   }
   a.secondary { background: var(--accent-soft); color: var(--accent); }
   a.danger { background: var(--error-soft); color: var(--error); }
+  /* Solid-fill counterpart to a.secondary/a.danger above, same reasoning
+     — an <a> styled to look like the app's solid dark <button>. */
+  a.primary {
+    display: inline-flex; align-items: center; gap: 0.4rem; font: inherit; font-weight: 600;
+    padding: 0.5rem 0.9rem; border-radius: 8px; text-decoration: none;
+    background: var(--accent-solid); color: var(--accent-solid-text);
+  }
+  a.primary:hover { opacity: 0.9; }
+  a.primary svg { width: 0.85rem; height: 0.85rem; }
   a.secondary:hover, a.danger:hover { opacity: 0.9; }
   #result { display: none; }
   #result.show { display: block; }
   .card {
-    background: var(--surface); border: 1px solid var(--rule);
-    border-radius: 10px; padding: 1.25rem 1.4rem; margin-bottom: 1rem;
+    background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-rest);
+    border-radius: 18px; padding: 1.25rem 1.4rem; margin-bottom: 1rem;
   }
   .bill-id { font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--accent); margin-bottom: 0.4rem; }
   .bill-title { font-size: 1.15rem; font-weight: 700; margin: 0 0 0.3rem; }
   .bill-desc { color: var(--slate); font-size: 0.9rem; }
   .bill-link { display: inline-block; margin-top: 0.6rem; font-size: 0.85rem; }
+  /* Just a neutral dot, not color-varied by status text — LegiScan's
+     status_label is a freeform string (dozens of possible values across
+     bills), and guessing which ones are "good" vs "bad" well enough to
+     color them confidently isn't a call this restyle should make. */
   .status-badge {
-    display: inline-block; background: var(--accent-soft); color: var(--accent);
-    font-size: 0.75rem; font-weight: 700; padding: 0.2rem 0.55rem; border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 0.35rem; background: var(--accent-soft); color: var(--accent);
+    font-size: 0.75rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 999px;
     margin-bottom: 0.5rem;
   }
+  .status-badge::before { content: ""; width: 0.4rem; height: 0.4rem; border-radius: 999px; background: currentColor; flex: none; }
   .card-actions { margin-top: 0.9rem; display: flex; gap: 0.5rem; }
   h2.section { font-size: 0.95rem; margin: 1.6rem 0 0.6rem; }
   table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
@@ -268,6 +297,20 @@ STYLE = """
   select.position-select.support { border-color: var(--good); color: var(--good); }
   select.position-select.oppose { border-color: var(--error); color: var(--error); }
   select.position-select.watch { border-color: var(--accent); color: var(--accent); }
+  /* Filter tabs above a flagged/client-position list — same All/Support/
+     Oppose/Watch vocabulary as the position badges above, just as a
+     filter instead of a per-row value. */
+  .filter-tabs { display: flex; gap: 0.4rem; margin-bottom: 1.1rem; }
+  .filter-tab {
+    font: inherit; font-size: 0.82rem; font-weight: 600; color: var(--slate);
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 999px;
+    padding: 0.35rem 0.75rem; cursor: pointer;
+  }
+  .filter-tab:hover { border-color: var(--ink); }
+  .filter-tab.active {
+    background: var(--accent-solid); color: var(--accent-solid-text); border-color: var(--accent-solid);
+  }
+  .filter-tab .n { font-family: ui-monospace, monospace; font-size: 0.75rem; opacity: 0.7; margin-left: 0.35rem; }
   .account-menu { position: relative; font-size: 0.85rem; }
   .account-menu summary { cursor: pointer; color: var(--accent); list-style: none; }
   .account-menu summary::-webkit-details-marker { display: none; }
@@ -284,6 +327,182 @@ STYLE = """
   .account-menu-content a:hover, .account-menu-content button:hover { text-decoration: underline; }
   .account-menu-email { font-size: 0.75rem; color: var(--slate); border-bottom: 1px solid var(--rule);
     padding-bottom: 0.4rem; margin-bottom: 0.1rem; word-break: break-all; }
+
+  /* ── Sidebar app shell (app_shell()) ──────────────────────────────
+     Only for signed-in pages, rolled out one page at a time — see
+     app_shell()'s own docstring. Public pages keep the plain .wrap
+     single-column layout above and just inherit the new tokens. */
+  .app-shell { display: flex; min-height: 100vh; }
+  .app-sidebar {
+    width: 14rem; flex: none; background: var(--paper); border-right: 1px solid var(--rule);
+    display: flex; flex-direction: column; height: 100vh; position: sticky; top: 0;
+  }
+  .app-brand {
+    display: flex; align-items: center; gap: 0.5rem; height: 4rem; padding: 0 1.25rem;
+    border-bottom: 1px solid var(--rule); font-weight: 600; font-size: 0.9rem; flex: none;
+  }
+  /* No square badge — just the mark itself, colored like the rest of
+     the app's text (--ink), sitting directly on --paper. Light mode:
+     dark mark on white. Dark mode: white mark on black. */
+  .app-brand-mark { display: flex; align-items: center; flex: none; color: var(--ink); }
+  nav.app-nav { padding: 1rem 0.75rem; flex: 1; overflow-y: auto; }
+  .app-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+  .side-nav-item {
+    height: 2rem; display: flex; align-items: center; gap: 0.6rem; border-radius: 8px; padding: 0 0.75rem;
+    font-size: 0.82rem; font-weight: 500; color: var(--slate); text-decoration: none;
+    transition: background .12s ease, color .12s ease;
+  }
+  .side-nav-item svg { width: 0.9rem; height: 0.9rem; flex: none; }
+  .side-nav-item:hover { background: var(--accent-soft); color: var(--ink); }
+  .side-nav-item.active { background: var(--accent-soft); color: var(--ink); }
+  .side-nav-label {
+    font-size: 0.68rem; font-weight: 600; color: var(--slate); letter-spacing: .05em;
+    text-transform: uppercase; margin: 1.25rem 0.75rem 0.5rem;
+  }
+  .app-sidebar-foot { padding: 0.75rem; border-top: 1px solid var(--rule); flex: none; position: relative; }
+  .app-account {
+    display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.5rem; border-radius: 8px;
+    cursor: pointer; transition: background .12s ease; background: none; border: none; width: 100%;
+    text-align: left; color: var(--ink); /* button's own base rule sets color: var(--accent-solid-text) —
+    white-on-white in light mode, dark-on-dark in dark — this overrides it back to the real text color. */
+  }
+  .app-account:hover { background: var(--accent-soft); }
+  .app-avatar {
+    height: 1.75rem; width: 1.75rem; border-radius: 999px; background: var(--ink); color: var(--paper);
+    font-size: 0.7rem; font-weight: 600; display: flex; align-items: center; justify-content: center; flex: none;
+  }
+  .app-account-email {
+    font-size: 0.8rem; font-weight: 500; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; flex: 1; min-width: 0;
+  }
+  .app-account-menu {
+    position: absolute; left: 0.75rem; right: 0.75rem; bottom: 3.75rem; background: var(--surface);
+    border: 1px solid var(--rule); border-radius: 8px; padding: 0.4rem; box-shadow: 0 4px 14px rgba(0,0,0,0.16);
+    display: none; flex-direction: column; gap: 0.15rem; z-index: 20;
+  }
+  .app-account-menu.show { display: flex; }
+  .app-account-menu button {
+    background: none; border: none; color: var(--ink); font: inherit; font-weight: 500; font-size: 0.82rem;
+    text-align: left; padding: 0.4rem 0.5rem; border-radius: 6px; cursor: pointer;
+  }
+  .app-account-menu button:hover { background: var(--accent-soft); }
+  .app-body { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .app-topbar {
+    height: 4rem; flex: none; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 1.5rem; border-bottom: 1px solid var(--rule); background: var(--paper); gap: 1rem;
+  }
+  .app-topbar-title { font-size: 0.95rem; font-weight: 600; }
+  .app-topbar-sub { font-size: 0.78rem; color: var(--slate); margin-top: 0.1rem; }
+  .app-topbar-actions { display: flex; align-items: center; gap: 0.5rem; flex: none; }
+  /* Lives in the topbar (shared chrome), but what it actually filters is
+     page-specific — each shell page's own script attaches its own
+     'input' listener to #shell-search if that page has something to
+     filter. A page that doesn't just leaves it unwired. */
+  .search-box {
+    display: flex; align-items: center; gap: 0.5rem; height: 2rem; width: 12.5rem; border-radius: 8px;
+    background: var(--accent-soft); border: 1px solid var(--rule); padding: 0 0.6rem; font-size: 0.8rem; color: var(--slate);
+  }
+  .search-box svg { width: 0.75rem; height: 0.75rem; flex: none; }
+  .search-box input {
+    background: none; border: none; outline: none; color: var(--ink); font-size: 0.8rem;
+    width: 100%; font-family: inherit;
+  }
+  .search-box input::placeholder { color: var(--slate); }
+  .icon-btn {
+    height: 2rem; width: 2rem; border-radius: 8px; border: 1px solid var(--rule); background: var(--paper);
+    display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s ease;
+  }
+  .icon-btn:hover { background: var(--accent-soft); }
+  .icon-btn svg { width: 0.85rem; height: 0.85rem; color: var(--slate); }
+  @media (max-width: 700px) { .search-box { display: none; } }
+  .app-main { flex: 1; overflow-y: auto; padding: 1.5rem; background: var(--content-bg); }
+  /* The page's own big heading + description + right-aligned controls
+     (e.g. filter tabs), living inside .app-main — distinct from the
+     small, generic "Overview" label in .app-topbar above it. */
+  .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
+  .page-head h1 { font-size: 1.3rem; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+  .page-head .sub { font-size: 0.82rem; color: var(--slate); margin: 0.15rem 0 0; }
+  .page-head .filter-tabs { margin-bottom: 0; }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.85rem; margin-bottom: 1rem; }
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-rest);
+    border-radius: 18px; padding: 1.1rem; transition: box-shadow .15s ease;
+  }
+  .stat-card:hover { box-shadow: var(--shadow-hover); }
+  .stat-icon {
+    height: 2.1rem; width: 2.1rem; border-radius: 8px; background: var(--accent-soft);
+    display: flex; align-items: center; justify-content: center; color: var(--slate); margin-bottom: 0.85rem;
+  }
+  .stat-icon svg { width: 1rem; height: 1rem; }
+  .stat-label { font-size: 0.78rem; font-weight: 500; color: var(--slate); margin-bottom: 0.25rem; }
+  .stat-value { font-size: 1.7rem; font-weight: 600; letter-spacing: -0.01em; line-height: 1.1; }
+  .stat-foot { font-size: 0.72rem; color: var(--slate); margin-top: 0.5rem; }
+  /* A card meant to hold a whole list/table, with its own header row —
+     same visual family as .card, just with a title/subtitle slot. */
+  .panel {
+    background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-rest);
+    border-radius: 18px; overflow: hidden;
+  }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    padding: 1rem 1.15rem; border-bottom: 1px solid var(--rule);
+  }
+  .panel-head .title { font-size: 0.95rem; font-weight: 600; letter-spacing: -0.005em; }
+  .panel-head .sub { font-size: 0.75rem; color: var(--slate); margin-top: 0.15rem; }
+  .panel-link {
+    height: 1.75rem; display: flex; align-items: center; gap: 0.35rem; border-radius: 8px;
+    border: 1px solid var(--rule); background: var(--accent-soft); color: var(--slate);
+    font: inherit; font-size: 0.72rem; font-weight: 500; padding: 0 0.6rem; cursor: pointer; flex: none;
+  }
+  .panel-link:hover:not(:disabled) { background: var(--content-bg); }
+  .panel-link:disabled { cursor: not-allowed; opacity: 0.6; }
+  .panel table { margin: 0; }
+  .panel th { padding: 0.55rem 1.15rem; }
+  .panel td { padding: 0.75rem 1.15rem; }
+  .panel tbody tr:hover { background: var(--content-bg); }
+  /* A bill row's icon+title+id block — same .bill-title/.bill-id classes
+     the /report page's big card already uses, just sized down here via
+     the .bill-row scope rather than given new parallel class names. */
+  .bill-row { display: flex; align-items: center; gap: 0.6rem; }
+  .bill-row .bill-icon {
+    height: 1.75rem; width: 1.75rem; border-radius: 8px; background: var(--accent-soft);
+    display: flex; align-items: center; justify-content: center; flex: none;
+  }
+  .bill-row .bill-icon svg { width: 0.75rem; height: 0.75rem; color: var(--slate); }
+  .bill-row .bill-title { font-size: 0.85rem; font-weight: 500; margin: 0; }
+  .bill-row .bill-id { font-size: 0.72rem; margin: 0.1rem 0 0; }
+  .row-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.35rem; }
+  .row-actions a { font-size: 0.78rem; padding: 0.3rem 0.6rem; }
+  /* A "..." overflow menu for row actions that are real but shouldn't
+     shout — a bright red button on every row was too loud for
+     something you do occasionally, not the primary action of the row. */
+  .row-menu { position: relative; text-align: right; }
+  .row-menu-btn {
+    height: 1.75rem; width: 1.75rem; border-radius: 8px; border: 1px solid var(--rule); background: var(--surface);
+    color: var(--slate); display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease;
+  }
+  .row-menu-btn:hover { background: var(--accent-soft); color: var(--ink); border-color: var(--ink); }
+  .row-menu-btn svg { width: 1rem; height: 1rem; }
+  .row-menu-dropdown {
+    position: absolute; right: 0; top: calc(100% + 0.25rem); background: var(--surface);
+    border: 1px solid var(--rule); border-radius: 8px; padding: 0.3rem; min-width: 9rem;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.16); z-index: 20; display: none; flex-direction: column; gap: 0.1rem;
+  }
+  .row-menu-dropdown.show { display: flex; }
+  .row-menu-dropdown button {
+    background: none; border: none; color: var(--error); font: inherit; font-weight: 500; font-size: 0.82rem;
+    text-align: left; padding: 0.4rem 0.6rem; border-radius: 6px; cursor: pointer;
+  }
+  .row-menu-dropdown button:hover { background: var(--error-soft); }
+  th {
+    background: var(--content-bg); font-size: 0.68rem; font-weight: 600; color: var(--slate);
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  @media (max-width: 900px) {
+    .app-sidebar { display: none; }
+    .stat-grid { grid-template-columns: 1fr 1fr; }
+  }
 """
 
 
@@ -351,6 +570,142 @@ def top_nav(current, left_extra=""):
     right via the slot's own margin-left:auto."""
     left = left_extra if left_extra else nav_links(current)
     return f'<div class="top-nav">{left}{ACCOUNT_MENU_SLOT}</div>{ACCOUNT_MENU_SCRIPT}'
+
+
+# ── Sidebar app shell — for signed-in pages only, rolled out one page
+# at a time rather than all 13 templates at once. Public pages (lookup,
+# login, signup, lobbying search) keep top_nav() + .wrap above; a
+# sidebar pointing at pages you can't use yet doesn't make sense before
+# you're signed in. /flagged is the first page moved over — /clients,
+# /disclosures, /profile, /report, and /clients/detail follow later.
+SHELL_NAV_ITEMS = [
+    ("/flagged", "Flagged bills",
+     '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+     '<path d="M2 1v12M2 2h8l-2 2.5L10 7H2" stroke-linejoin="round"/></svg>'),
+    ("/clients", "Clients",
+     '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+     '<circle cx="5.5" cy="4.5" r="2.5"/><path d="M1 12c0-2.5 2-4.2 4.5-4.2S10 9.5 10 12" stroke-linecap="round"/></svg>'),
+    ("/lobbying", "Lobbying registry",
+     '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+     '<path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>'),
+    ("/disclosures", "Disclosures",
+     '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+     '<rect x="3" y="1.5" width="8" height="11" rx="1"/>'
+     '<path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>'),
+]
+
+
+def app_shell(current, body):
+    """Sidebar + topbar chrome for a signed-in page. `body` is that
+    page's own already-built inner HTML — its own heading, controls,
+    table, script, whatever it needs — just wrapped in the shell. The
+    topbar itself stays generic ("Overview" + today's date) rather than
+    per-page; the page's actual title/description lives inside `body`
+    as a .page-head, paired with that page's own controls (see
+    FLAGGED_BODY) — matching the source template's own split between a
+    small persistent header and each page's real heading.
+
+    Every page that calls this has already 302'd to /login server-side
+    if there's no session, so unlike ACCOUNT_MENU_SCRIPT above, the
+    /api/me fetch here isn't an access check — it only learns which
+    email to show in the sidebar footer."""
+    nav_html = "".join(
+        f'<li><a href="{href}" class="side-nav-item{" active" if href == current else ""}">{icon}{label}</a></li>'
+        for href, label, icon in SHELL_NAV_ITEMS
+    )
+    profile_active = " active" if current == "/profile" else ""
+    return f"""
+<div class="app-shell">
+  <aside class="app-sidebar">
+    <div class="app-brand">
+      <span class="app-brand-mark">
+        <!-- Rotunda mark 1a — tentative logo/name. No badge behind it
+             now, just the mark in --ink on --paper, so sized per the
+             24px specimen (Rotunda Mark.dc.html) rather than the 16px
+             one the smaller square badge needed. -->
+        <svg width="22" height="14" viewBox="0 0 180 112" fill="none">
+          <path d="M14 100 A76 76 0 0 1 82 24" stroke="currentColor" stroke-width="18"/>
+          <path d="M98 24 A76 76 0 0 1 166 100" stroke="currentColor" stroke-width="18"/>
+          <rect x="14" y="99" width="152" height="13" fill="currentColor"/>
+        </svg>
+      </span>
+      Rotunda
+    </div>
+    <nav class="app-nav">
+      <ul>{nav_html}</ul>
+      <div class="side-nav-label">Account</div>
+      <ul>
+        <li><a href="/profile" class="side-nav-item{profile_active}">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="7" cy="4.5" r="2.2"/><path d="M2.5 12c0-2.2 2-4 4.5-4s4.5 1.8 4.5 4" stroke-linecap="round"/>
+          </svg>
+          Profile
+        </a></li>
+      </ul>
+    </nav>
+    <div class="app-sidebar-foot">
+      <button type="button" class="app-account" id="shell-account-btn">
+        <span class="app-avatar" id="shell-avatar">&nbsp;</span>
+        <span class="app-account-email" id="shell-email">&nbsp;</span>
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--slate);flex:none">
+          <path d="M3 4.5L6 7.5L9 4.5" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <div class="app-account-menu" id="shell-account-menu">
+        <button type="button" id="shell-signout-btn">Sign out</button>
+      </div>
+    </div>
+  </aside>
+  <div class="app-body">
+    <header class="app-topbar">
+      <div>
+        <div class="app-topbar-title">Overview</div>
+        <div class="app-topbar-sub" id="shell-date"></div>
+      </div>
+      <div class="app-topbar-actions">
+        <div class="search-box">
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="5" r="3.5"/><path d="M8 8l2 2" stroke-linecap="round"/></svg>
+          <input id="shell-search" type="text" placeholder="Search bills...">
+        </div>
+        <button type="button" class="icon-btn" aria-label="Notifications">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M7 1.5A3.5 3.5 0 003.5 5v2L2 9.5h10L10.5 7V5A3.5 3.5 0 007 1.5z"/><path d="M5.5 9.5A1.5 1.5 0 008.5 9.5" stroke-linecap="round"/></svg>
+        </button>
+        <a href="/" class="primary">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 2v10M2 7h10" stroke-linecap="round"/></svg>
+          Flag a bill
+        </a>
+      </div>
+    </header>
+    <main class="app-main">{body}</main>
+  </div>
+</div>
+<script>
+(function() {{
+  const today = new Date();
+  document.getElementById('shell-date').textContent = today.toLocaleDateString('en-US', {{
+    weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+  }});
+
+  fetch('/api/me').then(r => r.json()).then(me => {{
+    if (!me.logged_in) return;
+    const email = me.email || '';
+    document.getElementById('shell-email').textContent = email;
+    document.getElementById('shell-avatar').textContent = email.slice(0, 2).toUpperCase();
+  }}).catch(() => {{}});
+
+  const acctBtn = document.getElementById('shell-account-btn');
+  const acctMenu = document.getElementById('shell-account-menu');
+  acctBtn.addEventListener('click', () => acctMenu.classList.toggle('show'));
+  document.addEventListener('click', (e) => {{
+    if (!acctBtn.contains(e.target) && !acctMenu.contains(e.target)) acctMenu.classList.remove('show');
+  }});
+  document.getElementById('shell-signout-btn').addEventListener('click', async () => {{
+    await fetch('/api/logout', {{ method: 'POST' }});
+    window.location.href = '/';
+  }});
+}})();
+</script>
+"""
 
 
 PAGE = f"""<!doctype html>
@@ -941,22 +1296,16 @@ form.addEventListener('submit', async (e) => {{
 """
 
 
-PROFILE_VIEW_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Your profile — Bill Search</title>
-<style>{STYLE}</style>
-</head>
-<body>
-<div class="wrap">
-  {top_nav("/profile")}
-  <h1>Your profile</h1>
-  <div id="loading">Loading…</div>
-  <div id="error"></div>
-  <div id="content"></div>
+PROFILE_BODY = f"""
+<div class="page-head">
+  <div>
+    <h1>Your Profile</h1>
+    <p class="sub">Your CAL-ACCESS registration details — used to pre-fill disclosure forms.</p>
+  </div>
 </div>
+<div id="loading">Loading…</div>
+<div id="error"></div>
+<div id="content"></div>
 
 <script>
 const contentEl = document.getElementById('content');
@@ -978,8 +1327,10 @@ async function load() {{
 
     if (!profile) {{
       contentEl.innerHTML = `
-        <p class="empty">You haven't filled in your registration details yet.</p>
-        <button type="button" onclick="window.location.href='/signup/profile'">Add registration details →</button>
+        <div class="panel" style="padding:1.5rem">
+          <p class="empty">You haven't filled in your registration details yet.</p>
+          <button type="button" onclick="window.location.href='/signup/profile'" style="margin-top:0.8rem">Add registration details →</button>
+        </div>
       `;
       loadingEl.className = '';
       return;
@@ -995,15 +1346,17 @@ async function load() {{
         <div class="bill-title">${{profile.legal_name}}</div>
         <span class="tag">${{profile.registrant_type === 'firm' ? 'Firm' : 'Individual lobbyist'}}</span>
       </div>
-      <h2 class="section">Registration details</h2>
-      <div class="card">
-        ${{row('Business address', [profile.bus_addr1, profile.bus_city, profile.bus_st, profile.bus_zip4].filter(Boolean).join(', '))}}
-        ${{row('Mailing address', mailing)}}
-        ${{row('Phone', profile.bus_phone)}}
-        ${{row('CA SOS filer ID', profile.existing_filer_id)}}
-      </div>
-      <div class="card-actions">
-        <button type="button" class="secondary" onclick="window.location.href='/signup/profile'">Edit →</button>
+      <div class="panel" style="margin-top:1rem">
+        <div class="panel-head"><div class="title">Registration details</div></div>
+        <div style="padding:0 1.15rem">
+          ${{row('Business address', [profile.bus_addr1, profile.bus_city, profile.bus_st, profile.bus_zip4].filter(Boolean).join(', '))}}
+          ${{row('Mailing address', mailing)}}
+          ${{row('Phone', profile.bus_phone)}}
+          ${{row('CA SOS filer ID', profile.existing_filer_id)}}
+        </div>
+        <div class="card-actions" style="padding:1rem 1.15rem">
+          <button type="button" class="secondary" onclick="window.location.href='/signup/profile'">Edit →</button>
+        </div>
       </div>
     `;
   }} catch (err) {{
@@ -1016,48 +1369,169 @@ async function load() {{
 
 load();
 </script>
+"""
+
+PROFILE_VIEW_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your profile — Bill Search</title>
+<style>{STYLE}</style>
+</head>
+<body>
+{app_shell("/profile", PROFILE_BODY)}
 </body>
 </html>
 """
 
 
-FLAGGED_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>My Flagged Bills — Bill Search</title>
-<style>{STYLE}</style>
-</head>
-<body>
-<div class="wrap">
-  {top_nav("/flagged")}
-  <h1>My Flagged Bills</h1>
-  <p class="sub">Bills you've personally flagged — stored and re-checked daily the same way the shared watch list is, just scoped to your account.</p>
-  <div id="error"></div>
+FLAGGED_BODY = f"""
+<div class="page-head">
+  <div>
+    <h1>Flagged Bills</h1>
+    <p class="sub">Bills you've personally flagged — stored and re-checked daily the same way the shared watch list is, just scoped to your account.</p>
+  </div>
+  <div class="filter-tabs" id="tabs"></div>
+</div>
+<div id="error"></div>
+<div class="stat-grid" id="stats"></div>
+
+<div class="panel">
+  <div class="panel-head">
+    <div>
+      <div class="title">Today's Digest</div>
+      <div class="sub">Not tracked yet — coming soon</div>
+    </div>
+    <button type="button" class="panel-link" disabled title="Not built yet">View digest</button>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <div class="title">Flagged Bills</div>
+    <div class="sub">Sorted by bill number</div>
+  </div>
   <div id="list"></div>
 </div>
 
 <script>
 const listEl = document.getElementById('list');
 const errorEl = document.getElementById('error');
+const tabsEl = document.getElementById('tabs');
+const statsEl = document.getElementById('stats');
+const searchEl = document.getElementById('shell-search');
 let allClients = [];
+let currentRows = [];
+let preparedFilings = [];
+let activeFilter = 'all';
+
+const ICON_FLAG = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 1v12M2 2h8l-2 2.5L10 7H2" stroke-linejoin="round"/></svg>';
+const ICON_CLIENTS = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5.5" cy="4.5" r="2.5"/><path d="M1 12c0-2.5 2-4.2 4.5-4.2S10 9.5 10 12" stroke-linecap="round"/></svg>';
+const ICON_ALERT = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M7 4.5v3" stroke-linecap="round"/><circle cx="7" cy="9.8" r="0.6" fill="currentColor" stroke="none"/></svg>';
+const ICON_DISCLOSURE = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="1.5" width="8" height="11" rx="1"/><path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function renderStats() {{
+  if (!currentRows.length) {{ statsEl.innerHTML = ''; return; }}
+  const unassigned = currentRows.filter(r => !(r.assigned_clients || []).length).length;
+  const pending = preparedFilings.filter(f => f.status === 'draft').length;
+  statsEl.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-icon">${{ICON_FLAG}}</div>
+      <div class="stat-label">Flagged bills</div>
+      <div class="stat-value">${{currentRows.length}}</div>
+      <div class="stat-foot">Refreshed once a day</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">${{ICON_CLIENTS}}</div>
+      <div class="stat-label">Active clients</div>
+      <div class="stat-value">${{allClients.length}}</div>
+      <div class="stat-foot">Clients you're tracking bills for</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">${{ICON_ALERT}}</div>
+      <div class="stat-label">Needs a client</div>
+      <div class="stat-value">${{unassigned}}</div>
+      <div class="stat-foot">Flagged bills with no client assigned</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">${{ICON_DISCLOSURE}}</div>
+      <div class="stat-label">Disclosures</div>
+      <div class="stat-value">${{pending}}</div>
+      <div class="stat-foot">${{pending ? 'Drafted, awaiting your sign-off' : 'None waiting on you'}}</div>
+    </div>
+  `;
+}}
+
+const FILTERS = [['all', 'All'], ['support', 'Support'], ['oppose', 'Oppose'], ['watch', 'Watch']];
+
+function matchesFilter(r, filter) {{
+  if (filter === 'all') return true;
+  return (r.assigned_clients || []).some(c => (c.position || 'watch') === filter);
+}}
+
+function matchesSearch(r, q) {{
+  if (!q) return true;
+  return `${{r.bill_number || ''}} ${{r.title || ''}}`.toLowerCase().includes(q);
+}}
+
+function applyFilters() {{
+  const q = (searchEl ? searchEl.value : '').trim().toLowerCase();
+  render(currentRows.filter(r => matchesFilter(r, activeFilter) && matchesSearch(r, q)));
+}}
+
+function setFilter(filter) {{
+  activeFilter = filter;
+  renderTabs();
+  applyFilters();
+}}
+
+function renderTabs() {{
+  if (!currentRows.length) {{
+    tabsEl.innerHTML = '';
+    return;
+  }}
+  tabsEl.innerHTML = FILTERS.map(([value, label]) => {{
+    const n = currentRows.filter(r => matchesFilter(r, value)).length;
+    return `<button type="button" class="filter-tab ${{value === activeFilter ? 'active' : ''}}" onclick="setFilter('${{value}}')">${{label}}<span class="n">${{n}}</span></button>`;
+  }}).join('');
+}}
+
+if (searchEl) {{
+  searchEl.addEventListener('input', applyFilters);
+}}
 
 async function load() {{
   try {{
-    const [flaggedRes, clientsRes] = await Promise.all([fetch('/api/flagged'), fetch('/api/clients')]);
+    const [flaggedRes, clientsRes, filingsRes] = await Promise.all([
+      fetch('/api/flagged'), fetch('/api/clients'), fetch('/api/prepared-filings'),
+    ]);
     if (flaggedRes.status === 401) {{
       window.location.href = '/login';
       return;
     }}
     allClients = await clientsRes.json();
-    const rows = await flaggedRes.json();
-    render(rows);
+    currentRows = await flaggedRes.json();
+    preparedFilings = filingsRes.ok ? await filingsRes.json() : [];
+    renderStats();
+    renderTabs();
+    applyFilters();
   }} catch (err) {{
     errorEl.textContent = err.message;
     errorEl.className = 'show';
   }}
 }}
+
+function toggleRowMenu(e, billId) {{
+  e.stopPropagation();
+  const menu = document.getElementById(`row-menu-${{billId}}`);
+  const wasOpen = menu.classList.contains('show');
+  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => m.classList.remove('show'));
+  if (!wasOpen) menu.classList.add('show');
+}}
+document.addEventListener('click', () => {{
+  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => m.classList.remove('show'));
+}});
 
 async function unflag(billId) {{
   try {{
@@ -1161,57 +1635,89 @@ function clientCell(r) {{
 }}
 
 function render(rows) {{
-  if (!rows.length) {{
+  if (!currentRows.length) {{
     listEl.innerHTML = '<p class="empty">Nothing flagged yet — look up a bill and click "Flag this bill" from there.</p>';
+    return;
+  }}
+  if (!rows.length) {{
+    const q = (searchEl ? searchEl.value : '').trim();
+    const filterLabel = activeFilter !== 'all'
+      ? ` marked "${{(FILTERS.find(([value]) => value === activeFilter) || [null, activeFilter])[1]}}"` : '';
+    const searchNote = q ? ` matching "${{q}}"` : '';
+    listEl.innerHTML = `<p class="empty">No flagged bills${{filterLabel}}${{searchNote}} right now — try <a href="#" onclick="event.preventDefault(); if (searchEl) searchEl.value=''; setFilter('all')">clearing filters</a>.</p>`;
     return;
   }}
   listEl.innerHTML = `
     <table>
-      <tr><th>Bill</th><th>Title</th><th>Status</th><th>Last checked</th><th>Client</th><th></th></tr>
+      <thead><tr><th>Bill</th><th>Status</th><th>Last checked</th><th>Clients &amp; positions</th><th></th></tr></thead>
+      <tbody>
       ${{rows.map(r => `
         <tr>
-          <td class="chamber">
-            ${{r.state}} ${{r.bill_number}}
-            <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.4rem;text-transform:none;font-weight:400;font-size:0.85rem">
+          <td>
+            <div class="bill-row">
+              <div class="bill-icon">
+                <svg viewBox="0 0 14 14" fill="currentColor"><rect x="1" y="1" width="5" height="5" rx="1"/><rect x="8" y="1" width="5" height="5" rx="1"/><rect x="1" y="8" width="5" height="5" rx="1"/><rect x="8" y="8" width="5" height="5" rx="1"/></svg>
+              </div>
+              <div>
+                <div class="bill-title">${{r.title || ''}}</div>
+                <div class="bill-id">${{r.state}} ${{r.bill_number}}</div>
+              </div>
+            </div>
+            <div class="row-actions">
               ${{r.url ? `<a class="secondary" href="${{r.url}}" target="_blank" rel="noopener">View</a>` : ''}}
               <a class="secondary" href="/report?bill_id=${{r.bill_id}}">Report</a>
             </div>
           </td>
-          <td>${{r.title || ''}}</td>
-          <td>${{r.status_label || ''}}</td>
+          <td>${{r.status_label ? `<span class="status-badge">${{r.status_label}}</span>` : ''}}</td>
           <td class="date">${{(r.last_checked_at || '').replace('T', ' ').slice(0, 16)}}</td>
           <td>${{clientCell(r)}}</td>
-          <td><button class="danger" onclick="unflag(${{r.bill_id}})">Unflag</button></td>
+          <td class="row-menu">
+            <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, ${{r.bill_id}})" aria-label="Bill actions">
+              <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
+            </button>
+            <div class="row-menu-dropdown" id="row-menu-${{r.bill_id}}">
+              <button type="button" onclick="unflag(${{r.bill_id}})">Unflag this bill</button>
+            </div>
+          </td>
         </tr>
       `).join('')}}
+      </tbody>
     </table>
   `;
 }}
 
 load();
 </script>
+"""
+
+FLAGGED_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Flagged Bills — Bill Search</title>
+<style>{STYLE}</style>
+</head>
+<body>
+{app_shell("/flagged", FLAGGED_BODY)}
 </body>
 </html>
 """
 
 
-CLIENTS_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Clients — Bill Search</title>
-<style>{STYLE}</style>
-</head>
-<body>
-<div class="wrap">
-  {top_nav("/clients")}
-  <h1>Clients</h1>
-  <p class="sub">Modeled on CAL-ACCESS Forms 602/603, tied to your account.</p>
-
+CLIENTS_BODY = f"""
+<div class="page-head">
+  <div>
+    <h1>Clients</h1>
+    <p class="sub">Modeled on CAL-ACCESS Forms 602/603, tied to your account.</p>
+  </div>
   <button type="button" id="add-client-btn">+ Add client</button>
+</div>
 
-  <form id="f" style="display:none;margin-top:1rem">
+<div class="stat-grid" id="stats"></div>
+
+<div class="card" id="form-card" style="display:none">
+  <form id="f">
     <label style="flex:1 1 100%">
       <div class="sub" style="margin:0 0 0.3rem">Client / employer name</div>
       <input id="name" required style="width:100%">
@@ -1254,24 +1760,50 @@ CLIENTS_PAGE = f"""<!doctype html>
     <button type="submit" id="submit-client-btn" style="margin-top:1rem">Add client →</button>
     <button type="button" id="cancel-client-btn" class="secondary" style="margin-top:1rem">Cancel</button>
   </form>
+</div>
 
-  <div id="loading">Saving…</div>
-  <div id="error"></div>
+<div id="loading">Saving…</div>
+<div id="error"></div>
 
-  <h2 class="section" style="margin-top:2rem">Your clients</h2>
+<div class="panel">
+  <div class="panel-head"><div class="title">Your clients</div></div>
   <div id="list"></div>
 </div>
 
 <script>
 const form = document.getElementById('f');
+const formCard = document.getElementById('form-card');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
 const listEl = document.getElementById('list');
+const statsEl = document.getElementById('stats');
 const addBtn = document.getElementById('add-client-btn');
 const cancelBtn = document.getElementById('cancel-client-btn');
 const submitBtn = document.getElementById('submit-client-btn');
 let allClients = [];
 let editingId = null;  // null = creating a new client; otherwise the id being edited
+
+const ICON_CLIENTS = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5.5" cy="4.5" r="2.5"/><path d="M1 12c0-2.5 2-4.2 4.5-4.2S10 9.5 10 12" stroke-linecap="round"/><circle cx="10.5" cy="5.5" r="1.8"/><path d="M9 12c0-1.7 1.3-3 3-3" stroke-linecap="round"/></svg>';
+const ICON_ALERT = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M7 4.5v3" stroke-linecap="round"/><circle cx="7" cy="9.8" r="0.6" fill="currentColor" stroke="none"/></svg>';
+
+function renderStats() {{
+  if (!allClients.length) {{ statsEl.innerHTML = ''; return; }}
+  const missingFilerId = allClients.filter(c => !c.existing_filer_id).length;
+  statsEl.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-icon">${{ICON_CLIENTS}}</div>
+      <div class="stat-label">Clients</div>
+      <div class="stat-value">${{allClients.length}}</div>
+      <div class="stat-foot">Tied to your account</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">${{ICON_ALERT}}</div>
+      <div class="stat-label">Missing filer ID</div>
+      <div class="stat-value">${{missingFilerId}}</div>
+      <div class="stat-foot">Optional, but useful for cross-checking CAL-ACCESS</div>
+    </div>
+  `;
+}}
 
 // Arriving from Organization Search's "+ Client" link (?prefill_name=...
 // and, for a registered entity, &prefill_entity_id=...) opens the form
@@ -1310,12 +1842,12 @@ async function applyPrefill() {{
 }}
 
 function showForm() {{
-  form.style.display = 'flex';
+  formCard.style.display = 'block';
   addBtn.style.display = 'none';
 }}
 
 function hideForm() {{
-  form.style.display = 'none';
+  formCard.style.display = 'none';
   addBtn.style.display = '';
   form.reset();
   editingId = null;
@@ -1404,6 +1936,7 @@ async function load() {{
     }}
     const rows = await res.json();
     allClients = rows;
+    renderStats();
     render(rows);
   }} catch (err) {{
     errorEl.textContent = err.message;
@@ -1418,28 +1951,56 @@ function render(rows) {{
   }}
   listEl.innerHTML = `
     <table>
-      <tr><th>Name</th><th>Business address</th><th>Industry / interests</th><th>Filer ID</th><th></th></tr>
+      <thead><tr><th>Name</th><th>Business address</th><th>Industry / interests</th><th>Filer ID</th><th></th></tr></thead>
+      <tbody>
       ${{rows.map(c => `
         <tr>
           <td><a href="/clients/detail?id=${{c.id}}">${{c.name}}</a></td>
           <td>${{[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', ')}}</td>
           <td>${{c.interests || ''}}</td>
           <td>${{c.existing_filer_id || ''}}</td>
-          <td>
-            <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
-              <a class="secondary" href="#" onclick="event.preventDefault(); editClient(${{c.id}})">Edit</a>
-              <button class="danger" onclick="removeClient(${{c.id}})">Remove</button>
+          <td class="row-menu">
+            <a class="secondary" href="#" onclick="event.preventDefault(); editClient(${{c.id}})" style="margin-right:0.4rem">Edit</a>
+            <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'client-${{c.id}}')" aria-label="More actions">
+              <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
+            </button>
+            <div class="row-menu-dropdown" id="row-menu-client-${{c.id}}">
+              <button type="button" onclick="removeClient(${{c.id}})">Remove client</button>
             </div>
           </td>
         </tr>
       `).join('')}}
+      </tbody>
     </table>
   `;
 }}
 
+function toggleRowMenu(e, key) {{
+  e.stopPropagation();
+  const menu = document.getElementById(`row-menu-${{key}}`);
+  const wasOpen = menu.classList.contains('show');
+  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => m.classList.remove('show'));
+  if (!wasOpen) menu.classList.add('show');
+}}
+document.addEventListener('click', () => {{
+  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => m.classList.remove('show'));
+}});
+
 load();
 applyPrefill();
 </script>
+"""
+
+CLIENTS_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clients — Bill Search</title>
+<style>{STYLE}</style>
+</head>
+<body>
+{app_shell("/clients", CLIENTS_BODY)}
 </body>
 </html>
 """
@@ -1451,21 +2012,13 @@ applyPrefill();
 # only from /flagged — the reverse direction of the existing
 # flag-then-assign flow. Reached via ?id=..., e.g. from the Clients list
 # or Organization Search's "+ Add as client" link.
-CLIENT_DETAIL_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Client — Bill Search</title>
-<style>{STYLE}</style>
-</head>
-<body>
-<div class="wrap">
-  {top_nav("/clients", left_extra='<a href="/clients">← Clients</a>')}
-  <div id="error"></div>
-  <div id="client"></div>
+CLIENT_DETAIL_BODY = f"""
+<div class="page-head"><div><a href="/clients" class="sub">← Clients</a></div></div>
+<div id="error"></div>
+<div id="client"></div>
 
-  <h2 class="section" style="margin-top:2rem">Add a bill</h2>
+<div class="card" style="margin-top:1rem">
+  <div class="bill-title" style="margin-bottom:0.8rem">Add a bill</div>
   <form id="add-bill-f">
     <input id="bill_number" placeholder="e.g. SB122" autocomplete="off" required style="flex:1;min-width:8rem">
     <select id="add-bill-position">
@@ -1475,9 +2028,11 @@ CLIENT_DETAIL_PAGE = f"""<!doctype html>
     </select>
     <button type="submit">Add →</button>
   </form>
-  <div id="add-bill-loading" class="empty" style="display:none">Looking up bill…</div>
+  <div id="add-bill-loading" class="empty" style="display:none;margin-top:0.6rem">Looking up bill…</div>
+</div>
 
-  <h2 class="section" style="margin-top:2rem">Bills</h2>
+<div class="panel" style="margin-top:1rem">
+  <div class="panel-head"><div class="title">Bills</div></div>
   <div id="bills"></div>
 </div>
 
@@ -1521,24 +2076,40 @@ function renderBills(bills) {{
   }}
   billsEl.innerHTML = `
     <table>
-      <tr><th>Bill</th><th>Title</th><th>Status</th><th>Position</th><th></th></tr>
+      <thead><tr><th>Bill</th><th>Title</th><th>Status</th><th>Position</th><th></th></tr></thead>
+      <tbody>
       ${{bills.map(b => `
         <tr>
           <td class="chamber">${{b.state}} ${{b.bill_number}}</td>
           <td>${{b.title || ''}}</td>
-          <td>${{b.status_label || ''}}</td>
+          <td>${{b.status_label ? `<span class="status-badge">${{b.status_label}}</span>` : ''}}</td>
           <td>${{positionSelect(b.bill_id, b.position || 'watch')}}</td>
-          <td>
-            <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
-              <a class="secondary" href="/report?bill_id=${{b.bill_id}}">Report</a>
-              <button class="danger" onclick="removeBill(${{b.bill_id}})">Remove</button>
+          <td class="row-menu">
+            <a class="secondary" href="/report?bill_id=${{b.bill_id}}" style="margin-right:0.4rem">Report</a>
+            <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'bill-${{b.bill_id}}')" aria-label="More actions">
+              <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
+            </button>
+            <div class="row-menu-dropdown" id="row-menu-bill-${{b.bill_id}}">
+              <button type="button" onclick="removeBill(${{b.bill_id}})">Remove from client</button>
             </div>
           </td>
         </tr>
       `).join('')}}
+      </tbody>
     </table>
   `;
 }}
+
+function toggleRowMenu(e, key) {{
+  e.stopPropagation();
+  const menu = document.getElementById(`row-menu-${{key}}`);
+  const wasOpen = menu.classList.contains('show');
+  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => m.classList.remove('show'));
+  if (!wasOpen) menu.classList.add('show');
+}}
+document.addEventListener('click', () => {{
+  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => m.classList.remove('show'));
+}});
 
 async function load() {{
   try {{
@@ -1614,6 +2185,18 @@ addBillForm.addEventListener('submit', async (e) => {{
 
 load();
 </script>
+"""
+
+CLIENT_DETAIL_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Client — Bill Search</title>
+<style>{STYLE}</style>
+</head>
+<body>
+{app_shell("/clients", CLIENT_DETAIL_BODY)}
 </body>
 </html>
 """
@@ -1625,20 +2208,10 @@ load();
 # clients) that client's name and current position. Reached via
 # ?bill_id=... — e.g. linked from a "Report" link on /flagged — rather
 # than being a page anyone navigates to on its own.
-REPORT_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Action Report — Bill Search</title>
-<style>{STYLE}</style>
-</head>
-<body>
-<div class="wrap">
-  {top_nav("/report")}
-  <div id="error"></div>
-  <div id="report"></div>
-</div>
+REPORT_BODY = f"""
+<div class="page-head"><div><a href="/flagged" class="sub">← Flagged bills</a></div></div>
+<div id="error"></div>
+<div id="report"></div>
 
 <script>
 const reportEl = document.getElementById('report');
@@ -1704,28 +2277,50 @@ function render(r) {{
       ${{r.url ? `<a class="bill-link" href="${{r.url}}" target="_blank" rel="noopener">View on LegiScan →</a>` : ''}}
     </div>
 
-    <h2 class="section">Assigned client${{(r.assigned_clients || []).length === 1 ? '' : 's'}}</h2>
-    ${{clientBadges || '<p class="empty">Not currently assigned to any of your clients.</p>'}}
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">Assigned client${{(r.assigned_clients || []).length === 1 ? '' : 's'}}</div></div>
+      <div style="padding:1rem 1.15rem">
+        ${{clientBadges || '<p class="empty">Not currently assigned to any of your clients.</p>'}}
+      </div>
+    </div>
 
-    <h2 class="section">Status history</h2>
-    ${{historyRows
-      ? `<table><tr><th>Date</th><th>Chamber</th><th>Action</th></tr>${{historyRows}}</table>`
-      : '<p class="empty">No status history recorded yet.</p>'}}
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">Status history</div></div>
+      ${{historyRows
+        ? `<table><thead><tr><th>Date</th><th>Chamber</th><th>Action</th></tr></thead><tbody>${{historyRows}}</tbody></table>`
+        : '<p class="empty" style="padding:1rem 1.15rem">No status history recorded yet.</p>'}}
+    </div>
 
-    <h2 class="section">Amendment history</h2>
-    ${{amendmentRows
-      ? `<table><tr><th>Date</th><th>Chamber</th><th>Amendment</th></tr>${{amendmentRows}}</table>`
-      : '<p class="empty">No amendments recorded.</p>'}}
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">Amendment history</div></div>
+      ${{amendmentRows
+        ? `<table><thead><tr><th>Date</th><th>Chamber</th><th>Amendment</th></tr></thead><tbody>${{amendmentRows}}</tbody></table>`
+        : '<p class="empty" style="padding:1rem 1.15rem">No amendments recorded.</p>'}}
+    </div>
 
-    <h2 class="section">Upcoming hearings</h2>
-    ${{hearingRows
-      ? `<table><tr><th>When</th><th>Type</th><th>Details</th></tr>${{hearingRows}}</table>`
-      : '<p class="empty">No upcoming hearings scheduled.</p>'}}
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">Upcoming hearings</div></div>
+      ${{hearingRows
+        ? `<table><thead><tr><th>When</th><th>Type</th><th>Details</th></tr></thead><tbody>${{hearingRows}}</tbody></table>`
+        : '<p class="empty" style="padding:1rem 1.15rem">No upcoming hearings scheduled.</p>'}}
+    </div>
   `;
 }}
 
 load();
 </script>
+"""
+
+REPORT_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Action Report — Bill Search</title>
+<style>{STYLE}</style>
+</head>
+<body>
+{app_shell("/flagged", REPORT_BODY)}
 </body>
 </html>
 """
@@ -1736,20 +2331,17 @@ load();
 # (one draft: the actual filled PDF, known-gap notes, and the sign-off
 # step). This app never files anything itself — see pdf_forms.py and
 # db.sign_off_prepared_filing for where that boundary is enforced.
-DISCLOSURES_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Disclosure Forms — Bill Search</title>
-<style>{STYLE}</style>
-</head>
-<body>
-<div class="wrap">
-  {top_nav("/disclosures")}
-  <h1>Disclosure Forms</h1>
-  <p class="sub">Prepare a real FPPC disclosure form, pre-filled from your profile and clients. This app never files anything on your behalf — it only prepares the document for you to review, sign off on, and file yourself.</p>
+DISCLOSURES_BODY = f"""
+<div class="page-head">
+  <div>
+    <h1>Disclosure Forms</h1>
+    <p class="sub">Prepare a real FPPC disclosure form, pre-filled from your profile and clients. This app never files anything on your behalf — it only prepares the document for you to review, sign off on, and file yourself.</p>
+  </div>
+</div>
 
+<div class="stat-grid" id="stats"></div>
+
+<div class="card">
   <form id="f">
     <label style="flex:1 1 100%">
       <div class="sub" style="margin:0 0 0.3rem">Which form do you need?</div>
@@ -1767,11 +2359,13 @@ DISCLOSURES_PAGE = f"""<!doctype html>
     </div>
     <button type="submit" style="margin-top:1rem">Generate draft →</button>
   </form>
+</div>
 
-  <div id="loading">Generating…</div>
-  <div id="error"></div>
+<div id="loading">Generating…</div>
+<div id="error"></div>
 
-  <h2 class="section" style="margin-top:2rem">Your prepared filings</h2>
+<div class="panel" style="margin-top:1rem">
+  <div class="panel-head"><div class="title">Your prepared filings</div></div>
   <div id="list"></div>
 </div>
 
@@ -1789,6 +2383,37 @@ const periodNote = document.getElementById('period_note');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
 const listEl = document.getElementById('list');
+const statsEl = document.getElementById('stats');
+
+const ICON_DISCLOSURE = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="1.5" width="8" height="11" rx="1"/><path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_ALERT = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M7 4.5v3" stroke-linecap="round"/><circle cx="7" cy="9.8" r="0.6" fill="currentColor" stroke="none"/></svg>';
+const ICON_GOOD = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M4.5 7l1.7 1.7L9.7 5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function renderStats(rows) {{
+  if (!rows.length) {{ statsEl.innerHTML = ''; return; }}
+  const pending = rows.filter(r => r.status === 'draft').length;
+  const ready = rows.filter(r => r.status === 'ready_to_file').length;
+  statsEl.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-icon">${{ICON_DISCLOSURE}}</div>
+      <div class="stat-label">Prepared filings</div>
+      <div class="stat-value">${{rows.length}}</div>
+      <div class="stat-foot">All time</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">${{ICON_ALERT}}</div>
+      <div class="stat-label">Awaiting sign-off</div>
+      <div class="stat-value">${{pending}}</div>
+      <div class="stat-foot">${{pending ? 'Review and confirm when ready' : 'Nothing waiting on you'}}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">${{ICON_GOOD}}</div>
+      <div class="stat-label">Ready to file</div>
+      <div class="stat-value">${{ready}}</div>
+      <div class="stat-foot">Signed off, yours to file</div>
+    </div>
+  `;
+}}
 
 function syncPeriodField() {{
   const meta = FORM_META[formType.value];
@@ -1830,6 +2455,7 @@ async function load() {{
     const res = await fetch('/api/prepared-filings');
     if (res.status === 401) {{ window.location.href = '/login'; return; }}
     const rows = await res.json();
+    renderStats(rows);
     render(rows);
   }} catch (err) {{
     errorEl.textContent = err.message;
@@ -1844,7 +2470,8 @@ function render(rows) {{
   }}
   listEl.innerHTML = `
     <table>
-      <tr><th>Form</th><th>Period</th><th>Status</th><th>Created</th><th></th></tr>
+      <thead><tr><th>Form</th><th>Period</th><th>Status</th><th>Created</th><th></th></tr></thead>
+      <tbody>
       ${{rows.map(r => {{
         const meta = FORM_META[r.form_type];
         const statusBadge = r.status === 'ready_to_file'
@@ -1860,31 +2487,34 @@ function render(rows) {{
           </tr>
         `;
       }}).join('')}}
+      </tbody>
     </table>
   `;
 }}
 
 load();
 </script>
+"""
+
+DISCLOSURES_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Disclosure Forms — Bill Search</title>
+<style>{STYLE}</style>
+</head>
+<body>
+{app_shell("/disclosures", DISCLOSURES_BODY)}
 </body>
 </html>
 """
 
 
-DISCLOSURE_REVIEW_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Review Disclosure Form — Bill Search</title>
-<style>{STYLE}</style>
-</head>
-<body>
-<div class="wrap">
-  {top_nav("/disclosures")}
-  <div id="error"></div>
-  <div id="content"></div>
-</div>
+DISCLOSURE_REVIEW_BODY = f"""
+<div class="page-head"><div><a href="/disclosures" class="sub">← Disclosures</a></div></div>
+<div id="error"></div>
+<div id="content"></div>
 
 <script>
 const errorEl = document.getElementById('error');
@@ -1979,8 +2609,8 @@ function render(r) {{
       </div>
     </div>
 
-    <div class="card" style="padding:0">
-      <iframe src="${{pdfUrl}}" style="width:100%;height:70vh;border:none;border-radius:10px" title="Filled ${{r.form_type}} preview"></iframe>
+    <div class="card" style="padding:0;overflow:hidden">
+      <iframe src="${{pdfUrl}}" style="width:100%;height:70vh;border:none" title="Filled ${{r.form_type}} preview"></iframe>
     </div>
     <div class="card-actions" style="margin:-0.5rem 0 1.5rem">
       <a class="secondary" href="${{pdfUrl}}" target="_blank" rel="noopener">Open PDF in a new tab →</a>
@@ -1992,6 +2622,18 @@ function render(r) {{
 
 load();
 </script>
+"""
+
+DISCLOSURE_REVIEW_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review Disclosure Form — Bill Search</title>
+<style>{STYLE}</style>
+</head>
+<body>
+{app_shell("/disclosures", DISCLOSURE_REVIEW_BODY)}
 </body>
 </html>
 """
