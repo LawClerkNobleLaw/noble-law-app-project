@@ -618,15 +618,18 @@ def top_nav(current, left_extra=""):
 # you're signed in. /flagged is the first page moved over — /clients,
 # /disclosures, /profile, /report, and /clients/detail follow later.
 SHELL_NAV_ITEMS = [
+    ("/lookup", "Lookup",
+     '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+     '<circle cx="6" cy="6" r="4"/><path d="M9.5 9.5L12.5 12.5" stroke-linecap="round"/></svg>'),
+    ("/lobbying", "Organization Search",
+     '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+     '<path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>'),
     ("/flagged", "Flagged bills",
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
      '<path d="M2 1v12M2 2h8l-2 2.5L10 7H2" stroke-linejoin="round"/></svg>'),
     ("/clients", "Clients",
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
      '<circle cx="5.5" cy="4.5" r="2.5"/><path d="M1 12c0-2.5 2-4.2 4.5-4.2S10 9.5 10 12" stroke-linecap="round"/></svg>'),
-    ("/lobbying", "Lobbying registry",
-     '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
-     '<path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>'),
     ("/disclosures", "Disclosures",
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
      '<rect x="3" y="1.5" width="8" height="11" rx="1"/>'
@@ -910,6 +913,14 @@ LANDING_PAGE = f"""<!doctype html>
             </svg>
             Rotunda
           </div>
+          <div class="frame-nav-item">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="4"/><path d="M9.5 9.5L12.5 12.5" stroke-linecap="round"/></svg>
+            Lookup
+          </div>
+          <div class="frame-nav-item">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>
+            Organization Search
+          </div>
           <div class="frame-nav-item active">
             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 1v12M2 2h8l-2 2.5L10 7H2" stroke-linejoin="round"/></svg>
             Flagged bills
@@ -917,10 +928,6 @@ LANDING_PAGE = f"""<!doctype html>
           <div class="frame-nav-item">
             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5.5" cy="4.5" r="2.5"/><path d="M1 12c0-2.5 2-4.2 4.5-4.2S10 9.5 10 12" stroke-linecap="round"/></svg>
             Clients
-          </div>
-          <div class="frame-nav-item">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>
-            Lobbying registry
           </div>
           <div class="frame-nav-item">
             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="1.5" width="8" height="11" rx="1"/><path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1007,8 +1014,8 @@ LANDING_PAGE = f"""<!doctype html>
 
       <div class="feat card">
         <div class="feat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 21V10l8-6 8 6v11" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 21v-7h6v7" stroke="currentColor" stroke-width="1.6"/></svg></div>
-        <h3>Lobbying registry search</h3>
-        <p>Cross-reference California's CAL-ACCESS disclosure data alongside your bills — the same dataset, refreshed on its own daily pipeline.</p>
+        <h3>Organization Search</h3>
+        <p>Cross-reference California's CAL-ACCESS lobbying disclosure data alongside your bills — the same dataset, refreshed on its own daily pipeline.</p>
       </div>
 
       <div class="feat card">
