@@ -410,6 +410,14 @@ STYLE = """
     text-align: left; padding: 0.4rem 0.5rem; border-radius: 6px; cursor: pointer;
   }
   .app-account-menu button:hover { background: var(--accent-soft); }
+  /* Shown instead of the avatar/email button when /api/me says no one's
+     signed in — /lookup and /lobbying are the two pages that render this
+     shell without requiring a session (see the module docstring's "no
+     account needed to look up a bill" promise), so the sidebar footer
+     needs an honest logged-out state rather than a blank avatar next to
+     a "Sign out" button that wouldn't do anything. */
+  .app-account-guest { display: none; gap: 0.5rem; }
+  .app-account-guest a { flex: 1; justify-content: center; text-align: center; padding: 0.5rem 0; font-size: 0.8rem; }
   .app-body { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   .app-topbar {
     height: 4rem; flex: none; display: flex; align-items: center; justify-content: space-between;
@@ -638,19 +646,28 @@ SHELL_NAV_ITEMS = [
 
 
 def app_shell(current, body):
-    """Sidebar + topbar chrome for a signed-in page. `body` is that
-    page's own already-built inner HTML — its own heading, controls,
-    table, script, whatever it needs — just wrapped in the shell. The
-    topbar itself stays generic ("Overview" + today's date) rather than
-    per-page; the page's actual title/description lives inside `body`
-    as a .page-head, paired with that page's own controls (see
-    FLAGGED_BODY) — matching the source template's own split between a
-    small persistent header and each page's real heading.
+    """Sidebar + topbar chrome shared by every real page in the product.
+    `body` is that page's own already-built inner HTML — its own
+    heading, controls, table, script, whatever it needs — just wrapped
+    in the shell. The topbar itself stays generic ("Overview" + today's
+    date) rather than per-page; the page's actual title/description
+    lives inside `body` as a .page-head, paired with that page's own
+    controls (see FLAGGED_BODY) — matching the source template's own
+    split between a small persistent header and each page's real
+    heading.
 
-    Every page that calls this has already 302'd to /login server-side
-    if there's no session, so unlike ACCOUNT_MENU_SCRIPT above, the
-    /api/me fetch here isn't an access check — it only learns which
-    email to show in the sidebar footer."""
+    Most pages that call this have already 302'd to /login server-side
+    if there's no session, so for them the /api/me fetch below isn't an
+    access check — it only learns which email to show in the sidebar
+    footer. /lookup and /lobbying are the exceptions: they render this
+    same shell without requiring a session at all (see the module
+    docstring's "free to look up a bill, no account needed" promise),
+    so /api/me can genuinely come back logged_in: false here — in which
+    case the sidebar footer swaps to Sign in/Sign up (#shell-guest)
+    instead of an avatar and a "Sign out" button that wouldn't do
+    anything. Sidebar links to account-gated pages (Flagged bills,
+    Clients, Profile, ...) still just 302 a logged-out visitor to
+    /login if they click one — same as always."""
     nav_html = "".join(
         f'<li><a href="{href}" class="side-nav-item{" active" if href == current else ""}">{icon}{label}</a></li>'
         for href, label, icon in SHELL_NAV_ITEMS
@@ -686,7 +703,11 @@ def app_shell(current, body):
       </ul>
     </nav>
     <div class="app-sidebar-foot">
-      <button type="button" class="app-account" id="shell-account-btn">
+      <div class="app-account-guest" id="shell-guest">
+        <a href="/login" class="secondary">Sign in</a>
+        <a href="/signup" class="primary">Sign up</a>
+      </div>
+      <button type="button" class="app-account" id="shell-account-btn" style="display:none">
         <span class="app-avatar" id="shell-avatar">&nbsp;</span>
         <span class="app-account-email" id="shell-email">&nbsp;</span>
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--slate);flex:none">
@@ -712,10 +733,10 @@ def app_shell(current, body):
         <button type="button" class="icon-btn" aria-label="Notifications">
           <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M7 1.5A3.5 3.5 0 003.5 5v2L2 9.5h10L10.5 7V5A3.5 3.5 0 007 1.5z"/><path d="M5.5 9.5A1.5 1.5 0 008.5 9.5" stroke-linecap="round"/></svg>
         </button>
-        <a href="/lookup" class="primary">
+        {'' if current == "/lookup" else '''<a href="/lookup" class="primary">
           <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 2v10M2 7h10" stroke-linecap="round"/></svg>
           Flag a bill
-        </a>
+        </a>'''}
       </div>
     </header>
     <main class="app-main">{body}</main>
@@ -729,11 +750,17 @@ def app_shell(current, body):
   }});
 
   fetch('/api/me').then(r => r.json()).then(me => {{
-    if (!me.logged_in) return;
+    if (!me.logged_in) {{
+      document.getElementById('shell-guest').style.display = 'flex';
+      return;
+    }}
     const email = me.email || '';
     document.getElementById('shell-email').textContent = email;
     document.getElementById('shell-avatar').textContent = email.slice(0, 2).toUpperCase();
-  }}).catch(() => {{}});
+    document.getElementById('shell-account-btn').style.display = '';
+  }}).catch(() => {{
+    document.getElementById('shell-guest').style.display = 'flex';
+  }});
 
   const acctBtn = document.getElementById('shell-account-btn');
   const acctMenu = document.getElementById('shell-account-menu');
@@ -1102,31 +1129,31 @@ LANDING_PAGE = f"""<!doctype html>
 """
 
 
-PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Look up a bill — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{top_nav("/lookup")}
-<div class="wrap">
-  <h1>Look up a bill</h1>
-  <p class="sub">California bill status, sponsors, and history from LegiScan.</p>
-
-  <div class="card">
-    <form id="f" style="margin:0">
-      <input id="bill" placeholder="e.g. SB122" autocomplete="off" required>
-      <button type="submit">Look up</button>
-    </form>
+# The body for /lookup, wrapped in app_shell() below rather than
+# top_nav()+.wrap — this is one of the two pages (with /lobbying) that
+# render the full signed-in shell without requiring a session, so it
+# feels like part of the same product whether you found it from the
+# marketing homepage or clicked "Lookup" in your own sidebar. See
+# app_shell()'s docstring for how the sidebar footer handles being
+# logged out here.
+LOOKUP_BODY = f"""
+<div class="page-head">
+  <div>
+    <h1>Look up a bill</h1>
+    <p class="sub">California bill status, sponsors, and history from LegiScan.</p>
   </div>
-
-  <div id="loading">Searching LegiScan…</div>
-  <div id="error"></div>
-  <div id="result"></div>
 </div>
+
+<div class="card">
+  <form id="f" style="margin:0">
+    <input id="bill" placeholder="e.g. SB122" autocomplete="off" required>
+    <button type="submit">Look up</button>
+  </form>
+</div>
+
+<div id="loading">Searching LegiScan…</div>
+<div id="error"></div>
+<div id="result"></div>
 
 <script>
 const form = document.getElementById('f');
@@ -1212,41 +1239,48 @@ function render(d) {{
   resultEl.className = 'show';
 }}
 </script>
+"""
+
+PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Look up a bill — Rotunda</title>
+<style>{STYLE}</style>
+</head>
+<body>
+{app_shell("/lookup", LOOKUP_BODY)}
 </body>
 </html>
 """
 
 
-LOBBYING_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Organization Search — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{top_nav("/lobbying")}
-<div class="wrap">
-  <h1>Organization Search</h1>
-  <p class="sub">California lobbying firms, employers, and quarterly disclosures from CAL-ACCESS.</p>
-
-  <div class="card">
-    <form id="f" style="margin:0 0 1rem">
-      <input id="q" placeholder="Firm, employer, or client name" autocomplete="off" required style="flex:1">
-      <button type="submit">Search</button>
-    </form>
-    <p class="sub" style="margin:0;font-size:0.82rem">
-      <strong>Firm</strong> = hired by clients to lobby on their behalf &nbsp;·&nbsp;
-      <strong>Employer</strong> = lobbies with its own in-house staff &nbsp;·&nbsp;
-      <strong>Coalition</strong> = a group of organizations registered together
-    </p>
+# Same reasoning as LOOKUP_BODY above — /lobbying is the other page that
+# renders the shell without a session.
+LOBBYING_BODY = f"""
+<div class="page-head">
+  <div>
+    <h1>Organization Search</h1>
+    <p class="sub">California lobbying firms, employers, and quarterly disclosures from CAL-ACCESS.</p>
   </div>
-
-  <div id="loading">Searching…</div>
-  <div id="error"></div>
-  <div id="results"></div>
 </div>
+
+<div class="card">
+  <form id="f" style="margin:0 0 1rem">
+    <input id="q" placeholder="Firm, employer, or client name" autocomplete="off" required style="flex:1">
+    <button type="submit">Search</button>
+  </form>
+  <p class="sub" style="margin:0;font-size:0.82rem">
+    <strong>Firm</strong> = hired by clients to lobby on their behalf &nbsp;·&nbsp;
+    <strong>Employer</strong> = lobbies with its own in-house staff &nbsp;·&nbsp;
+    <strong>Coalition</strong> = a group of organizations registered together
+  </p>
+</div>
+
+<div id="loading">Searching…</div>
+<div id="error"></div>
+<div id="results"></div>
 
 <script>
 const form = document.getElementById('f');
@@ -1324,6 +1358,18 @@ function renderResults(rows) {{
 }}
 
 </script>
+"""
+
+LOBBYING_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Organization Search — Rotunda</title>
+<style>{STYLE}</style>
+</head>
+<body>
+{app_shell("/lobbying", LOBBYING_BODY)}
 </body>
 </html>
 """
@@ -1334,20 +1380,10 @@ function renderResults(rows) {{
 # meant scrolling past every result to find what you clicked. Reached
 # via ?id=... (a registered entity) or ?name=... (a client only ever
 # named in someone else's filing, never independently registered).
-LOBBYING_DETAIL_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Organization Detail — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{top_nav("/lobbying", left_extra='<a href="/lobbying">← Organization Search</a>')}
-<div class="wrap">
-  <div id="error"></div>
-  <div id="detail"><p class="empty">Loading…</p></div>
-</div>
+LOBBYING_DETAIL_BODY = f"""
+<div class="page-head"><div><a href="/lobbying" class="sub">← Organization Search</a></div></div>
+<div id="error"></div>
+<div id="detail"><p class="empty">Loading…</p></div>
 
 <script>
 const errorEl = document.getElementById('error');
@@ -1428,6 +1464,18 @@ async function load() {{
 
 load();
 </script>
+"""
+
+LOBBYING_DETAIL_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Organization Detail — Rotunda</title>
+<style>{STYLE}</style>
+</head>
+<body>
+{app_shell("/lobbying", LOBBYING_DETAIL_BODY)}
 </body>
 </html>
 """
