@@ -80,7 +80,7 @@ import sys
 import threading
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 
 import accounts
 import db
@@ -227,6 +227,14 @@ STYLE = """
   .top-brand svg { color: var(--ink); }
   h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
   .sub { color: var(--slate); margin: 0 0 2rem; font-size: 0.92rem; }
+  /* Signup's own 2-step progress — two dots rather than a full wizard
+     bar, since it's only ever these two steps (account, then profile
+     details). Sits inline with the existing "Step 1 of 2" copy rather
+     than replacing it. */
+  .step-indicator { display: flex; align-items: flex-start; gap: 0.5rem; margin: 0 0 2rem; }
+  .step-indicator .sub { margin: 0.1rem 0 0; }
+  .step-dot { width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--rule); flex: none; margin-top: 0.3rem; }
+  .step-dot.filled { background: var(--ink); }
   form {
     display: flex; gap: 0.6rem; margin-bottom: 2rem; flex-wrap: wrap;
   }
@@ -249,11 +257,12 @@ STYLE = """
      rule only targets <button>, so links need their own copy of the
      same properties plus the anchor-specific reset. */
   a.secondary, a.danger {
-    display: inline-block; font: inherit; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 0.4rem; font: inherit; font-weight: 600;
     padding: 0.6rem 1.1rem; border-radius: 8px; text-decoration: none;
   }
   a.secondary { background: var(--accent-soft); color: var(--accent); }
   a.danger { background: var(--error-soft); color: var(--error); }
+  a.secondary svg, a.danger svg { width: 0.85rem; height: 0.85rem; flex: none; }
   /* Solid-fill counterpart to a.secondary/a.danger above, same reasoning
      — an <a> styled to look like the app's solid dark <button>. */
   a.primary {
@@ -445,7 +454,15 @@ STYLE = """
     display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s ease;
   }
   .icon-btn:hover { background: var(--accent-soft); }
-  .icon-btn svg { width: 0.85rem; height: 0.85rem; color: var(--slate); }
+  /* flex: none matters here, not just as a style preference — without
+     it this is the one svg-in-a-flex-row rule in the whole file that
+     omits it (compare .side-nav-item/.search-box/.frame-nav-item svg
+     above), and the default flex-shrink:1 collapses an <svg> with no
+     width/height HTML attributes down to 0 width in a flex container,
+     even with an explicit CSS width set. Confirmed via
+     getComputedStyle() — this button's bell icon was genuinely
+     rendering at 0x14px, not just a design nitpick. */
+  .icon-btn svg { width: 0.85rem; height: 0.85rem; color: var(--slate); flex: none; }
   @media (max-width: 700px) { .search-box { display: none; } }
   .app-main { flex: 1; overflow-y: auto; padding: 1.5rem; background: var(--content-bg); }
   /* The page's own big heading + description + right-aligned controls
@@ -606,17 +623,23 @@ TOP_BRAND = """<a href="/" class="top-brand">
 </a>"""
 
 
-def top_nav(current, left_extra=""):
+def top_nav(current, left_extra="", show_account_menu=True):
     """The full top-nav bar: the brand mark, the 3-page links (or a
     custom left_extra, e.g. signup's "Skip for now"), plus the account
     menu pushed to the right via the slot's own margin-left:auto. Meant
     to sit directly in <body>, outside .wrap — it's a full-width bar,
-    not part of the centered content column."""
+    not part of the centered content column.
+
+    show_account_menu=False drops the account-menu slot (and the script
+    that fills it) entirely — used by /login and /signup, whose own
+    left_extra already gives a logged-out visitor the one way to switch
+    between them ("Log in →" / "Sign up →"). Without this, those two
+    pages would show that link on the left AND a second, JS-filled
+    "Sign in · Sign up" pair on the right — including, on /login itself,
+    a "Sign in" link back to the page you're already on."""
     left = left_extra if left_extra else nav_links(current)
-    return (
-        f'<div class="top-nav"><div class="top-nav-inner">{TOP_BRAND}{left}{ACCOUNT_MENU_SLOT}'
-        f'</div></div>{ACCOUNT_MENU_SCRIPT}'
-    )
+    account = f"{ACCOUNT_MENU_SLOT}</div></div>{ACCOUNT_MENU_SCRIPT}" if show_account_menu else "</div></div>"
+    return f'<div class="top-nav"><div class="top-nav-inner">{TOP_BRAND}{left}{account}'
 
 
 # ── Sidebar app shell — for signed-in pages only, rolled out one page
@@ -643,6 +666,25 @@ SHELL_NAV_ITEMS = [
      '<rect x="3" y="1.5" width="8" height="11" rx="1"/>'
      '<path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>'),
 ]
+
+
+def _flag_a_bill_action(current):
+    """The topbar's persistent 'Flag a bill' shortcut, styled by how
+    relevant flagging actually is on the page it's sitting on: full
+    primary-button weight on the two pages where flagging/assigning a
+    bill's position is the direct task (Flagged Bills, and Clients —
+    which covers Client Detail too, since both render with
+    current="/clients"), a quieter secondary link everywhere else it's
+    still a legitimate shortcut, and hidden entirely on /lookup itself
+    — pointing there from there would just be a link back to the page
+    you're already on."""
+    if current == "/lookup":
+        return ""
+    style = "primary" if current in ("/flagged", "/clients") else "secondary"
+    return f'''<a href="/lookup" class="{style}">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 2v10M2 7h10" stroke-linecap="round"/></svg>
+          Flag a bill
+        </a>'''
 
 
 def app_shell(current, body):
@@ -726,17 +768,14 @@ def app_shell(current, body):
         <div class="app-topbar-sub" id="shell-date"></div>
       </div>
       <div class="app-topbar-actions">
-        <div class="search-box">
+        {'' if current in ("/lookup", "/lobbying") else '''<div class="search-box">
           <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="5" r="3.5"/><path d="M8 8l2 2" stroke-linecap="round"/></svg>
           <input id="shell-search" type="text" placeholder="Search bills...">
-        </div>
+        </div>'''}
         <button type="button" class="icon-btn" aria-label="Notifications">
           <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M7 1.5A3.5 3.5 0 003.5 5v2L2 9.5h10L10.5 7V5A3.5 3.5 0 007 1.5z"/><path d="M5.5 9.5A1.5 1.5 0 008.5 9.5" stroke-linecap="round"/></svg>
         </button>
-        {'' if current == "/lookup" else '''<a href="/lookup" class="primary">
-          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 2v10M2 7h10" stroke-linecap="round"/></svg>
-          Flag a bill
-        </a>'''}
+        {_flag_a_bill_action(current)}
       </div>
     </header>
     <main class="app-main">{body}</main>
@@ -1162,11 +1201,13 @@ const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
 let current = null;
 
-form.addEventListener('submit', async (e) => {{
+form.addEventListener('submit', (e) => {{
   e.preventDefault();
   const bill = document.getElementById('bill').value.trim();
-  if (!bill) return;
+  if (bill) lookupBill(bill);
+}});
 
+async function lookupBill(bill) {{
   errorEl.className = ''; resultEl.className = ''; loadingEl.className = 'show';
   form.querySelector('button').disabled = true;
 
@@ -1183,7 +1224,17 @@ form.addEventListener('submit', async (e) => {{
     loadingEl.className = '';
     form.querySelector('button').disabled = false;
   }}
-}});
+}}
+
+// Lets a link like "/lookup?bill=SB122" (used by _redirect_to_login()'s
+// ?next=... round trip when "Flag this bill" bounces a logged-out
+// visitor through /login) land back on the same bill instead of a
+// blank form.
+const prefillBill = new URLSearchParams(window.location.search).get('bill');
+if (prefillBill) {{
+  document.getElementById('bill').value = prefillBill;
+  lookupBill(prefillBill);
+}}
 
 async function flagBill() {{
   if (!current) return;
@@ -1196,11 +1247,17 @@ async function flagBill() {{
       headers: {{ 'Content-Type': 'application/json' }},
       body: JSON.stringify({{ bill_id: current.id }}),
     }});
-    const data = await res.json();
-    if (!res.ok) {{
-      if (res.status === 401) throw new Error('Sign in to flag bills — see the account menu, top right.');
-      throw new Error(data.error || 'Could not flag this bill');
+    if (res.status === 401) {{
+      // Same convention as the server-side redirects in _redirect_to_login()
+      // (see app.py) — carry the bill you were looking at through the
+      // login wall via ?next=..., so signing in lands you back on it
+      // instead of a dead end.
+      const next = `/lookup?bill=${{encodeURIComponent(current.bill_number || '')}}`;
+      window.location.href = `/login?next=${{encodeURIComponent(next)}}`;
+      return;
     }}
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not flag this bill');
     btn.textContent = '🚩 Flagged';
   }} catch (err) {{
     btn.disabled = false;
@@ -1490,15 +1547,25 @@ SIGNUP_PAGE = f"""<!doctype html>
 <style>{STYLE}</style>
 </head>
 <body>
-{top_nav("/signup", left_extra='<a href="/lookup">← Lookup</a><a href="/login">Log in →</a>')}
+{top_nav("/signup", left_extra='<a href="/lookup">← Lookup</a><a href="/login">Log in →</a>', show_account_menu=False)}
 <div class="wrap">
   <h1>Create your account</h1>
-  <p class="sub">Step 1 of 2 — after this, you'll fill in your CAL-ACCESS-style registration details.</p>
+  <div class="step-indicator">
+    <span class="step-dot filled"></span><span class="step-dot"></span>
+    <span class="sub">Step 1 of 2 — after this, you'll fill in your CAL-ACCESS-style registration details.</span>
+  </div>
 
   <div class="card">
     <form id="f" style="margin:0">
-      <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required style="flex:1 1 100%">
-      <input id="password" type="password" placeholder="Password (8+ characters)" autocomplete="new-password" required style="flex:1 1 100%">
+      <label style="flex:1 1 100%">
+        <div class="sub" style="margin:0 0 0.3rem">Email</div>
+        <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required style="width:100%">
+      </label>
+      <label style="flex:1 1 100%">
+        <div class="sub" style="margin:0 0 0.3rem">Password</div>
+        <input id="password" type="password" autocomplete="new-password" required style="width:100%">
+        <div class="sub" style="margin:0.3rem 0 0;font-size:0.78rem">8+ characters</div>
+      </label>
       <button type="submit">Continue →</button>
     </form>
   </div>
@@ -1551,14 +1618,20 @@ LOGIN_PAGE = f"""<!doctype html>
 <style>{STYLE}</style>
 </head>
 <body>
-{top_nav("/login", left_extra='<a href="/lookup">← Lookup</a><a href="/signup">Sign up →</a>')}
+{top_nav("/login", left_extra='<a href="/lookup">← Lookup</a><a href="/signup">Sign up →</a>', show_account_menu=False)}
 <div class="wrap">
   <h1>Log in</h1>
 
   <div class="card">
     <form id="f" style="margin:0">
-      <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required style="flex:1 1 100%">
-      <input id="password" type="password" placeholder="Password" autocomplete="current-password" required style="flex:1 1 100%">
+      <label style="flex:1 1 100%">
+        <div class="sub" style="margin:0 0 0.3rem">Email</div>
+        <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required style="width:100%">
+      </label>
+      <label style="flex:1 1 100%">
+        <div class="sub" style="margin:0 0 0.3rem">Password</div>
+        <input id="password" type="password" autocomplete="current-password" required style="width:100%">
+      </label>
       <button type="submit">Log in</button>
     </form>
   </div>
@@ -1588,7 +1661,15 @@ form.addEventListener('submit', async (e) => {{
     }});
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not log in');
-    window.location.href = '/flagged';
+    // ?next=... is set by _redirect_to_login() (see app.py) whenever
+    // a logged-out visitor got bounced here from a page they were
+    // actually trying to use — e.g. "+ Add as client" from Organization
+    // Search. Only ever followed if it's a same-site path (starts with
+    // "/" but not "//", which browsers treat as protocol-relative to
+    // another host) — anything else falls back to /flagged rather than
+    // risk turning this into an open redirect.
+    const next = new URLSearchParams(window.location.search).get('next');
+    window.location.href = (next && next.startsWith('/') && !next.startsWith('//')) ? next : '/flagged';
   }} catch (err) {{
     errorEl.textContent = err.message;
     errorEl.className = 'show';
@@ -3306,6 +3387,18 @@ class Handler(BaseHTTPRequestHandler):
             parts.append("Secure")
         return "; ".join(parts)
 
+    def _redirect_to_login(self):
+        """302 to /login, carrying the page the visitor was actually
+        trying to reach (path + query string) as ?next=... so a
+        logged-out click on e.g. "+ Add as client" or a bookmarked
+        /flagged link doesn't just dead-end at a blank login form —
+        LOGIN_PAGE's own JS reads this back and returns them there
+        after a successful sign-in (falling back to /flagged if it's
+        missing or doesn't look like a same-site path)."""
+        self.send_response(302)
+        self.send_header("Location", "/login?next=" + quote(self.path, safe=""))
+        self.end_headers()
+
     def _current_user_id(self, conn):
         cookie_header = self.headers.get("Cookie")
         if not cookie_header:
@@ -3384,9 +3477,12 @@ class Handler(BaseHTTPRequestHandler):
                 logged_in = bool(self._current_user_id(conn))
             finally:
                 conn.close()
-            self.send_response(302)
-            self.send_header("Location", "/flagged" if logged_in else "/login")
-            self.end_headers()
+            if logged_in:
+                self.send_response(302)
+                self.send_header("Location", "/flagged")
+                self.end_headers()
+            else:
+                self._redirect_to_login()
             return
 
         if parsed.path == "/lobbying":
@@ -3430,9 +3526,7 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
             if not user_id:
-                self.send_response(302)
-                self.send_header("Location", "/login")
-                self.end_headers()
+                self._redirect_to_login()
                 return
             self._send_html(200, PROFILE_VIEW_PAGE)
             return
@@ -3444,9 +3538,7 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
             if not user_id:
-                self.send_response(302)
-                self.send_header("Location", "/login")
-                self.end_headers()
+                self._redirect_to_login()
                 return
             self._send_html(200, FLAGGED_PAGE)
             return
@@ -3470,9 +3562,7 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
             if not user_id:
-                self.send_response(302)
-                self.send_header("Location", "/login")
-                self.end_headers()
+                self._redirect_to_login()
                 return
             self._send_html(200, CLIENTS_PAGE)
             return
@@ -3496,9 +3586,7 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
             if not user_id:
-                self.send_response(302)
-                self.send_header("Location", "/login")
-                self.end_headers()
+                self._redirect_to_login()
                 return
             self._send_html(200, CLIENT_DETAIL_PAGE)
             return
@@ -3549,9 +3637,7 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
             if not user_id:
-                self.send_response(302)
-                self.send_header("Location", "/login")
-                self.end_headers()
+                self._redirect_to_login()
                 return
             self._send_html(200, REPORT_PAGE)
             return
@@ -3594,9 +3680,7 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
             if not user_id:
-                self.send_response(302)
-                self.send_header("Location", "/login")
-                self.end_headers()
+                self._redirect_to_login()
                 return
             self._send_html(200, DISCLOSURES_PAGE)
             return
@@ -3608,9 +3692,7 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
             if not user_id:
-                self.send_response(302)
-                self.send_header("Location", "/login")
-                self.end_headers()
+                self._redirect_to_login()
                 return
             self._send_html(200, DISCLOSURE_REVIEW_PAGE)
             return
