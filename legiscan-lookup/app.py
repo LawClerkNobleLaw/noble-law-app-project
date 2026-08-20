@@ -76,6 +76,7 @@ import datetime
 import hmac
 import json
 import os
+import re
 import sys
 import threading
 from http.cookies import SimpleCookie
@@ -298,6 +299,14 @@ STYLE = """
   table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
   td, th { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--rule); vertical-align: top; text-align: left; }
   td.date { font-family: ui-monospace, monospace; white-space: nowrap; color: var(--slate); }
+  /* Milestone left-edge on a history row (see milestoneClass() in
+     LOOKUP_BODY / REPORT_BODY) — an inset box-shadow rather than a
+     border, since a real border on a <td> inside a border-collapse
+     table shifts column width by its own thickness; inset paints
+     without taking any layout space. */
+  tr.milestone-intro td:first-child { box-shadow: inset 3px 0 0 0 var(--slate); }
+  tr.milestone-passed td:first-child { box-shadow: inset 3px 0 0 0 var(--good); }
+  tr.milestone-amended td:first-child { box-shadow: inset 3px 0 0 0 var(--ink); }
   td.chamber {
     white-space: nowrap; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
     color: var(--accent);
@@ -312,13 +321,32 @@ STYLE = """
     padding: 0.8rem 1rem; border-radius: 8px; font-size: 0.88rem; margin-bottom: 1.5rem;
   }
   #error.show { display: block; }
-  #loading { display: none; color: var(--slate); font-size: 0.9rem; }
-  #loading.show { display: block; }
+  #loading { display: none; align-items: center; gap: 0.5rem; color: var(--slate); font-size: 0.9rem; }
+  #loading.show { display: flex; }
+  #loading.skeleton.show { display: block; }
+  .spinner {
+    display: inline-block; width: 0.9rem; height: 0.9rem; border-radius: 50%; flex: none;
+    border: 2px solid var(--rule); border-top-color: var(--slate); animation: spin 0.6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* Organization Search's own loading state — 3 rows shaped like the
+     real results table (see LOBBYING_BODY) instead of plain "Searching…"
+     text, so the layout doesn't jump when real rows replace it. */
+  .skeleton-row { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1.15rem; border-bottom: 1px solid var(--rule); }
+  .skeleton-row:last-child { border-bottom: none; }
+  .skeleton-bar { height: 0.8rem; border-radius: 4px; background: var(--accent-soft); animation: skeleton-pulse 1.2s ease-in-out infinite; }
+  @keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
   .empty { color: var(--slate); font-size: 0.9rem; }
   tr.row-link { cursor: pointer; }
   tr.row-link:hover { background: var(--accent-soft); }
   .tag { display: inline-block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
-    color: var(--slate); background: var(--accent-soft); padding: 0.1rem 0.5rem; border-radius: 999px; }
+    color: var(--slate); background: var(--accent-soft); padding: 0.1rem 0.5rem; border-radius: 999px;
+    text-decoration: none; }
+  /* .tag doubles as a link when it's a bill-number pill inside free
+     text (see billPills() in LOBBYING_DETAIL_BODY) — everywhere else
+     it's a plain, non-interactive span, so this hover rule only ever
+     shows up where it's actually clickable. */
+  a.tag:hover { background: var(--accent-solid); color: var(--accent-solid-text); }
   /* A client's stance on a bill — same three values everywhere (the
      /flagged position selector and the /report page's read-only badge),
      colored consistently: support=good, oppose=error, watch=neutral. */
@@ -509,6 +537,24 @@ STYLE = """
   .panel th { padding: 0.55rem 1.15rem; }
   .panel td { padding: 0.75rem 1.15rem; }
   .panel tbody tr:hover { background: var(--content-bg); }
+  /* Organization Search's "+ N other filing variants" disclosure — a
+     native <details> rather than a JS-driven toggle, and nothing in it
+     is actually hidden data, just collapsed by default (see
+     app.py's _cluster_client_mentions). */
+  .variants-row:hover { background: none !important; }
+  .variants-row td { padding: 0; }
+  .variants-row details { padding: 0.6rem 1.15rem; }
+  .variants-row summary {
+    cursor: pointer; font-size: 0.82rem; color: var(--slate); font-weight: 500;
+    list-style: none; display: flex; align-items: center; gap: 0.4rem;
+  }
+  .variants-row summary::-webkit-details-marker { display: none; }
+  .variants-row summary::before { content: '▸'; display: inline-block; transition: transform .15s ease; }
+  .variants-row details[open] summary::before { transform: rotate(90deg); }
+  .variant-row {
+    display: flex; justify-content: space-between; gap: 1rem; padding: 0.5rem 0 0.5rem 1.3rem;
+    font-size: 0.82rem; border-top: 1px solid var(--rule); margin-top: 0.5rem;
+  }
   /* A bill row's icon+title+id block — same .bill-title/.bill-id classes
      the /report page's big card already uses, just sized down here via
      the .bill-row scope rather than given new parallel class names. */
@@ -1190,7 +1236,7 @@ LOOKUP_BODY = f"""
   </form>
 </div>
 
-<div id="loading">Searching LegiScan…</div>
+<div id="loading"><span class="spinner"></span>Searching LegiScan…</div>
 <div id="error"></div>
 <div id="result"></div>
 
@@ -1267,13 +1313,30 @@ async function flagBill() {{
   }}
 }}
 
+// A history table is easy to skim by date/chamber but hard to skim by
+// WHAT HAPPENED — every row reads the same until you actually read it.
+// This buckets each row into one of three real legislative milestones
+// by keyword match on its own action text (LegiScan's own wording, not
+// a separate field) so the colored left edge is scannable down the
+// column instead. Keyword match, not a lookup table, because LegiScan's
+// action text is free-form and these three phrasings cover the cases
+// that matter here — a row that matches none of them just renders
+// unstyled, same as before.
+function milestoneClass(action) {{
+  const a = (action || '').toLowerCase();
+  if (a.includes('introduced')) return 'milestone-intro';
+  if (a.includes('chaptered') || a.includes('approved by the governor') || a.includes('passed')) return 'milestone-passed';
+  if (a.includes('amended')) return 'milestone-amended';
+  return '';
+}}
+
 function render(d) {{
   const sponsors = (d.sponsors || []).map(s =>
     `<span class="sponsor">${{s.name}}${{s.party ? ' (' + s.party + ')' : ''}}</span>`
   ).join('');
 
   const history = (d.history || []).map(h =>
-    `<tr><td class="date">${{h.date || ''}}</td><td class="chamber">${{h.chamber || ''}}</td><td>${{h.action || ''}}</td></tr>`
+    `<tr class="${{milestoneClass(h.action)}}"><td class="date">${{h.date || ''}}</td><td class="chamber">${{h.chamber || ''}}</td><td>${{h.action || ''}}</td></tr>`
   ).join('');
 
   resultEl.innerHTML = `
@@ -1331,11 +1394,21 @@ LOBBYING_BODY = f"""
   <p class="sub" style="margin:0;font-size:0.82rem">
     <strong>Firm</strong> = hired by clients to lobby on their behalf &nbsp;·&nbsp;
     <strong>Employer</strong> = lobbies with its own in-house staff &nbsp;·&nbsp;
-    <strong>Coalition</strong> = a group of organizations registered together
+    <strong>Coalition</strong> = a group of organizations registered together &nbsp;·&nbsp;
+    <strong>Named as client only</strong> = shows up in someone else's filing, with no independent CAL-ACCESS registration of its own
   </p>
 </div>
 
-<div id="loading">Searching…</div>
+<div id="loading" class="skeleton">
+  <div class="panel">
+    {"".join(f'''<div class="skeleton-row">
+      <div class="skeleton-bar" style="width:32%"></div>
+      <div class="skeleton-bar" style="width:14%"></div>
+      <div class="skeleton-bar" style="width:18%"></div>
+      <div class="skeleton-bar" style="width:10%"></div>
+    </div>''' for _ in range(3))}
+  </div>
+</div>
 <div id="error"></div>
 <div id="results"></div>
 
@@ -1350,7 +1423,7 @@ form.addEventListener('submit', async (e) => {{
   const q = document.getElementById('q').value.trim();
   if (!q) return;
 
-  errorEl.className = ''; loadingEl.className = 'show';
+  errorEl.className = ''; loadingEl.className = 'skeleton show';
   form.querySelector('button').disabled = true;
 
   try {{
@@ -1362,7 +1435,7 @@ form.addEventListener('submit', async (e) => {{
     errorEl.textContent = err.message;
     errorEl.className = 'show';
   }} finally {{
-    loadingEl.className = '';
+    loadingEl.className = 'skeleton';
     form.querySelector('button').disabled = false;
   }}
 }});
@@ -1389,6 +1462,29 @@ function locationOrContext(r) {{
   return '';
 }}
 
+function variantsRow(r) {{
+  // r.variants is only ever other spellings of this exact same
+  // organization (see app.py's _cluster_client_mentions) — nothing is
+  // hidden, just collapsed, so every name is still one click away.
+  if (!r.variants || !r.variants.length) return '';
+  const items = r.variants.map(v => `
+    <div class="variant-row">
+      <a href="${{detailUrl(v)}}">${{v.name}}</a>
+      <span class="sub" style="margin:0">${{locationOrContext(v)}}</span>
+    </div>
+  `).join('');
+  return `
+    <tr class="variants-row">
+      <td colspan="5">
+        <details>
+          <summary>+ ${{r.variants.length}} other filing variant${{r.variants.length === 1 ? '' : 's'}}</summary>
+          ${{items}}
+        </details>
+      </td>
+    </tr>
+  `;
+}}
+
 function renderResults(rows) {{
   if (!rows.length) {{
     resultsEl.innerHTML = '<p class="empty">No firms, employers, or named clients match that.</p>';
@@ -1407,6 +1503,7 @@ function renderResults(rows) {{
             <td>${{r.registration_status || ''}}</td>
             <td><a class="secondary" href="/clients?prefill_name=${{encodeURIComponent(r.name)}}${{r.id ? `&prefill_entity_id=${{r.id}}` : ''}}">+ Client</a></td>
           </tr>
+          ${{variantsRow(r)}}
         `).join('')}}
         </tbody>
       </table>
@@ -1455,6 +1552,24 @@ function highlight(text, name) {{
   return (text || '').toLowerCase() === (name || '').toLowerCase() ? `<strong>${{text}}</strong>` : (text || '');
 }}
 
+// raw_bill_text is real free text from CAL-ACCESS ingestion, not a
+// clean bill list — it mixes real bill numbers with prose ("SB 53;
+// Legislature, Governor's Office Re: ...") and sometimes has no bill
+// number at all ("See Attachment A"). So this doesn't split-and-
+// replace the whole string; it finds actual bill-number substrings
+// (a chamber prefix + number, with "SB 53, 420" style comma lists
+// expanded to one pill per number) and turns just those into links,
+// leaving every other word of the original text exactly as it was —
+// nothing here is parsed further or thrown away.
+function billPills(text) {{
+  if (!text) return '';
+  const re = /\\b(AB|SB|ACA|SCA|AJR|SJR|ACR|SCR|HR|SR)\s?(\d+(?:\s*,\s*\d+)*)\\b/gi;
+  return text.replace(re, (whole, prefix, nums) => nums.split(',').map(n => {{
+    const bill = `${{prefix.toUpperCase()}} ${{n.trim()}}`;
+    return `<a class="tag" href="/lookup?bill=${{encodeURIComponent(bill)}}">${{bill}}</a>`;
+  }}).join(' '));
+}}
+
 function relationshipRows(rows, selectedName) {{
   if (!rows.length) return '<div class="panel" style="padding:1rem 1.15rem"><p class="empty">No lobbying relationships found for this name.</p></div>';
   return `
@@ -1469,7 +1584,7 @@ function relationshipRows(rows, selectedName) {{
             <td>${{highlight(r.client, selectedName)}}</td>
             <td class="date">${{(r.period_start || '').split(' ')[0]}} – ${{(r.period_end || '').split(' ')[0]}}</td>
             <td>${{money(r.amount_spent)}}</td>
-            <td>${{r.raw_bill_text || ''}}</td>
+            <td>${{billPills(r.raw_bill_text)}}</td>
           </tr>
         `).join('')}}
         </tbody>
@@ -1570,7 +1685,7 @@ SIGNUP_PAGE = f"""<!doctype html>
     </form>
   </div>
 
-  <div id="loading">Creating account…</div>
+  <div id="loading"><span class="spinner"></span>Creating account…</div>
   <div id="error"></div>
 </div>
 
@@ -1636,7 +1751,7 @@ LOGIN_PAGE = f"""<!doctype html>
     </form>
   </div>
 
-  <div id="loading">Logging in…</div>
+  <div id="loading"><span class="spinner"></span>Logging in…</div>
   <div id="error"></div>
 </div>
 
@@ -1749,7 +1864,7 @@ PROFILE_PAGE = f"""<!doctype html>
   </form>
   </div>
 
-  <div id="loading">Saving…</div>
+  <div id="loading"><span class="spinner"></span>Saving…</div>
   <div id="error"></div>
 </div>
 
@@ -1845,7 +1960,7 @@ PROFILE_BODY = f"""
     <p class="sub">Your CAL-ACCESS registration details — used to pre-fill disclosure forms.</p>
   </div>
 </div>
-<div id="loading">Loading…</div>
+<div id="loading"><span class="spinner"></span>Loading…</div>
 <div id="error"></div>
 <div id="content"></div>
 
@@ -2304,7 +2419,7 @@ CLIENTS_BODY = f"""
   </form>
 </div>
 
-<div id="loading">Saving…</div>
+<div id="loading"><span class="spinner"></span>Saving…</div>
 <div id="error"></div>
 
 <div class="panel">
@@ -2761,6 +2876,17 @@ const errorEl = document.getElementById('error');
 const billId = new URLSearchParams(window.location.search).get('bill_id');
 const POSITION_LABELS = {{ support: 'Support', oppose: 'Oppose', watch: 'Watch' }};
 
+// Same milestone bucketing as /lookup's own history table (see
+// LOOKUP_BODY in app.py) — duplicated rather than shared, since this
+// is a separate page's inline script, not a separate module.
+function milestoneClass(action) {{
+  const a = (action || '').toLowerCase();
+  if (a.includes('introduced')) return 'milestone-intro';
+  if (a.includes('chaptered') || a.includes('approved by the governor') || a.includes('passed')) return 'milestone-passed';
+  if (a.includes('amended')) return 'milestone-amended';
+  return '';
+}}
+
 async function load() {{
   if (!billId) {{
     errorEl.textContent = 'Missing bill_id in the URL.';
@@ -2781,7 +2907,7 @@ async function load() {{
 
 function render(r) {{
   const historyRows = (r.history || []).map(h => `
-    <tr><td class="date">${{h.date || ''}}</td><td class="chamber">${{h.chamber || ''}}</td><td>${{h.action || ''}}</td></tr>
+    <tr class="${{milestoneClass(h.action)}}"><td class="date">${{h.date || ''}}</td><td class="chamber">${{h.chamber || ''}}</td><td>${{h.action || ''}}</td></tr>
   `).join('');
 
   const amendmentRows = (r.amendments || []).map(a => `
@@ -2903,7 +3029,7 @@ DISCLOSURES_BODY = f"""
   </form>
 </div>
 
-<div id="loading">Generating…</div>
+<div id="loading"><span class="spinner"></span>Generating…</div>
 <div id="error"></div>
 
 <div class="panel" style="margin-top:1rem">
@@ -3181,11 +3307,62 @@ DISCLOSURE_REVIEW_PAGE = f"""<!doctype html>
 """
 
 
+# Multi-word corporate-suffix phrases stripped by normalize_org_name()
+# below — checked (and replaced) before punctuation is stripped, since
+# some of them contain punctuation of their own ("&"). Order matters:
+# the longer/more-specific phrases are listed first so e.g. "and its
+# affiliates" doesn't get partially eaten by a shorter, unintended
+# match first.
+_ORG_SUFFIX_PHRASES = [
+    "and its subsidiaries", "& its subsidiaries", "and subsidiaries",
+    "and its affiliates", "& its affiliates", "and affiliates",
+]
+# Single-word corporate-suffix tokens dropped after splitting. Kept
+# deliberately short and specific (exactly the tokens a real filing
+# suffix would use) rather than any generic-sounding business word —
+# stripping something broader like "company" or "group" risks folding
+# two real, differently-named organizations into one canonical row.
+_ORG_SUFFIX_WORDS = {"inc", "incorporated", "corp", "corporation", "llc", "lp"}
+
+
+def normalize_org_name(name):
+    """Canonical key for clustering near-duplicate spellings of the
+    same organization (see search_lobbying()) — e.g. 'Chevron Corp &
+    its subsidiaries' and 'CHEVRON CORPORATION AND ITS AFFILIATES' both
+    normalize to 'chevron'. Lowercases, strips punctuation, and strips
+    the specific corporate-suffix noise listed above — deliberately
+    conservative, since this key decides which rows get merged into one
+    display row (see search_lobbying()'s clustering, which additionally
+    never merges two independently-registered entities into each other
+    no matter what this returns — only unregistered "named as client
+    only" mentions get grouped this way)."""
+    if not name:
+        return ""
+    key = name.lower().replace("’", "'")
+    key = re.sub(r"\bit's\b", "its", key)  # possessive typo seen in real CAL-ACCESS free text
+    for phrase in _ORG_SUFFIX_PHRASES:
+        key = key.replace(phrase, " ")
+    key = re.sub(r"[^a-z0-9\s]", " ", key)
+    words = [w for w in key.split() if w not in _ORG_SUFFIX_WORDS]
+    return " ".join(words)
+
+
 def search_lobbying(conn, q):
     """Matches BOTH the registered-entity name and the free-text
     client_name on disclosures — see the module docstring for why the
     second half matters (a client doesn't need its own registration to
-    be named in someone else's filing)."""
+    be named in someone else's filing).
+
+    Near-duplicate spellings of the same unregistered "named as client
+    only" mention (several "Amazon" variants, 20+ "Chevron..." spellings
+    seen in testing — see normalize_org_name()) are clustered into one
+    canonical row with the rest attached as `variants`, so the results
+    list doesn't spend 20 rows on one organization. Registered entities
+    (their own filer_id on file) are never merged into another row —
+    each keeps its own, even if two of them happen to normalize to the
+    same key — because collapsing two independently-registered
+    organizations into one would misrepresent one's real filings as the
+    other's, not just look tidier."""
     like = f"%{q}%"
     entities = conn.execute(
         "SELECT id, name, entity_type, city, state, registration_status "
@@ -3227,8 +3404,49 @@ def search_lobbying(conn, q):
             "mention_count": context["n"], "latest_filed": context["latest"],
         })
 
+    results = _cluster_client_mentions(results)
     results.sort(key=lambda r: (r["name"] or "").lower())
     return results[:50]
+
+
+def _cluster_client_mentions(results):
+    """Groups unregistered `kind == "client"` rows by normalize_org_name()
+    into one canonical row + a `variants` list, attaching to a same-key
+    registered entity when there's exactly one unambiguous match.
+    `kind == "entity"` rows always pass through unchanged and are never
+    merged with each other — see search_lobbying()'s docstring for why."""
+    entities_by_key = {}
+    for r in results:
+        if r["kind"] == "entity":
+            entities_by_key.setdefault(normalize_org_name(r["name"]), []).append(r)
+
+    client_groups = {}
+    for r in results:
+        if r["kind"] == "client":
+            client_groups.setdefault(normalize_org_name(r["name"]), []).append(r)
+
+    out = [r for r in results if r["kind"] == "entity"]
+    for key, group in client_groups.items():
+        matches = entities_by_key.get(key, [])
+        if len(matches) == 1:
+            # Exactly one registered entity shares this normalized name —
+            # fold every mention in as that entity's variants rather than
+            # showing them as their own rows.
+            matches[0].setdefault("variants", []).extend(group)
+        elif len(matches) > 1:
+            # More than one distinct registered entity shares this
+            # normalized name — no way to tell which one each mention
+            # actually belongs to, so don't guess; leave them as their
+            # own separate rows instead of attaching to the wrong one.
+            out.extend(group)
+        elif len(group) == 1:
+            out.append(group[0])
+        else:
+            original = max(group, key=lambda r: r.get("mention_count") or 0)
+            canonical = dict(original)
+            canonical["variants"] = [r for r in group if r is not original]
+            out.append(canonical)
+    return out
 
 
 def lobbying_detail(conn, entity_id, name):
