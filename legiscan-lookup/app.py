@@ -215,10 +215,15 @@ STYLE = """
   }
   .top-nav a { color: var(--accent); font-size: 0.85rem; text-decoration: none; }
   .top-nav a:hover { text-decoration: underline; }
-  .top-brand {
+  /* .top-brand is a real <a> now (links home) — .top-nav a above would
+     otherwise win on color/font-size since element+class ties with
+     class-only on specificity's middle term; .top-nav .top-brand (two
+     classes) reliably beats it instead of relying on source order. */
+  .top-nav .top-brand {
     display: flex; align-items: center; gap: 0.5rem; font-weight: 600; font-size: 0.9rem;
     color: var(--ink); margin-right: 0.4rem;
   }
+  .top-nav .top-brand:hover { text-decoration: none; }
   .top-brand svg { color: var(--ink); }
   h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
   .sub { color: var(--slate); margin: 0 0 2rem; font-size: 0.92rem; }
@@ -532,12 +537,12 @@ def nav_links(current):
     Flagged bills isn't listed here on purpose — it's personal and tied
     to login, so it lives in the account menu next to "View profile"
     rather than in this always-visible row (see ACCOUNT_MENU_SCRIPT)."""
-    pages = [("/", "Lookup"), ("/lobbying", "Organization Search")]
+    pages = [("/lookup", "Lookup"), ("/lobbying", "Organization Search")]
     parts = []
     for href, label in pages:
         if href == current:
             continue
-        parts.append(f'<a href="{href}">{"← " if href == "/" else ""}{label}{"" if href == "/" else " →"}</a>')
+        parts.append(f'<a href="{href}">{"← " if href == "/lookup" else ""}{label}{"" if href == "/lookup" else " →"}</a>')
     return "".join(parts)
 
 
@@ -583,14 +588,14 @@ ACCOUNT_MENU_SCRIPT = """
 """
 
 
-TOP_BRAND = """<span class="top-brand">
+TOP_BRAND = """<a href="/" class="top-brand">
   <svg width="18" height="11" viewBox="0 0 180 112" fill="none">
     <path d="M14 100 A76 76 0 0 1 82 24" stroke="currentColor" stroke-width="19"/>
     <path d="M98 24 A76 76 0 0 1 166 100" stroke="currentColor" stroke-width="19"/>
     <rect x="14" y="98.5" width="152" height="13.5" fill="currentColor"/>
   </svg>
   Rotunda
-</span>"""
+</a>"""
 
 
 def top_nav(current, left_extra=""):
@@ -704,7 +709,7 @@ def app_shell(current, body):
         <button type="button" class="icon-btn" aria-label="Notifications">
           <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M7 1.5A3.5 3.5 0 003.5 5v2L2 9.5h10L10.5 7V5A3.5 3.5 0 007 1.5z"/><path d="M5.5 9.5A1.5 1.5 0 008.5 9.5" stroke-linecap="round"/></svg>
         </button>
-        <a href="/" class="primary">
+        <a href="/lookup" class="primary">
           <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 2v10M2 7h10" stroke-linecap="round"/></svg>
           Flag a bill
         </a>
@@ -742,16 +747,364 @@ def app_shell(current, body):
 """
 
 
-PAGE = f"""<!doctype html>
+# The marketing homepage at "/" — everything else in this file is the
+# actual product; this is the only page that sells it. Reuses the same
+# STYLE (tokens, .card, .panel, .status-badge, .position-badge, buttons,
+# top_nav()) as every other page — LANDING_STYLE below adds only what's
+# genuinely new here (hero, feature grid, workflow, trust, footer).
+# Renders as .mkt-wrap rather than .wrap — the shared .wrap is the
+# app's narrow 46rem content column; a marketing page with a feature
+# grid needs real width, so it gets its own container instead of
+# overloading .wrap's meaning.
+LANDING_STYLE = """
+  .mkt-wrap { max-width: 72.5rem; margin: 0 auto; padding: 0 2rem; }
+  .hero { position: relative; padding: 5.5rem 0 5rem; overflow: hidden; }
+  .hero-inner { display: flex; flex-direction: column; align-items: center; text-align: center; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.78rem; font-weight: 600;
+    background: var(--accent-soft); border: 1px solid var(--rule); padding: 0.4rem 0.75rem;
+    border-radius: 20px; margin-bottom: 1.4rem;
+  }
+  .eyebrow .dot { width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--ink); }
+  h1.headline { font-size: 3.5rem; line-height: 1.08; font-weight: 700; letter-spacing: -0.025em; max-width: 47rem; }
+  .sub-lg { margin-top: 1.4rem; font-size: 1.15rem; line-height: 1.6; color: var(--slate); max-width: 35rem; }
+  .hero-ctas { display: flex; gap: 0.75rem; margin-top: 2rem; }
+  .hero-note { margin-top: 1rem; font-size: 0.82rem; color: var(--slate); }
+
+  .frame {
+    margin-top: 3.5rem; width: 100%; max-width: 55rem; border-radius: 18px; border: 1px solid var(--rule);
+    background: var(--surface); box-shadow: 0 30px 60px -20px rgba(0,0,0,0.18); overflow: hidden; text-align: left;
+  }
+  .frame-body { display: flex; height: 23.75rem; }
+  .frame-sidebar {
+    width: 11.25rem; flex: none; background: var(--paper); border-right: 1px solid var(--rule);
+    display: flex; flex-direction: column; padding: 0.9rem 0.6rem;
+  }
+  .frame-brand { display: flex; align-items: center; gap: 0.45rem; padding: 0.1rem 0.4rem 0.9rem; font-weight: 600; font-size: 0.78rem; }
+  .frame-nav-item { height: 1.75rem; display: flex; align-items: center; gap: 0.5rem; border-radius: 7px; padding: 0 0.5rem; font-size: 0.72rem; font-weight: 500; color: var(--slate); }
+  .frame-nav-item svg { width: 0.75rem; height: 0.75rem; flex: none; }
+  .frame-nav-item.active { background: var(--accent-soft); color: var(--ink); }
+  .frame-main { flex: 1; background: var(--content-bg); padding: 1rem 1.1rem; overflow: hidden; }
+  .frame-topbar { margin-bottom: 0.85rem; }
+  .frame-title { font-size: 0.875rem; font-weight: 600; }
+  .frame-sub { font-size: 0.68rem; color: var(--slate); margin-top: 0.1rem; }
+  .frame-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin-bottom: 0.75rem; }
+  .frame-stat { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 0.55rem 0.7rem; box-shadow: var(--shadow-rest); }
+  .frame-stat .n { font-family: var(--mono); font-size: 1.05rem; font-weight: 600; }
+  .frame-stat .l { font-size: 0.58rem; color: var(--slate); margin-top: 0.05rem; }
+  .frame-table { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+  .frame-row { display: grid; grid-template-columns: 1fr 5.25rem 4.6rem 1.6rem; gap: 0.5rem; align-items: center; padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--rule); font-size: 0.68rem; }
+  .frame-row:last-child { border-bottom: none; }
+  .frame-row .bill { font-weight: 600; }
+  .frame-row .id { font-family: var(--mono); color: var(--slate); font-size: 0.58rem; margin-top: 0.05rem; }
+  .frame-row .status-badge, .frame-row .position-badge { font-size: 0.58rem; padding: 0.1rem 0.4rem; }
+  .frame-row .status-badge::before { width: 0.25rem; height: 0.25rem; }
+  .frame-row .row-menu-btn { height: 1.3rem; width: 1.3rem; }
+  .frame-row .row-menu-btn svg { width: 0.6rem; height: 0.6rem; }
+
+  .strip { border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); background: var(--paper); }
+  .strip-row { display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 2rem 0; }
+  .strip-item { padding: 0 1.75rem; border-left: 1px solid var(--rule); font-size: 0.9rem; color: var(--slate); line-height: 1.55; }
+  .strip-item:first-child { border-left: none; padding-left: 0; }
+  .strip-item b { color: var(--ink); font-weight: 600; }
+
+  section.mkt-section { padding: 6.25rem 0; }
+  .section-head { max-width: 37.5rem; margin-bottom: 3.5rem; }
+  .kicker { font-family: var(--mono); font-size: 0.75rem; color: var(--slate); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 0.875rem; }
+  .section-head h2 { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
+  .section-head p { margin-top: 0.875rem; font-size: 1rem; color: var(--slate); line-height: 1.6; }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  .feat { padding: 1.5rem; transition: box-shadow .2s ease, transform .2s ease; }
+  .feat:hover { box-shadow: var(--shadow-hover); transform: translateY(-2px); }
+  .feat.wide { grid-column: span 2; }
+  .feat-icon {
+    width: 2.125rem; height: 2.125rem; border-radius: 9px; background: var(--accent-soft); border: 1px solid var(--rule);
+    display: flex; align-items: center; justify-content: center; color: var(--ink); margin-bottom: 1rem;
+  }
+  .feat h3 { font-size: 1rem; font-weight: 600; letter-spacing: -0.005em; }
+  .feat p { margin-top: 0.55rem; font-size: 0.875rem; color: var(--slate); line-height: 1.6; }
+  .feat-tag { display: inline-block; margin-top: 0.875rem; font-family: var(--mono); font-size: 0.69rem; color: var(--slate); border: 1px solid var(--rule); border-radius: 5px; padding: 0.2rem 0.45rem; }
+
+  .flow { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  .flow::before { content: ""; position: absolute; top: 1.45rem; left: calc(16.6% + 0.5rem); right: calc(16.6% + 0.5rem); height: 1px; background: var(--rule); }
+  .flow-num {
+    width: 2.875rem; height: 2.875rem; border-radius: 50%; background: var(--paper); border: 1px solid var(--rule);
+    display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 0.875rem; color: var(--ink);
+    margin-bottom: 1.4rem; position: relative; z-index: 1;
+  }
+  .flow-step h3 { font-size: 1.06rem; font-weight: 600; }
+  .flow-step p { margin-top: 0.5rem; font-size: 0.875rem; color: var(--slate); line-height: 1.6; max-width: 18.75rem; }
+
+  .trust { padding: 3rem 3.25rem; display: flex; gap: 2.375rem; align-items: flex-start; }
+  .trust-icon {
+    width: 3.125rem; height: 3.125rem; flex: none; border-radius: 12px; background: var(--accent-soft); border: 1px solid var(--rule);
+    display: flex; align-items: center; justify-content: center; color: var(--ink);
+  }
+  .trust h2 { font-size: 1.56rem; font-weight: 700; letter-spacing: -0.015em; }
+  .trust p { margin-top: 0.75rem; font-size: 0.94rem; color: var(--slate); line-height: 1.7; max-width: 40rem; }
+  .trust p + p { margin-top: 0.625rem; }
+
+  .cta-band { border-radius: 20px; text-align: center; padding: 4rem 2.5rem; background: var(--paper); }
+  .cta-band h2 { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; max-width: 32.5rem; margin: 0 auto; }
+  .cta-band .hero-ctas { justify-content: center; margin-top: 1.6rem; }
+  .cta-band p.foot { margin-top: 1rem; font-size: 0.81rem; color: var(--slate); }
+
+  .mkt-footer { border-top: 1px solid var(--rule); padding: 3.25rem 0 2.25rem; }
+  .foot-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 2.5rem; flex-wrap: wrap; }
+  .foot-brand { max-width: 16.25rem; }
+  .foot-brand .top-brand { margin-bottom: 0.625rem; pointer-events: none; }
+  .foot-brand p { font-size: 0.84rem; color: var(--slate); line-height: 1.6; }
+  .foot-col h4 { font-size: 0.75rem; color: var(--slate); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.875rem; font-weight: 600; }
+  .foot-col a { display: block; font-size: 0.875rem; color: var(--slate); margin-bottom: 0.625rem; transition: color .15s ease; }
+  .foot-col a:hover { color: var(--ink); }
+  .foot-bottom { margin-top: 3rem; padding-top: 1.375rem; border-top: 1px solid var(--rule); font-size: 0.78rem; color: var(--slate); }
+
+  @media (max-width: 55rem) {
+    h1.headline { font-size: 2.375rem; }
+    .grid { grid-template-columns: 1fr; }
+    .feat.wide { grid-column: span 1; }
+    .flow { grid-template-columns: 1fr; }
+    .flow::before { display: none; }
+    .strip-row { grid-template-columns: 1fr; }
+    .strip-item { border-left: none; padding: 0; border-top: 1px solid var(--rule); padding-top: 1.125rem; }
+    .strip-item:first-child { border-top: none; padding-top: 0; }
+    .strip-item + .strip-item { margin-top: 1.125rem; }
+    .trust { flex-direction: column; padding: 1.875rem; }
+    .frame-sidebar { display: none; }
+    .frame-row { grid-template-columns: 1fr 4.6rem 1.6rem; }
+    .frame-row .position-badge { display: none; }
+  }
+"""
+
+LANDING_PAGE = f"""<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rotunda</title>
+<style>{STYLE}{LANDING_STYLE}</style>
+</head>
+<body>
+{top_nav("/", left_extra='<a href="/lookup">Lookup</a><a href="#features">Product</a><a href="#workflow">Workflow</a><a href="#trust">Compliance</a>')}
+
+<header class="hero">
+  <div class="mkt-wrap hero-inner">
+    <div class="eyebrow"><span class="dot"></span>Built for California lobbying compliance</div>
+    <h1 class="headline">The system of record for every bill your clients care about.</h1>
+    <p class="sub-lg">Rotunda watches Sacramento so you don't have to. Flag a bill, assign a client and a position, and get one plain-English digest the moment anything actually changes — then let it fill out your FPPC paperwork before the deadline finds you.</p>
+    <div class="hero-ctas">
+      <a href="/signup" class="btn" style="display:inline-flex;align-items:center;justify-content:center;min-height:2.75rem;padding:0 1.1rem;border-radius:8px;background:var(--accent-solid);color:var(--accent-solid-text);font-weight:600;font-size:0.875rem;">Start tracking bills</a>
+      <a href="#features" class="secondary" style="display:inline-flex;align-items:center;justify-content:center;min-height:2.75rem;padding:0 1.1rem;border-radius:8px;">See how it works</a>
+    </div>
+    <p class="hero-note">Free to <a href="/lookup">look up any bill</a>. No account needed until you flag one.</p>
+
+    <div class="frame">
+      <div class="frame-body">
+        <div class="frame-sidebar">
+          <div class="frame-brand">
+            <svg width="14" height="9" viewBox="0 0 180 112" fill="none">
+              <path d="M14 100 A76 76 0 0 1 82 24" stroke="currentColor" stroke-width="20"/>
+              <path d="M98 24 A76 76 0 0 1 166 100" stroke="currentColor" stroke-width="20"/>
+              <rect x="14" y="98" width="152" height="14" fill="currentColor"/>
+            </svg>
+            Rotunda
+          </div>
+          <div class="frame-nav-item active">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 1v12M2 2h8l-2 2.5L10 7H2" stroke-linejoin="round"/></svg>
+            Flagged bills
+          </div>
+          <div class="frame-nav-item">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5.5" cy="4.5" r="2.5"/><path d="M1 12c0-2.5 2-4.2 4.5-4.2S10 9.5 10 12" stroke-linecap="round"/></svg>
+            Clients
+          </div>
+          <div class="frame-nav-item">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>
+            Lobbying registry
+          </div>
+          <div class="frame-nav-item">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="1.5" width="8" height="11" rx="1"/><path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Disclosures
+          </div>
+        </div>
+        <div class="frame-main">
+          <div class="frame-topbar">
+            <div class="frame-title">Flagged Bills</div>
+            <div class="frame-sub">8 bills across 3 clients</div>
+          </div>
+          <div class="frame-stats">
+            <div class="frame-stat"><div class="n">8</div><div class="l">Flagged bills</div></div>
+            <div class="frame-stat"><div class="n">3</div><div class="l">Active clients</div></div>
+            <div class="frame-stat"><div class="n">1</div><div class="l">Needs a client</div></div>
+          </div>
+          <div class="frame-table">
+            <div class="frame-row">
+              <div><div class="bill">Lobbying Disclosure Modernization Act</div><div class="id">AB 1228</div></div>
+              <div class="status-badge">Hearing sched.</div>
+              <div><span class="position-badge support">Support</span></div>
+              <div class="row-menu-btn"><svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.4"/><circle cx="7" cy="7" r="1.4"/><circle cx="7" cy="11" r="1.4"/></svg></div>
+            </div>
+            <div class="frame-row">
+              <div><div class="bill">Coastal Development Permit Streamlining</div><div class="id">SB 402</div></div>
+              <div class="status-badge">Amended</div>
+              <div><span class="position-badge watch">Watch</span></div>
+              <div class="row-menu-btn"><svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.4"/><circle cx="7" cy="7" r="1.4"/><circle cx="7" cy="11" r="1.4"/></svg></div>
+            </div>
+            <div class="frame-row">
+              <div><div class="bill">Groundwater Extraction Fees</div><div class="id">SB 155</div></div>
+              <div class="status-badge">Failed</div>
+              <div><span class="position-badge oppose">Oppose</span></div>
+              <div class="row-menu-btn"><svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.4"/><circle cx="7" cy="7" r="1.4"/><circle cx="7" cy="11" r="1.4"/></svg></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="strip">
+  <div class="mkt-wrap strip-row">
+    <div class="strip-item"><b>Refreshed daily,</b> not on every page load — flagged bills recheck once a day, straight from LegiScan and CAL-ACCESS.</div>
+    <div class="strip-item"><b>One digest,</b> not fifty alerts — you hear about a bill only when its status, amendments, or hearings actually change.</div>
+    <div class="strip-item"><b>You sign every filing.</b> Rotunda prepares the paperwork; nothing is final until you type your name and confirm it.</div>
+  </div>
+</div>
+
+<section class="mkt-section" id="features">
+  <div class="mkt-wrap">
+    <div class="section-head">
+      <div class="kicker">Product</div>
+      <h2>Everything a lobbying compliance program needs. Nothing it doesn't.</h2>
+      <p>Six tools that already run on plain bill numbers and real FPPC forms — not a generic project tracker wearing a legislative skin.</p>
+    </div>
+
+    <div class="grid">
+      <div class="feat card wide">
+        <div class="feat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 3v4M12 17v4M3 12h4M17 12h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="4.5" stroke="currentColor" stroke-width="1.6"/></svg></div>
+        <h3>Flagged bills &amp; a daily digest that respects your inbox</h3>
+        <p>Flag anything your clients care about. A background job re-checks only those bills once a day and diffs the old state against the new one — status, amendments, hearings, votes. Nothing changed means no email at all.</p>
+        <span class="feat-tag">refresh_watchlist.py</span>
+      </div>
+
+      <div class="feat card">
+        <div class="feat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.6"/><path d="M20 20l-4.3-4.3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
+        <h3>Live bill lookup</h3>
+        <p>Search any California bill by number and see its current status straight from LegiScan. No login, nothing saved — just the answer.</p>
+      </div>
+
+      <div class="feat card">
+        <div class="feat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="8" r="3.4" stroke="currentColor" stroke-width="1.6"/><path d="M3.5 19c0-3.3 2.5-5.6 5.5-5.6s5.5 2.3 5.5 5.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M15.5 6.2c1.6.5 2.7 1.9 2.7 3.6 0 1.5-.9 2.8-2.1 3.4M17.5 13.7c1.9.6 3.2 2.5 3.2 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
+        <h3>Clients &amp; positions</h3>
+        <p>Keep each client's profile, industry, and CAL-ACCESS filer ID. Assign any flagged bill a position — Support, Oppose, or Watch — and change it any time.</p>
+      </div>
+
+      <div class="feat card">
+        <div class="feat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M7 3h8l4 4v14H5V3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 12h6M9 16h6M9 8h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
+        <h3>Action reports</h3>
+        <p>One page per bill: current status, full history, amendments, upcoming hearings, and your client's position — ready to forward or print.</p>
+      </div>
+
+      <div class="feat card">
+        <div class="feat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 21V10l8-6 8 6v11" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 21v-7h6v7" stroke="currentColor" stroke-width="1.6"/></svg></div>
+        <h3>Lobbying registry search</h3>
+        <p>Cross-reference California's CAL-ACCESS disclosure data alongside your bills — the same dataset, refreshed on its own daily pipeline.</p>
+      </div>
+
+      <div class="feat card">
+        <div class="feat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 4h14v16H5z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 9l1.6 1.6L14 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 15h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
+        <h3>Disclosure form prep</h3>
+        <p>Generates a real FPPC Form 601, pre-filled from your profile and clients. You always review the filled PDF before anything is marked ready to file.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="mkt-section" id="workflow" style="padding-top:0">
+  <div class="mkt-wrap">
+    <div class="section-head">
+      <div class="kicker">Workflow</div>
+      <h2>From "someone should watch this bill" to a filed disclosure.</h2>
+      <p>The same three steps whether it's one client or forty.</p>
+    </div>
+    <div class="flow">
+      <div class="flow-step">
+        <div class="flow-num">01</div>
+        <h3>Flag the bills that matter</h3>
+        <p>Search, flag, and assign each one to a client with a position — Support, Oppose, or Watch.</p>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">02</div>
+        <h3>Get one digest when it moves</h3>
+        <p>A daily job diffs every flagged bill and emails only the people affected, only when something changed.</p>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">03</div>
+        <h3>Generate, review, sign off</h3>
+        <p>Pre-fill Form 601 from your clients, review the real PDF, then sign off when it's ready to file yourself.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="mkt-section" id="trust" style="padding-top:0">
+  <div class="mkt-wrap">
+    <div class="trust card">
+      <div class="trust-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 3l7 3v6c0 5-3.5 7.5-7 9-3.5-1.5-7-4-7-9V6l7-3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 12l2.2 2.2L15.5 9.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div>
+        <h2>You file it. We never do.</h2>
+        <p>Rotunda prepares your FPPC disclosures — it never submits anything to the FPPC or the Secretary of State on your behalf. The filled PDF is always shown for review first, and nothing is marked "ready to file" until you type your legal name and confirm it yourself.</p>
+        <p>Fields we can't verify — subcontracted clients, individual lobbyists beyond the account holder — stay blank instead of being guessed, and the review page says so.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="mkt-section" style="padding-top:0">
+  <div class="mkt-wrap">
+    <div class="cta-band card">
+      <h2>Stop tracking bills in a spreadsheet.</h2>
+      <div class="hero-ctas">
+        <a href="/signup" class="btn" style="display:inline-flex;align-items:center;justify-content:center;min-height:2.75rem;padding:0 1.1rem;border-radius:8px;background:var(--accent-solid);color:var(--accent-solid-text);font-weight:600;font-size:0.875rem;">Start tracking bills</a>
+      </div>
+      <p class="foot">Look up your first bill in seconds. No account needed until you flag one.</p>
+    </div>
+  </div>
+</section>
+
+<footer class="mkt-footer">
+  <div class="mkt-wrap">
+    <div class="foot-row">
+      <div class="foot-brand">
+        {TOP_BRAND}
+        <p>Legislative tracking and lobbying-disclosure prep for California lobbying firms. Built by Noble Law.</p>
+      </div>
+      <div class="foot-col">
+        <h4>Product</h4>
+        <a href="/lookup">Look up a bill</a>
+        <a href="#features">Features</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#trust">Compliance</a>
+      </div>
+    </div>
+    <div class="foot-bottom">&copy; 2026 Rotunda. A Noble Law product. Not affiliated with the FPPC or California Secretary of State.</div>
+  </div>
+</footer>
+</body>
+</html>
+"""
+
+
+PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Look up a bill — Rotunda</title>
 <style>{STYLE}</style>
 </head>
 <body>
-{top_nav("/")}
+{top_nav("/lookup")}
 <div class="wrap">
   <h1>Look up a bill</h1>
   <p class="sub">California bill status, sponsors, and history from LegiScan.</p>
@@ -1082,7 +1435,7 @@ SIGNUP_PAGE = f"""<!doctype html>
 <style>{STYLE}</style>
 </head>
 <body>
-{top_nav("/signup", left_extra='<a href="/">← Lookup</a><a href="/login">Log in →</a>')}
+{top_nav("/signup", left_extra='<a href="/lookup">← Lookup</a><a href="/login">Log in →</a>')}
 <div class="wrap">
   <h1>Create your account</h1>
   <p class="sub">Step 1 of 2 — after this, you'll fill in your CAL-ACCESS-style registration details.</p>
@@ -1143,7 +1496,7 @@ LOGIN_PAGE = f"""<!doctype html>
 <style>{STYLE}</style>
 </head>
 <body>
-{top_nav("/login", left_extra='<a href="/">← Lookup</a><a href="/signup">Sign up →</a>')}
+{top_nav("/login", left_extra='<a href="/lookup">← Lookup</a><a href="/signup">Sign up →</a>')}
 <div class="wrap">
   <h1>Log in</h1>
 
@@ -1180,7 +1533,7 @@ form.addEventListener('submit', async (e) => {{
     }});
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not log in');
-    window.location.href = '/';
+    window.location.href = '/flagged';
   }} catch (err) {{
     errorEl.textContent = err.message;
     errorEl.className = 'show';
@@ -1203,7 +1556,7 @@ PROFILE_PAGE = f"""<!doctype html>
 <style>{STYLE}</style>
 </head>
 <body>
-{top_nav("/signup/profile", left_extra='<a href="/">Skip for now →</a>')}
+{top_nav("/signup/profile", left_extra='<a href="/flagged">Skip for now →</a>')}
 <div class="wrap">
   <h1>Registration details</h1>
   <p class="sub">Step 2 of 2 — modeled on CAL-ACCESS Form 601 (Lobbying Firm Registration Statement), so the fields match what you'd already recognize from the state's own form.</p>
@@ -2959,6 +3312,10 @@ class Handler(BaseHTTPRequestHandler):
         qs = parse_qs(parsed.query)
 
         if parsed.path == "/":
+            self._send_html(200, LANDING_PAGE)
+            return
+
+        if parsed.path == "/lookup":
             self._send_html(200, PAGE)
             return
 
