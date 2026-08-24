@@ -172,6 +172,16 @@ STYLE = """
     --error: #b91c1c; --error-soft: #fee2e2;
     --shadow-rest: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.03);
     --shadow-hover: 0 4px 12px rgba(0,0,0,0.06);
+    /* The handful of border-radius values actually used below (4-8px)
+       collapse into these two tokens; 999px pills get their own. Left
+       alone on purpose: 50% and the two circular dots (.step-dot,
+       .status-badge::before) that use a fixed pixel radius instead of
+       50% only because their box is sized in rem, not px — those are
+       circles, not rounded rectangles, so they're not part of this
+       scale. Also left alone: 18px, used by a few larger cards/panels
+       as a deliberately bigger third tier — collapsing it into
+       --radius-md would be a real size change, not just a naming one. */
+    --radius-sm: 6px; --radius-md: 8px; --radius-pill: 999px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -182,6 +192,7 @@ STYLE = """
       --error: #f87171; --error-soft: #2f1313;
       --shadow-rest: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
       --shadow-hover: 0 4px 14px rgba(0,0,0,0.5);
+      --radius-sm: 6px; --radius-md: 8px; --radius-pill: 999px;
     }
   }
   * { box-sizing: border-box; }
@@ -198,7 +209,7 @@ STYLE = """
   a { color: var(--accent); }
   a:focus-visible, button:focus-visible, input:focus-visible,
   select:focus-visible, summary:focus-visible {
-    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px;
+    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm);
   }
   .wrap { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
   /* A full-width bar, same grammar as the signed-in shell's .app-topbar
@@ -243,13 +254,13 @@ STYLE = """
   }
   input, select, textarea {
     font: inherit; padding: 0.6rem 0.75rem; border: 1px solid var(--rule);
-    border-radius: 8px; background: var(--surface); color: var(--ink);
+    border-radius: var(--radius-md); background: var(--surface); color: var(--ink);
   }
   select { cursor: pointer; }
   input#bill { flex: 1; min-width: 8rem; }
   button {
     font: inherit; font-weight: 600; padding: 0.6rem 1.1rem; border: none;
-    border-radius: 8px; background: var(--accent-solid); color: var(--accent-solid-text); cursor: pointer;
+    border-radius: var(--radius-md); background: var(--accent-solid); color: var(--accent-solid-text); cursor: pointer;
   }
   button:hover { opacity: 0.9; }
   button:disabled { opacity: 0.5; cursor: default; }
@@ -261,7 +272,7 @@ STYLE = """
      same properties plus the anchor-specific reset. */
   a.secondary, a.danger {
     display: inline-flex; align-items: center; gap: 0.4rem; font: inherit; font-weight: 600;
-    padding: 0.6rem 1.1rem; border-radius: 8px; text-decoration: none;
+    padding: 0.6rem 1.1rem; border-radius: var(--radius-md); text-decoration: none;
   }
   a.secondary { background: var(--accent-soft); color: var(--accent); }
   a.danger { background: var(--error-soft); color: var(--error); }
@@ -270,7 +281,7 @@ STYLE = """
      — an <a> styled to look like the app's solid dark <button>. */
   a.primary {
     display: inline-flex; align-items: center; gap: 0.4rem; font: inherit; font-weight: 600;
-    padding: 0.5rem 0.9rem; border-radius: 8px; text-decoration: none;
+    padding: 0.5rem 0.9rem; border-radius: var(--radius-md); text-decoration: none;
     background: var(--accent-solid); color: var(--accent-solid-text);
   }
   a.primary:hover { opacity: 0.9; }
@@ -292,7 +303,7 @@ STYLE = """
      color them confidently isn't a call this restyle should make. */
   .status-badge {
     display: inline-flex; align-items: center; gap: 0.35rem; background: var(--accent-soft); color: var(--accent);
-    font-size: 0.75rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 999px;
+    font-size: 0.75rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: var(--radius-pill);
     margin-bottom: 0.5rem;
   }
   .status-badge::before { content: ""; width: 0.4rem; height: 0.4rem; border-radius: 999px; background: currentColor; flex: none; }
@@ -316,11 +327,11 @@ STYLE = """
   .sponsor-list { display: flex; flex-wrap: wrap; gap: 0.4rem; }
   .sponsor {
     background: var(--accent-soft); color: var(--accent); font-size: 0.8rem;
-    padding: 0.25rem 0.6rem; border-radius: 999px;
+    padding: 0.25rem 0.6rem; border-radius: var(--radius-pill);
   }
   #error {
     display: none; background: var(--error-soft); color: var(--error);
-    padding: 0.8rem 1rem; border-radius: 8px; font-size: 0.88rem; margin-bottom: 1.5rem;
+    padding: 0.8rem 1rem; border-radius: var(--radius-md); font-size: 0.88rem; margin-bottom: 1.5rem;
   }
   #error.show { display: block; }
   #loading { display: none; align-items: center; gap: 0.5rem; color: var(--slate); font-size: 0.9rem; }
@@ -336,13 +347,13 @@ STYLE = """
      text, so the layout doesn't jump when real rows replace it. */
   .skeleton-row { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1.15rem; border-bottom: 1px solid var(--rule); }
   .skeleton-row:last-child { border-bottom: none; }
-  .skeleton-bar { height: 0.8rem; border-radius: 4px; background: var(--accent-soft); animation: skeleton-pulse 1.2s ease-in-out infinite; }
+  .skeleton-bar { height: 0.8rem; border-radius: var(--radius-sm); background: var(--accent-soft); animation: skeleton-pulse 1.2s ease-in-out infinite; }
   @keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
   .empty { color: var(--slate); font-size: 0.9rem; }
   tr.row-link { cursor: pointer; }
   tr.row-link:hover { background: var(--accent-soft); }
   .tag { display: inline-block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
-    color: var(--slate); background: var(--accent-soft); padding: 0.1rem 0.5rem; border-radius: 999px;
+    color: var(--slate); background: var(--accent-soft); padding: 0.1rem 0.5rem; border-radius: var(--radius-pill);
     text-decoration: none; }
   /* .tag doubles as a link when it's a bill-number pill inside free
      text (see billPills() in LOBBYING_DETAIL_BODY) — everywhere else
@@ -353,7 +364,7 @@ STYLE = """
      /flagged position selector and the /report page's read-only badge),
      colored consistently: support=good, oppose=error, watch=neutral. */
   .position-badge { display: inline-block; font-size: 0.75rem; font-weight: 700;
-    padding: 0.2rem 0.6rem; border-radius: 999px; }
+    padding: 0.2rem 0.6rem; border-radius: var(--radius-pill); }
   .position-badge.support { background: var(--good-soft); color: var(--good); }
   .position-badge.oppose { background: var(--error-soft); color: var(--error); }
   .position-badge.watch { background: var(--accent-soft); color: var(--accent); }
@@ -366,7 +377,7 @@ STYLE = """
   .filter-tabs { display: flex; gap: 0.4rem; margin-bottom: 1.1rem; }
   .filter-tab {
     font: inherit; font-size: 0.82rem; font-weight: 600; color: var(--slate);
-    background: var(--surface); border: 1px solid var(--rule); border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-pill);
     padding: 0.35rem 0.75rem; cursor: pointer;
   }
   .filter-tab:hover { border-color: var(--ink); }
@@ -379,7 +390,7 @@ STYLE = """
   .account-menu summary::-webkit-details-marker { display: none; }
   .account-menu-content {
     position: absolute; right: 0; top: 1.5rem; background: var(--surface);
-    border: 1px solid var(--rule); border-radius: 8px; padding: 0.5rem 0.7rem;
+    border: 1px solid var(--rule); border-radius: var(--radius-md); padding: 0.5rem 0.7rem;
     display: flex; flex-direction: column; gap: 0.5rem; min-width: 9.5rem;
     box-shadow: 0 4px 14px rgba(45, 43, 43, 0.16); z-index: 20;
   }
@@ -411,7 +422,7 @@ STYLE = """
   nav.app-nav { padding: 1rem 0.75rem; flex: 1; overflow-y: auto; }
   .app-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.15rem; }
   .side-nav-item {
-    height: 2rem; display: flex; align-items: center; gap: 0.6rem; border-radius: 8px; padding: 0 0.75rem;
+    height: 2rem; display: flex; align-items: center; gap: 0.6rem; border-radius: var(--radius-md); padding: 0 0.75rem;
     font-size: 0.82rem; font-weight: 500; color: var(--slate); text-decoration: none;
     transition: background .12s ease, color .12s ease;
   }
@@ -424,14 +435,14 @@ STYLE = """
   }
   .app-sidebar-foot { padding: 0.75rem; border-top: 1px solid var(--rule); flex: none; position: relative; }
   .app-account {
-    display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.5rem; border-radius: 8px;
+    display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.5rem; border-radius: var(--radius-md);
     cursor: pointer; transition: background .12s ease; background: none; border: none; width: 100%;
     text-align: left; color: var(--ink); /* button's own base rule sets color: var(--accent-solid-text) —
     white-on-white in light mode, dark-on-dark in dark — this overrides it back to the real text color. */
   }
   .app-account:hover { background: var(--accent-soft); }
   .app-avatar {
-    height: 1.75rem; width: 1.75rem; border-radius: 999px; background: var(--ink); color: var(--paper);
+    height: 1.75rem; width: 1.75rem; border-radius: var(--radius-pill); background: var(--ink); color: var(--paper);
     font-size: 0.7rem; font-weight: 600; display: flex; align-items: center; justify-content: center; flex: none;
   }
   .app-account-email {
@@ -440,13 +451,13 @@ STYLE = """
   }
   .app-account-menu {
     position: absolute; left: 0.75rem; right: 0.75rem; bottom: 3.75rem; background: var(--surface);
-    border: 1px solid var(--rule); border-radius: 8px; padding: 0.4rem; box-shadow: 0 4px 14px rgba(0,0,0,0.16);
+    border: 1px solid var(--rule); border-radius: var(--radius-md); padding: 0.4rem; box-shadow: 0 4px 14px rgba(0,0,0,0.16);
     display: none; flex-direction: column; gap: 0.15rem; z-index: 20;
   }
   .app-account-menu.show { display: flex; }
   .app-account-menu button {
     background: none; border: none; color: var(--ink); font: inherit; font-weight: 500; font-size: 0.82rem;
-    text-align: left; padding: 0.4rem 0.5rem; border-radius: 6px; cursor: pointer;
+    text-align: left; padding: 0.4rem 0.5rem; border-radius: var(--radius-sm); cursor: pointer;
   }
   .app-account-menu button:hover { background: var(--accent-soft); }
   /* Shown instead of the avatar/email button when /api/me says no one's
@@ -475,7 +486,7 @@ STYLE = """
      /discover itself, where it would just duplicate that page's own
      search field. */
   .search-box {
-    display: flex; align-items: center; gap: 0.5rem; height: 2rem; width: 12.5rem; border-radius: 8px;
+    display: flex; align-items: center; gap: 0.5rem; height: 2rem; width: 12.5rem; border-radius: var(--radius-md);
     background: var(--accent-soft); border: 1px solid var(--rule); padding: 0 0.6rem; font-size: 0.8rem; color: var(--slate);
   }
   .search-box svg { width: 0.75rem; height: 0.75rem; flex: none; }
@@ -485,7 +496,7 @@ STYLE = """
   }
   .search-box input::placeholder { color: var(--slate); }
   .icon-btn {
-    height: 2rem; width: 2rem; border-radius: 8px; border: 1px solid var(--rule); background: var(--paper);
+    height: 2rem; width: 2rem; border-radius: var(--radius-md); border: 1px solid var(--rule); background: var(--paper);
     display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s ease;
   }
   .icon-btn:hover { background: var(--accent-soft); }
@@ -514,7 +525,7 @@ STYLE = """
   }
   .stat-card:hover { box-shadow: var(--shadow-hover); }
   .stat-icon {
-    height: 2.1rem; width: 2.1rem; border-radius: 8px; background: var(--accent-soft);
+    height: 2.1rem; width: 2.1rem; border-radius: var(--radius-md); background: var(--accent-soft);
     display: flex; align-items: center; justify-content: center; color: var(--slate); margin-bottom: 0.85rem;
   }
   .stat-icon svg { width: 1rem; height: 1rem; }
@@ -534,7 +545,7 @@ STYLE = """
   .panel-head .title { font-size: 0.95rem; font-weight: 600; letter-spacing: -0.005em; }
   .panel-head .sub { font-size: 0.75rem; color: var(--slate); margin-top: 0.15rem; }
   .panel-link {
-    height: 1.75rem; display: flex; align-items: center; gap: 0.35rem; border-radius: 8px;
+    height: 1.75rem; display: flex; align-items: center; gap: 0.35rem; border-radius: var(--radius-md);
     border: 1px solid var(--rule); background: var(--accent-soft); color: var(--slate);
     font: inherit; font-size: 0.72rem; font-weight: 500; padding: 0 0.6rem; cursor: pointer; flex: none;
   }
@@ -567,7 +578,7 @@ STYLE = """
      the .bill-row scope rather than given new parallel class names. */
   .bill-row { display: flex; align-items: center; gap: 0.6rem; }
   .bill-row .bill-icon {
-    height: 1.75rem; width: 1.75rem; border-radius: 8px; background: var(--accent-soft);
+    height: 1.75rem; width: 1.75rem; border-radius: var(--radius-md); background: var(--accent-soft);
     display: flex; align-items: center; justify-content: center; flex: none;
   }
   .bill-row .bill-icon svg { width: 0.75rem; height: 0.75rem; color: var(--slate); }
@@ -586,7 +597,7 @@ STYLE = """
      something you do occasionally, not the primary action of the row. */
   .row-menu { position: relative; text-align: right; }
   .row-menu-btn {
-    height: 1.75rem; width: 1.75rem; border-radius: 8px; border: 1px solid var(--rule); background: var(--surface);
+    height: 1.75rem; width: 1.75rem; border-radius: var(--radius-md); border: 1px solid var(--rule); background: var(--surface);
     color: var(--slate); display: inline-flex; align-items: center; justify-content: center;
     cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease;
   }
@@ -594,13 +605,13 @@ STYLE = """
   .row-menu-btn svg { width: 1rem; height: 1rem; }
   .row-menu-dropdown {
     position: absolute; right: 0; top: calc(100% + 0.25rem); background: var(--surface);
-    border: 1px solid var(--rule); border-radius: 8px; padding: 0.3rem; min-width: 9rem;
+    border: 1px solid var(--rule); border-radius: var(--radius-md); padding: 0.3rem; min-width: 9rem;
     box-shadow: 0 4px 14px rgba(0,0,0,0.16); z-index: 20; display: none; flex-direction: column; gap: 0.1rem;
   }
   .row-menu-dropdown.show { display: flex; }
   .row-menu-dropdown button {
     background: none; border: none; color: var(--error); font: inherit; font-weight: 500; font-size: 0.82rem;
-    text-align: left; padding: 0.4rem 0.6rem; border-radius: 6px; cursor: pointer;
+    text-align: left; padding: 0.4rem 0.6rem; border-radius: var(--radius-sm); cursor: pointer;
   }
   .row-menu-dropdown button:hover { background: var(--error-soft); }
   th {
