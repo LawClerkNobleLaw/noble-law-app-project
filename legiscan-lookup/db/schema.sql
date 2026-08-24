@@ -3,14 +3,18 @@
 -- and in Session 6 with a real CAL-ACCESS ingestion pipeline (lobbying_entities
 -- gained a UNIQUE filer_id for upserts; lobbying_disclosures gained
 -- filing_id + client_name once real data showed one filing has multiple
--- per-client lines — see calaccess-pipeline/).
+-- per-client lines — see calaccess-pipeline/). Session 8 added indexes on
+-- every foreign-key/lookup column actually queried by app.py/db.py — none
+-- of this needs a migration; init_db() re-applies this whole file (every
+-- statement is already IF NOT EXISTS) on every startup.
 --
 -- Holds LegiScan bill data, CAL-ACCESS lobbying disclosures, the bridge table
--- linking the two (bill_lobbying_link — the hard part, Session 7), each
--- client's tracked interests, and a stored watch-list that a daily job
--- re-checks instead of the app doing a live lookup every time. See
--- client_interest_tracking_framework.md (Desktop/Noble Law Internship/App Project)
--- for the plain-language model this schema implements.
+-- linking the two (bill_lobbying_link — the hard part, Session 7), and a
+-- stored watch-list that a daily job re-checks instead of the app doing a
+-- live lookup every time. (An earlier client_interests/client_interest_bills/
+-- client_interest_topics/client_interest_entities design, from
+-- client_interest_tracking_framework.md, was never built on top of — removed
+-- rather than left as unused tables nothing reads or writes.)
 --
 -- SQLite. Every CREATE TABLE uses IF NOT EXISTS so this file can be safely
 -- re-applied every time the app or either daily job starts.
@@ -37,6 +41,7 @@ CREATE TABLE IF NOT EXISTS bill_status_history (
   chamber   TEXT,
   action    TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_bill_status_history_bill_id ON bill_status_history(bill_id);
 
 CREATE TABLE IF NOT EXISTS bill_sponsors (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,6 +50,7 @@ CREATE TABLE IF NOT EXISTS bill_sponsors (
   party     TEXT,
   role      TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_bill_sponsors_bill_id ON bill_sponsors(bill_id);
 
 -- LegiScan's own amendment documents for a bill — distinct from
 -- bill_status_history's procedural events. Added for the per-bill
@@ -60,6 +66,7 @@ CREATE TABLE IF NOT EXISTS bill_amendments (
   adopted       INTEGER,           -- 0/1
   url           TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_bill_amendments_bill_id ON bill_amendments(bill_id);
 
 -- LegiScan's `calendar` array — scheduled committee/floor events for a
 -- bill. Rows aren't limited to future dates; "upcoming" is an
@@ -74,6 +81,7 @@ CREATE TABLE IF NOT EXISTS bill_hearings (
   location     TEXT,
   description  TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_bill_hearings_bill_id ON bill_hearings(bill_id);
 
 CREATE TABLE IF NOT EXISTS votes (
   id           INTEGER PRIMARY KEY,      -- LegiScan's roll_call_id
@@ -84,6 +92,7 @@ CREATE TABLE IF NOT EXISTS votes (
   yea INTEGER, nay INTEGER, nv INTEGER, absent INTEGER, total INTEGER,
   passed       INTEGER                   -- 0/1
 );
+CREATE INDEX IF NOT EXISTS idx_votes_bill_id ON votes(bill_id);
 
 -- The stored watch-list. One shared list (no accounts system exists yet) —
 -- one row per bill someone's added. `last_checked_at` is what the daily
@@ -134,6 +143,8 @@ CREATE TABLE IF NOT EXISTS lobbying_disclosures (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_disclosure_filing_client
   ON lobbying_disclosures(filing_id, client_name);
+CREATE INDEX IF NOT EXISTS idx_disclosures_client_name ON lobbying_disclosures(client_name);
+CREATE INDEX IF NOT EXISTS idx_disclosures_filer_entity_id ON lobbying_disclosures(filer_entity_id);
 
 CREATE TABLE IF NOT EXISTS bill_lobbying_link (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,30 +153,6 @@ CREATE TABLE IF NOT EXISTS bill_lobbying_link (
   match_confidence TEXT,               -- 'exact' | 'normalized' | 'manual' | 'unmatched'
   matched_at       TEXT,
   notes            TEXT
-);
-
-CREATE TABLE IF NOT EXISTS client_interests (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  client_name    TEXT NOT NULL,
-  interest_label TEXT NOT NULL          -- e.g. "cannabis retail licensing"
-);
-
-CREATE TABLE IF NOT EXISTS client_interest_bills (
-  interest_id INTEGER REFERENCES client_interests(id),
-  bill_id     INTEGER REFERENCES bills(id),
-  PRIMARY KEY (interest_id, bill_id)
-);
-
-CREATE TABLE IF NOT EXISTS client_interest_topics (
-  interest_id INTEGER REFERENCES client_interests(id),
-  keyword     TEXT,
-  PRIMARY KEY (interest_id, keyword)
-);
-
-CREATE TABLE IF NOT EXISTS client_interest_entities (
-  interest_id INTEGER REFERENCES client_interests(id),
-  entity_id   INTEGER REFERENCES lobbying_entities(id),
-  PRIMARY KEY (interest_id, entity_id)
 );
 
 -- Individual accounts, layered INSIDE the site's existing shared
@@ -225,6 +212,7 @@ CREATE TABLE IF NOT EXISTS flagged_bills (
   flagged_at TEXT,
   UNIQUE(user_id, bill_id)
 );
+CREATE INDEX IF NOT EXISTS idx_flagged_bills_user_id ON flagged_bills(user_id);
 
 -- A user's own clients — one-to-many (unlike lobbyist_profiles, which
 -- is one-to-one with a user). Field names/order follow CAL-ACCESS Forms
@@ -252,6 +240,7 @@ CREATE TABLE IF NOT EXISTS clients (
   agencies_lobbied   TEXT,                 -- Form 601: "Agencies to be Lobbied" on this client's behalf
   created_at         TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_clients_user_id ON clients(user_id);
 
 -- Which of a user's own clients a flagged bill is being tracked for.
 -- Many-to-many on purpose — a bill can matter to more than one client.
