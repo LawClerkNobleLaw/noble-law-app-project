@@ -571,6 +571,12 @@ STYLE = """
   .bill-row .bill-icon svg { width: 0.75rem; height: 0.75rem; color: var(--slate); }
   .bill-row .bill-title { font-size: 0.85rem; font-weight: 500; margin: 0; }
   .bill-row .bill-id { font-size: 0.72rem; margin: 0.1rem 0 0; }
+  /* /flagged/calendar's per-day groups of hearing rows — same
+     .bill-row shape as the flagged-bills list, just given its own
+     border/padding since it's a plain stacked list here, not table
+     rows a table's own td/tr rules already handle. */
+  .hearing-row { display: flex; padding: 0.85rem 1.15rem; border-bottom: 1px solid var(--rule); }
+  .hearing-row:last-child { border-bottom: none; }
   .row-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.35rem; }
   .row-actions a { font-size: 0.78rem; padding: 0.3rem 0.6rem; }
   /* A "..." overflow menu for row actions that are real but shouldn't
@@ -1375,7 +1381,7 @@ function render(d) {{
     <tr>
       <td class="date">${{a.date || ''}}</td>
       <td class="chamber">${{a.chamber || ''}}</td>
-      <td>${{a.title || a.description || ''}}${{a.adopted ? ' <span class="tag">Adopted</span>' : ''}}${{a.url ? ` — <a href="${{a.url}}" target="_blank" rel="noopener">view</a>` : ''}}</td>
+      <td>${{a.title || a.description || ''}}${{a.adopted ? ' <span class="tag">Adopted</span>' : ''}}${{a.url ? ` — <a href="${{a.url}}" target="_blank" rel="noopener">View amended text →</a>` : ''}}</td>
     </tr>
   `).join('');
 
@@ -2274,7 +2280,11 @@ FLAGGED_BODY = f"""
     <h1>Flagged Bills</h1>
     <p class="sub">Bills you've personally flagged — stored and re-checked daily the same way the shared watch list is, just scoped to your account.</p>
   </div>
-  <div class="filter-tabs" id="tabs"></div>
+  <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+    <a href="/flagged/calendar" class="secondary">Hearing calendar →</a>
+    <a href="/flagged/sponsors" class="secondary">Sponsors &amp; votes →</a>
+    <div class="filter-tabs" id="tabs"></div>
+  </div>
 </div>
 <div id="error"></div>
 <div class="stat-grid" id="stats"></div>
@@ -2582,6 +2592,200 @@ FLAGGED_PAGE = f"""<!doctype html>
 </head>
 <body>
 {app_shell("/flagged", FLAGGED_BODY)}
+</body>
+</html>
+"""
+
+
+# Every scheduled hearing across every flagged bill, in one place,
+# grouped by day. Aggregation only — db.list_hearings_for_flagged_bills
+# just joins tables the daily refresh job already fills in
+# (refresh_watchlist.py); nothing here calls LegiScan directly. Kept as
+# current="/flagged" for app_shell() (same convention REPORT_BODY
+# already uses) so the sidebar still highlights Flagged Bills, since
+# this is a view onto that same set of bills, not a separate section.
+CALENDAR_BODY = f"""
+<div class="page-head"><div><a href="/flagged" class="sub">← Flagged bills</a></div></div>
+<div class="page-head">
+  <div>
+    <h1>Hearing calendar</h1>
+    <p class="sub">Every scheduled hearing across your flagged bills, grouped by day.</p>
+  </div>
+</div>
+
+<div id="error"></div>
+<div id="loading"><span class="spinner"></span>Loading…</div>
+<div id="calendar"></div>
+
+<script>
+const calendarEl = document.getElementById('calendar');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+
+function fmtDay(dateStr) {{
+  if (!dateStr) return 'Date to be determined';
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString('en-US', {{ weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }});
+}}
+
+function render(rows) {{
+  if (!rows.length) {{
+    calendarEl.innerHTML = '<p class="empty">No hearings scheduled across your flagged bills yet.</p>';
+    return;
+  }}
+
+  // rows already arrive sorted by date/time from the API — this just
+  // buckets consecutive same-date rows into a group, presentation-only.
+  const groups = [];
+  let current = null;
+  for (const h of rows) {{
+    const key = h.date || '';
+    if (!current || current.key !== key) {{
+      current = {{ key, rows: [] }};
+      groups.push(current);
+    }}
+    current.rows.push(h);
+  }}
+
+  calendarEl.innerHTML = groups.map(g => `
+    <div class="panel" style="margin-bottom:1rem">
+      <div class="panel-head"><div class="title">${{fmtDay(g.key)}}</div></div>
+      <div>
+        ${{g.rows.map(h => `
+          <div class="bill-row hearing-row">
+            <div class="bill-icon">
+              <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2.5" width="10" height="9.5" rx="1"/><path d="M2 5.5h10M5 1.5v2M9 1.5v2" stroke-linecap="round"/></svg>
+            </div>
+            <div style="flex:1;min-width:0">
+              <div class="bill-title">${{h.event_type || 'Hearing'}}${{h.time ? ' · ' + h.time : ''}}</div>
+              <div class="bill-id"><a href="/report?bill_id=${{h.bill_id}}">${{h.state}} ${{h.bill_number}}</a> — ${{h.title || ''}}</div>
+              ${{(h.location || h.description) ? `<div class="sub" style="margin:0.3rem 0 0;font-size:0.78rem">${{[h.location, h.description].filter(Boolean).join(' — ')}}</div>` : ''}}
+            </div>
+          </div>
+        `).join('')}}
+      </div>
+    </div>
+  `).join('');
+}}
+
+fetch('/api/flagged/calendar').then(r => r.json()).then(rows => {{
+  loadingEl.className = '';
+  render(rows);
+}}).catch(() => {{
+  loadingEl.className = '';
+  errorEl.textContent = 'Could not load the calendar.';
+  errorEl.className = 'show';
+}});
+</script>
+"""
+
+CALENDAR_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hearing Calendar — Rotunda</title>
+<style>{STYLE}</style>
+</head>
+<body>
+{app_shell("/flagged", CALENDAR_BODY)}
+</body>
+</html>
+"""
+
+
+# For every sponsor across a user's flagged bills: which of those
+# bills they sponsored, and how each bill's own votes turned out. See
+# db.list_sponsor_vote_rollup()'s docstring for why this is a rollup of
+# each BILL's chamber-level vote tally, not any individual legislator's
+# personal ballot — LegiScan's votes data is the former, not the
+# latter, and getting the latter would mean calling LegiScan's separate
+# getRollCall operation, a new integration this deliberately doesn't
+# add. "Sponsor" also isn't always a person — a committee can sponsor
+# a bill too (see bill_sponsors), and this list doesn't filter those
+# out, matching how every other Sponsors listing in this app (e.g.
+# LOOKUP_BODY's own sponsor chips) already treats them.
+SPONSOR_ROLLUP_BODY = f"""
+<div class="page-head"><div><a href="/flagged" class="sub">← Flagged bills</a></div></div>
+<div class="page-head">
+  <div>
+    <h1>Sponsors &amp; votes</h1>
+    <p class="sub">Every sponsor across your flagged bills, and how each bill they sponsored was voted on. A sponsor can be a committee, not only an individual legislator — LegiScan lists both the same way.</p>
+  </div>
+</div>
+
+<div id="error"></div>
+<div id="loading"><span class="spinner"></span>Loading…</div>
+<div id="sponsors"></div>
+
+<script>
+const sponsorsEl = document.getElementById('sponsors');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+
+function voteSummary(votes) {{
+  if (!votes.length) return '<span class="sub" style="margin:0">No recorded votes yet.</span>';
+  return votes.map(v => `
+    <div style="margin-top:0.35rem">
+      <span class="tag">${{v.chamber || ''}}</span>
+      <span class="sub" style="margin:0 0 0 0.4rem">${{v.date || ''}} — ${{v.description || ''}}</span>
+      <div class="sub" style="margin:0.15rem 0 0;font-size:0.78rem">
+        Yea ${{v.yea || 0}} · Nay ${{v.nay || 0}} · NV ${{v.nv || 0}} · Absent ${{v.absent || 0}}
+        ${{v.passed ? ' <span class="tag">Passed</span>' : ''}}
+      </div>
+    </div>
+  `).join('');
+}}
+
+function render(sponsors) {{
+  if (!sponsors.length) {{
+    sponsorsEl.innerHTML = '<p class="empty">No sponsor data recorded across your flagged bills yet.</p>';
+    return;
+  }}
+  sponsorsEl.innerHTML = sponsors.map(s => `
+    <div class="panel" style="margin-bottom:1rem">
+      <div class="panel-head">
+        <div>
+          <div class="title">${{s.name}}</div>
+          <div class="sub">${{s.party || 'No party on file'}}</div>
+        </div>
+      </div>
+      <div>
+        ${{s.bills.map(b => `
+          <div class="bill-row" style="padding:0.85rem 1.15rem;border-bottom:1px solid var(--rule);align-items:flex-start">
+            <div style="flex:1;min-width:0">
+              <div class="bill-id"><a href="/report?bill_id=${{b.bill_id}}">${{b.state}} ${{b.bill_number}}</a> — ${{b.title || ''}}${{b.role ? ` <span class="tag">${{b.role}}</span>` : ''}}</div>
+              ${{voteSummary(b.votes)}}
+            </div>
+          </div>
+        `).join('')}}
+      </div>
+    </div>
+  `).join('');
+}}
+
+fetch('/api/flagged/sponsors').then(r => r.json()).then(sponsors => {{
+  loadingEl.className = '';
+  render(sponsors);
+}}).catch(() => {{
+  loadingEl.className = '';
+  errorEl.textContent = 'Could not load sponsor data.';
+  errorEl.className = 'show';
+}});
+</script>
+"""
+
+SPONSOR_ROLLUP_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sponsors &amp; Votes — Rotunda</title>
+<style>{STYLE}</style>
+</head>
+<body>
+{app_shell("/flagged", SPONSOR_ROLLUP_BODY)}
 </body>
 </html>
 """
@@ -3139,7 +3343,7 @@ function render(r) {{
     <tr>
       <td class="date">${{a.date || ''}}</td>
       <td class="chamber">${{a.chamber || ''}}</td>
-      <td>${{a.title || a.description || ''}}${{a.adopted ? ' <span class="tag">Adopted</span>' : ''}}${{a.url ? ` — <a href="${{a.url}}" target="_blank" rel="noopener">view</a>` : ''}}</td>
+      <td>${{a.title || a.description || ''}}${{a.adopted ? ' <span class="tag">Adopted</span>' : ''}}${{a.url ? ` — <a href="${{a.url}}" target="_blank" rel="noopener">View amended text →</a>` : ''}}</td>
     </tr>
   `).join('');
 
@@ -4022,6 +4226,54 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(401, {"error": "Not logged in."})
                     return
                 self._send_json(200, db.list_flagged_bills(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/flagged/calendar":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+            finally:
+                conn.close()
+            if not user_id:
+                self._redirect_to_login()
+                return
+            self._send_html(200, CALENDAR_PAGE)
+            return
+
+        if parsed.path == "/api/flagged/calendar":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Not logged in."})
+                    return
+                self._send_json(200, db.list_hearings_for_flagged_bills(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/flagged/sponsors":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+            finally:
+                conn.close()
+            if not user_id:
+                self._redirect_to_login()
+                return
+            self._send_html(200, SPONSOR_ROLLUP_PAGE)
+            return
+
+        if parsed.path == "/api/flagged/sponsors":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if not user_id:
+                    self._send_json(401, {"error": "Not logged in."})
+                    return
+                self._send_json(200, db.list_sponsor_vote_rollup(conn, user_id))
             finally:
                 conn.close()
             return

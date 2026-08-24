@@ -296,6 +296,81 @@ def list_flagged_bills(conn, user_id):
     return result
 
 
+def list_hearings_for_flagged_bills(conn, user_id):
+    """Every scheduled hearing across every bill this user has flagged,
+    flattened into one list and annotated with which bill each one
+    belongs to — for the /flagged/calendar view. Pure aggregation of
+    what the daily refresh job (refresh_watchlist.py) already stores
+    in bill_hearings for each bill it watches; no new LegiScan call
+    happens here, just a join across tables that already exist.
+
+    Not date-filtered to "upcoming" the way the action report's own
+    upcoming_hearings is — the calendar's job is showing the whole
+    picture across every flagged bill, past and future, so a user can
+    see what already happened as well as what's next."""
+    rows = conn.execute(
+        """SELECT h.id, h.bill_id, h.event_type, h.date, h.time, h.location, h.description,
+                  b.state, b.bill_number, b.title
+           FROM bill_hearings h
+           JOIN bills b ON b.id = h.bill_id
+           JOIN flagged_bills f ON f.bill_id = h.bill_id AND f.user_id = ?
+           ORDER BY h.date, h.time""",
+        (user_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_sponsor_vote_rollup(conn, user_id):
+    """For every sponsor across this user's flagged bills: which of
+    those specific bills they sponsored, and how each one's own votes
+    turned out. Pure aggregation of bill_sponsors + votes, both already
+    stored by the daily refresh job — no new LegiScan call.
+
+    Grouped by sponsor NAME as stored in bill_sponsors (which doesn't
+    carry LegiScan's people_id — shape_bill() never captured it, see
+    legiscan_client.py), so two different sponsors who happen to share
+    an identical name string would be merged here. Accepted as an
+    unlikely edge case for one user's own handful of flagged bills
+    rather than a reason to add a people_id column and re-backfill.
+
+    Important: this is NOT each legislator's personal ballot. LegiScan's
+    votes table (and the Votes panel on /lookup and /report) is a
+    chamber-level roll-call tally — yea/nay/nv/absent counts — not a
+    record of which way any individual voted. That level of detail
+    exists on LegiScan's side (getRollCall, confirmed live to return
+    each vote keyed by people_id) but this app has never called it;
+    doing so would be a new integration, not reuse of what's already
+    stored, so it's deliberately out of scope here."""
+    sponsor_rows = conn.execute(
+        """SELECT s.name, s.party, s.role, s.bill_id, b.state, b.bill_number, b.title
+           FROM bill_sponsors s
+           JOIN bills b ON b.id = s.bill_id
+           JOIN flagged_bills f ON f.bill_id = s.bill_id AND f.user_id = ?
+           ORDER BY s.name""",
+        (user_id,),
+    ).fetchall()
+
+    votes_by_bill = {}
+    for r in conn.execute(
+        """SELECT v.bill_id, v.date, v.chamber, v.description, v.yea, v.nay, v.nv, v.absent, v.total, v.passed
+           FROM votes v
+           JOIN flagged_bills f ON f.bill_id = v.bill_id AND f.user_id = ?
+           ORDER BY v.date""",
+        (user_id,),
+    ).fetchall():
+        votes_by_bill.setdefault(r["bill_id"], []).append(dict(r))
+
+    by_sponsor = {}
+    for r in sponsor_rows:
+        name = r["name"] or "Unknown"
+        entry = by_sponsor.setdefault(name, {"name": name, "party": r["party"], "bills": []})
+        entry["bills"].append({
+            "bill_id": r["bill_id"], "state": r["state"], "bill_number": r["bill_number"],
+            "title": r["title"], "role": r["role"], "votes": votes_by_bill.get(r["bill_id"], []),
+        })
+    return sorted(by_sponsor.values(), key=lambda s: s["name"])
+
+
 # ── Support for the daily digest email — see digest.py. ──
 
 def list_users_with_flagged_bills(conn):
