@@ -19,8 +19,13 @@ import json
 import os
 import sqlite3
 
+import config
+
 _REPO_DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db")
-DB_DIR = os.environ.get("BILLWATCH_DATA_DIR", _REPO_DB_DIR)
+# config.BILLWATCH_DATA_DIR is just the raw env var (or None) — the
+# repo-local default below is this module's own concern, not
+# config.py's, since it depends on where db.py itself lives on disk.
+DB_DIR = config.BILLWATCH_DATA_DIR or _REPO_DB_DIR
 DB_PATH = os.path.join(DB_DIR, "billwatch.db")
 SCHEMA_PATH = os.path.join(_REPO_DB_DIR, "schema.sql")
 
@@ -32,20 +37,30 @@ def get_connection():
     return conn
 
 
-def init_db():
+def init_db(conn=None):
     """Create the database file and apply schema.sql if needed. Safe to
     call every time the app or the daily job starts — every CREATE TABLE
     in schema.sql uses IF NOT EXISTS, so re-applying it is a no-op once
-    the tables already exist."""
-    os.makedirs(DB_DIR, exist_ok=True)
-    conn = get_connection()
+    the tables already exist.
+
+    conn is normally left as None — the real app applies this to its
+    own on-disk file (DB_PATH), opening and closing its own connection.
+    Tests pass an already-open in-memory connection instead, so the
+    exact schema/migration path every real boot runs is also what every
+    test's fixture runs — not a hand-maintained duplicate of it that
+    could quietly drift out of sync with schema.sql."""
+    owns_conn = conn is None
+    if owns_conn:
+        os.makedirs(DB_DIR, exist_ok=True)
+        conn = get_connection()
     try:
         with open(SCHEMA_PATH) as f:
             conn.executescript(f.read())
         _migrate(conn)
         conn.commit()
     finally:
-        conn.close()
+        if owns_conn:
+            conn.close()
 
 
 def _migrate(conn):

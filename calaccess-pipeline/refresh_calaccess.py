@@ -69,8 +69,18 @@ SOURCE_FORM_BY_TYPE = {"F601": "601", "F602": "602", "F603": "603"}
 
 INSERT_BATCH = 5000  # rows buffered before each executemany, for the temp-table loads
 
-LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
-LOG_PATH = os.path.join(LOG_DIR, "refresh.log")
+# db.DB_DIR (calaccess_db's own BILLWATCH_DATA_DIR-aware constant), not
+# a path relative to this file — same reasoning as legiscan-lookup's
+# refresh_watchlist.py: on Render the code checkout is rebuilt on every
+# deploy but the persistent disk db.DB_DIR points at isn't, so a log
+# path relative to __file__ would silently lose its whole history on
+# every redeploy.
+# Named refresh_calaccess.log (not just "refresh.log") because
+# legiscan-lookup/refresh_watchlist.py's own LOG_DIR resolves to this
+# exact same directory once BILLWATCH_DATA_DIR is set — a shared
+# generic filename would have the two jobs interleave into one file.
+LOG_DIR = os.path.join(db.DB_DIR, "logs")
+LOG_PATH = os.path.join(LOG_DIR, "refresh_calaccess.log")
 
 
 def log(message):

@@ -84,20 +84,21 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote
 
 import accounts
+import config
 import db
 import mailer
 import pdf_forms
 import refresh_watchlist
-from legiscan_client import get_api_key, lookup_bill, get_bill_detail, search_bills
+from legiscan_client import lookup_bill, get_bill_detail, search_bills
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "calaccess-pipeline"))
 import refresh_calaccess  # noqa: E402 — must follow the sys.path insert above
 
-PORT = int(os.environ.get("PORT", 8420))
+PORT = config.PORT
 
 # Gates the two /internal/refresh-* routes. Unset locally on purpose —
 # see the module docstring above.
-REFRESH_SECRET = os.environ.get("REFRESH_SECRET")
+REFRESH_SECRET = config.REFRESH_SECRET
 
 # Guards against a cron firing twice before the first run finishes —
 # maps job name -> bool. Not persisted; a restart just clears it, which is
@@ -4981,14 +4982,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    # Was previously a printed warning ("the app will still start, but
+    # lookups will fail until it's set") — now refuses to start at all.
+    # A missing LEGISCAN_API_KEY used to surface as a 502 on someone's
+    # first real lookup, hours after the process actually started;
+    # failing here means it can't boot into that half-working state.
+    config.validate()
+
     db.init_db()
 
-    if not get_api_key():
-        print("⚠️  No LEGISCAN_API_KEY found in your environment or ~/.zshrc.")
-        print("    Set it with: export LEGISCAN_API_KEY=your_key_here")
-        print("    (the app will still start, but lookups will fail until it's set)\n")
-
-    is_hosted = bool(os.environ.get("RENDER") or os.environ.get("PORT_ASSIGNED_BY_HOST"))
+    is_hosted = config.IS_HOSTED
 
     # ThreadingHTTPServer, not HTTPServer — a plain HTTPServer handles one
     # request at a time, so an /internal/refresh-calaccess trigger firing

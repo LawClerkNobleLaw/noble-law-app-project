@@ -9,10 +9,10 @@ each having their own copy.
 """
 
 import json
-import os
-import re
 from urllib.parse import urlencode
 from urllib.request import urlopen
+
+import config
 
 LEGISCAN_BASE = "https://api.legiscan.com/"
 
@@ -29,22 +29,13 @@ STATUS_LABELS = {
 
 
 def get_api_key():
-    key = os.environ.get("LEGISCAN_API_KEY")
-    if key:
-        return key
-    # Fall back to parsing it out of ~/.zshrc, in case this was launched
-    # from a shell that never sourced the profile (e.g. double-clicked, or
-    # launchd, which doesn't read shell profiles at all).
-    zshrc = os.path.expanduser("~/.zshrc")
-    try:
-        with open(zshrc) as f:
-            for line in f:
-                m = re.search(r'export\s+LEGISCAN_API_KEY\s*=\s*"?([^"\s]+)"?', line)
-                if m:
-                    return m.group(1)
-    except FileNotFoundError:
-        pass
-    return None
+    """Kept as a function (not just `config.LEGISCAN_API_KEY` inline at
+    every call site) for the one existing caller outside this module —
+    app.py's main() used to call this to decide whether to print a
+    startup warning; the actual env var read/~/.zshrc fallback now
+    lives in config.py, the one place all of this app's environment
+    variables are read from."""
+    return config.LEGISCAN_API_KEY
 
 
 def legiscan_call(op, **params):

@@ -38,8 +38,17 @@ import db
 import digest
 from legiscan_client import get_bill_detail
 
-LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
-LOG_PATH = os.path.join(LOG_DIR, "refresh.log")
+# db.DB_DIR (not a path relative to this file) so the log lives on the
+# same disk as the SQLite file — on Render, the code checkout gets
+# rebuilt on every deploy but the persistent disk db.DB_DIR points at
+# doesn't (see db.py's own module docstring); a log path relative to
+# __file__ would silently lose its whole history on every redeploy.
+# Named refresh_watchlist.log (not just "refresh.log") because
+# refresh_calaccess.py's own LOG_DIR resolves to this exact same
+# directory once BILLWATCH_DATA_DIR is set — a shared generic filename
+# would have the two jobs interleave into one file.
+LOG_DIR = os.path.join(db.DB_DIR, "logs")
+LOG_PATH = os.path.join(LOG_DIR, "refresh_watchlist.log")
 
 
 def log(message):

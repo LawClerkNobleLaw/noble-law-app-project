@@ -15,16 +15,16 @@ changes gets nothing at all, not an empty "no changes today" email.
 """
 
 import html
-import os
 
+import config
 import db
 import mailer
 
-# Where the "View action report" links point — set this to the real
-# hosted URL (e.g. https://legiscan-lookup.onrender.com) when deploying;
-# defaults to the local dev server so links still work when testing by
-# hand.
-APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:8420").rstrip("/")
+# Where the "View action report" links point — set APP_BASE_URL to the
+# real hosted URL (e.g. https://legiscan-lookup.onrender.com) when
+# deploying; defaults to the local dev server so links still work when
+# testing by hand.
+APP_BASE_URL = config.APP_BASE_URL
 
 
 def _report_url(bill_id):

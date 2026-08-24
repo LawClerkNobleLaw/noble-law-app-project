@@ -31,6 +31,20 @@ Then open **http://localhost:8420** if it doesn't open automatically.
   export LEGISCAN_API_KEY=your_key_here
   ```
 
+## Running tests
+
+```
+pip3 install -r requirements-dev.txt
+pytest
+```
+
+The suite (`tests/`) runs entirely against an in-memory SQLite database
+(`db.init_db(conn=...)` applied to `sqlite3.connect(':memory:')`) — it
+never touches `db/billwatch.db`, never calls LegiScan, and needs no
+`LEGISCAN_API_KEY`. Covers `accounts.py` (password hashing/verification,
+sessions, the login-lockout guard), `db.py`'s flagging/client functions,
+and `search_lobbying()`'s matching/dedup/clustering behavior.
+
 ## How it works
 
 Things that live in this app:

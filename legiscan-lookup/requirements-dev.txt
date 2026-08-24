@@ -1,0 +1,5 @@
+# Dev/test-only dependency, separate from requirements.txt (which stays
+# limited to what the deployed app itself needs — see that file's own
+# comment). Install with: pip install -r requirements-dev.txt
+# Run the suite with: pytest
+pytest==8.4.2

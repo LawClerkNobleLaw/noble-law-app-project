@@ -21,15 +21,16 @@ server unreachable, etc.) DOES raise — that's an actual error the caller
 (digest.py) should catch and count per-recipient, not silently swallow.
 """
 
-import os
 import smtplib
 from email.message import EmailMessage
 
-SMTP_HOST = os.environ.get("SMTP_HOST")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USER = os.environ.get("SMTP_USER")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
-EMAIL_FROM = os.environ.get("EMAIL_FROM")
+import config
+
+SMTP_HOST = config.SMTP_HOST
+SMTP_PORT = config.SMTP_PORT
+SMTP_USER = config.SMTP_USER
+SMTP_PASSWORD = config.SMTP_PASSWORD
+EMAIL_FROM = config.EMAIL_FROM
 
 
 def is_configured():
