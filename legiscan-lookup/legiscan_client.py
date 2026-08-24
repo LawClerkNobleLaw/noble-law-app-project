@@ -168,3 +168,46 @@ def lookup_bill(bill_number):
     match = max(candidates, key=lambda v: int(v.get("relevance") or 0))
 
     return get_bill_detail(match["bill_id"])
+
+
+def search_bills(query, page=1):
+    """Free-text bill search (Discover) — unlike lookup_bill(), which
+    resolves one known bill number to its full detail, this is for "I
+    don't know the bill number, just what it's about." Returns
+    lightweight rows straight from getSearch's own result, not a full
+    getBill call per row (that would be one LegiScan API call per
+    search result, which doesn't scale to a results list).
+
+    California only, same reasoning as lookup_bill().
+
+    Field names below were checked against a live getSearch response
+    for query='housing', not guessed from the API docs — searchresult
+    entries already come back with exactly these keys (relevance,
+    bill_id, bill_number, title, last_action, last_action_date), so
+    this only picks the subset the results list actually shows rather
+    than renaming anything."""
+    search = legiscan_call("getSearch", state="CA", query=query, page=page)
+    if search.get("status") != "OK":
+        raise RuntimeError(f"LegiScan search failed: {search}")
+
+    results = search.get("searchresult", {})
+    summary = results.get("summary", {})
+    rows = [
+        {
+            "bill_id": r.get("bill_id"),
+            "bill_number": r.get("bill_number"),
+            "title": r.get("title"),
+            "relevance": r.get("relevance"),
+            "last_action": r.get("last_action"),
+            "last_action_date": r.get("last_action_date"),
+        }
+        for k, r in results.items()
+        if k != "summary"
+    ]
+    rows.sort(key=lambda r: int(r["relevance"] or 0), reverse=True)
+    return {
+        "results": rows,
+        "page": summary.get("page_current"),
+        "page_total": summary.get("page_total"),
+        "count": summary.get("count"),
+    }

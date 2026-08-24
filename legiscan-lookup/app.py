@@ -88,7 +88,7 @@ import db
 import mailer
 import pdf_forms
 import refresh_watchlist
-from legiscan_client import get_api_key, lookup_bill, get_bill_detail
+from legiscan_client import get_api_key, lookup_bill, get_bill_detail, search_bills
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "calaccess-pipeline"))
 import refresh_calaccess  # noqa: E402 — must follow the sys.path insert above
@@ -463,10 +463,15 @@ STYLE = """
   .app-topbar-title { font-size: 0.95rem; font-weight: 600; }
   .app-topbar-sub { font-size: 0.78rem; color: var(--slate); margin-top: 0.1rem; }
   .app-topbar-actions { display: flex; align-items: center; gap: 0.5rem; flex: none; }
-  /* Lives in the topbar (shared chrome), but what it actually filters is
-     page-specific — each shell page's own script attaches its own
-     'input' listener to #shell-search if that page has something to
-     filter. A page that doesn't just leaves it unwired. */
+  /* Lives in the topbar (shared chrome). Its baseline behavior — Enter
+     runs a real /discover search (wired in app_shell()'s own script
+     below) — is the same on every page it appears on. A page can ALSO
+     attach its own 'input' listener for its own live, local filtering
+     (e.g. FLAGGED_BODY filtering the flagged-bills table as you type)
+     without conflict, since that's a different event than the Enter
+     key this box's global behavior listens for. Hidden only on
+     /discover itself, where it would just duplicate that page's own
+     search field. */
   .search-box {
     display: flex; align-items: center; gap: 0.5rem; height: 2rem; width: 12.5rem; border-radius: 8px;
     background: var(--accent-soft); border: 1px solid var(--rule); padding: 0 0.6rem; font-size: 0.8rem; color: var(--slate);
@@ -608,7 +613,7 @@ def nav_links(current):
     Flagged bills isn't listed here on purpose — it's personal and tied
     to login, so it lives in the account menu next to "View profile"
     rather than in this always-visible row (see ACCOUNT_MENU_SCRIPT)."""
-    pages = [("/lookup", "Lookup"), ("/lobbying", "Organization Search")]
+    pages = [("/lookup", "Lookup"), ("/discover", "Discover"), ("/lobbying", "Organization Search")]
     parts = []
     for href, label in pages:
         if href == current:
@@ -698,6 +703,9 @@ SHELL_NAV_ITEMS = [
     ("/lookup", "Lookup",
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
      '<circle cx="6" cy="6" r="4"/><path d="M9.5 9.5L12.5 12.5" stroke-linecap="round"/></svg>'),
+    ("/discover", "Discover",
+     '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+     '<circle cx="7" cy="7" r="5.5"/><path d="M9.2 4.8L7.8 7.8 4.8 9.2 6.2 6.2z" stroke-linejoin="round"/></svg>'),
     ("/lobbying", "Organization Search",
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
      '<path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>'),
@@ -814,7 +822,7 @@ def app_shell(current, body):
         <div class="app-topbar-sub" id="shell-date"></div>
       </div>
       <div class="app-topbar-actions">
-        {'' if current in ("/lookup", "/lobbying") else '''<div class="search-box">
+        {'' if current == "/discover" else '''<div class="search-box">
           <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="5" r="3.5"/><path d="M8 8l2 2" stroke-linecap="round"/></svg>
           <input id="shell-search" type="text" placeholder="Search bills...">
         </div>'''}
@@ -857,6 +865,20 @@ def app_shell(current, body):
     await fetch('/api/logout', {{ method: 'POST' }});
     window.location.href = '/';
   }});
+
+  // The one baseline behavior every page's #shell-search shares: Enter
+  // runs a real search on /discover (see DISCOVER_BODY). Not present
+  // on /discover itself (see .search-box's own CSS comment for why),
+  // so this guards for the element missing rather than assuming it's
+  // always there.
+  const shellSearch = document.getElementById('shell-search');
+  if (shellSearch) {{
+    shellSearch.addEventListener('keydown', (e) => {{
+      if (e.key !== 'Enter') return;
+      const q = shellSearch.value.trim();
+      if (q) window.location.href = '/discover?q=' + encodeURIComponent(q);
+    }});
+  }}
 }})();
 </script>
 """
@@ -1001,7 +1023,7 @@ LANDING_PAGE = f"""<!doctype html>
 <style>{STYLE}{LANDING_STYLE}</style>
 </head>
 <body>
-{top_nav("/", left_extra='<a href="/lookup">Lookup</a><a href="#features">Product</a><a href="#workflow">Workflow</a><a href="#trust">Compliance</a>')}
+{top_nav("/", left_extra='<a href="/lookup">Lookup</a><a href="/discover">Discover</a><a href="#features">Product</a><a href="#workflow">Workflow</a><a href="#trust">Compliance</a>')}
 
 <header class="hero">
   <div class="mkt-wrap hero-inner">
@@ -1028,6 +1050,10 @@ LANDING_PAGE = f"""<!doctype html>
           <div class="frame-nav-item">
             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="4"/><path d="M9.5 9.5L12.5 12.5" stroke-linecap="round"/></svg>
             Lookup
+          </div>
+          <div class="frame-nav-item">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M9.2 4.8L7.8 7.8 4.8 9.2 6.2 6.2z" stroke-linejoin="round"/></svg>
+            Discover
           </div>
           <div class="frame-nav-item">
             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>
@@ -1201,6 +1227,7 @@ LANDING_PAGE = f"""<!doctype html>
       <div class="foot-col">
         <h4>Product</h4>
         <a href="/lookup">Look up a bill</a>
+        <a href="/discover">Discover bills</a>
         <a href="#features">Features</a>
         <a href="#workflow">Workflow</a>
         <a href="#trust">Compliance</a>
@@ -1582,6 +1609,146 @@ LOBBYING_PAGE = f"""<!doctype html>
 </head>
 <body>
 {app_shell("/lobbying", LOBBYING_BODY)}
+</body>
+</html>
+"""
+
+
+# Free-text bill search — the third public tool alongside /lookup
+# (exact bill number) and /lobbying (org/employer name). Same
+# app_shell()-without-a-session pattern as those two (see app_shell()'s
+# docstring), same skeleton-loading treatment as Organization Search
+# (LOBBYING_BODY above), and its results link into the same /lookup
+# bill-detail view /lobbying/detail's bill pills already use.
+DISCOVER_BODY = f"""
+<div class="page-head">
+  <div>
+    <h1>Discover bills</h1>
+    <p class="sub">Free-text search across every California bill via LegiScan — for when you don't know the bill number yet.</p>
+  </div>
+</div>
+
+<div class="card">
+  <form id="f" style="margin:0">
+    <input id="q" placeholder="e.g. housing element, cannabis licensing, data privacy" autocomplete="off" required style="flex:1">
+    <button type="submit">Search</button>
+  </form>
+</div>
+
+<div id="loading" class="skeleton">
+  <div class="panel">
+    {"".join(f'''<div class="skeleton-row">
+      <div class="skeleton-bar" style="width:10%"></div>
+      <div class="skeleton-bar" style="width:45%"></div>
+      <div class="skeleton-bar" style="width:14%"></div>
+      <div class="skeleton-bar" style="width:12%"></div>
+    </div>''' for _ in range(3))}
+  </div>
+</div>
+<div id="error"></div>
+<div id="results"></div>
+
+<script>
+const form = document.getElementById('f');
+const resultsEl = document.getElementById('results');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+let currentQuery = '';
+let currentPage = 1;
+
+form.addEventListener('submit', (e) => {{
+  e.preventDefault();
+  const q = document.getElementById('q').value.trim();
+  if (q) runSearch(q, 1);
+}});
+
+// Lets the global header search box (#shell-search, wired in
+// app_shell()'s own script to redirect here with ?q=...) land on this
+// page with a query already filled in and run, instead of just
+// dropping you on a blank Discover page.
+const prefillQuery = new URLSearchParams(window.location.search).get('q');
+if (prefillQuery) {{
+  document.getElementById('q').value = prefillQuery;
+  runSearch(prefillQuery, 1);
+}}
+
+async function runSearch(q, page) {{
+  currentQuery = q; currentPage = page;
+  errorEl.className = ''; loadingEl.className = 'skeleton show'; resultsEl.innerHTML = '';
+  form.querySelector('button').disabled = true;
+
+  try {{
+    const res = await fetch(`/api/bills/search?q=${{encodeURIComponent(q)}}&page=${{page}}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Search failed');
+    renderResults(data);
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }} finally {{
+    loadingEl.className = 'skeleton';
+    form.querySelector('button').disabled = false;
+  }}
+}}
+
+// LegiScan's search doesn't return a coded status the way getBill
+// does (see shape_bill() in legiscan_client.py) — just each result's
+// own last_action text. Same keyword-match idea as milestoneClass()
+// elsewhere on this page, just condensed to one current-state label
+// instead of per-row history categories.
+function statusLabel(lastAction) {{
+  const a = (lastAction || '').toLowerCase();
+  if (a.includes('chaptered') || a.includes('approved by the governor')) return 'Passed';
+  if (a.includes('vetoed')) return 'Vetoed';
+  if (a.includes('died') || a.includes('failed')) return 'Failed';
+  if (a.includes('introduced')) return 'Introduced';
+  return 'In progress';
+}}
+
+function snippet(title) {{
+  if (!title) return '';
+  return title.length > 140 ? title.slice(0, 140).trim() + '…' : title;
+}}
+
+function renderResults(data) {{
+  const rows = data.results || [];
+  if (!rows.length) {{
+    resultsEl.innerHTML = '<p class="empty">No bills match that search.</p>';
+    return;
+  }}
+  const rowsHtml = rows.map(r => `
+    <tr>
+      <td><a href="/lookup?bill=${{encodeURIComponent(r.bill_number)}}">${{r.bill_number}}</a></td>
+      <td>${{snippet(r.title)}}</td>
+      <td><span class="status-badge">${{statusLabel(r.last_action)}}</span></td>
+      <td class="date">${{r.last_action_date || ''}}</td>
+    </tr>
+  `).join('');
+  const hasMore = data.page_total && Number(data.page) < Number(data.page_total);
+  resultsEl.innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><div class="sub" style="margin:0">${{(data.count || rows.length).toLocaleString()}} bills match — showing page ${{data.page || 1}} of ${{data.page_total || 1}}</div></div>
+      <table><thead><tr><th>Bill</th><th>Title</th><th>Status</th><th>Last action</th></tr></thead><tbody>${{rowsHtml}}</tbody></table>
+    </div>
+    ${{hasMore ? '<div style="text-align:center;margin-top:1rem"><button type="button" class="secondary" id="next-page-btn">Next page →</button></div>' : ''}}
+  `;
+  if (hasMore) {{
+    document.getElementById('next-page-btn').addEventListener('click', () => runSearch(currentQuery, currentPage + 1));
+  }}
+}}
+</script>
+"""
+
+DISCOVER_PAGE = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discover bills — Rotunda</title>
+<style>{STYLE}</style>
+</head>
+<body>
+{app_shell("/discover", DISCOVER_BODY)}
 </body>
 </html>
 """
@@ -3767,6 +3934,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_html(200, PAGE)
             return
 
+        if parsed.path == "/discover":
+            self._send_html(200, DISCOVER_PAGE)
+            return
+
         if parsed.path == "/watchlist":
             # Retired — consolidated into personal flagged bills (see
             # the module docstring). A bare 404 would be a jarring dead
@@ -4106,6 +4277,24 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 data = lookup_bill(bill)
+                self._send_json(200, data)
+            except Exception as e:
+                self._send_json(502, {"error": str(e)})
+            return
+
+        if parsed.path == "/api/bills/search":
+            q = (qs.get("q") or [""])[0]
+            if not q:
+                self._send_json(400, {"error": "Missing q parameter."})
+                return
+            page_raw = (qs.get("page") or ["1"])[0]
+            try:
+                page = int(page_raw)
+            except ValueError:
+                self._send_json(400, {"error": "page must be a number."})
+                return
+            try:
+                data = search_bills(q, page=page)
                 self._send_json(200, data)
             except Exception as e:
                 self._send_json(502, {"error": str(e)})
