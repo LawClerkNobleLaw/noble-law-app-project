@@ -182,6 +182,16 @@ STYLE = """
        as a deliberately bigger third tier — collapsing it into
        --radius-md would be a real size change, not just a naming one. */
     --radius-sm: 6px; --radius-md: 8px; --radius-pill: 999px;
+    /* Not redeclared in the dark :root below — unlike color/radius,
+       spacing doesn't change between themes, so one definition here
+       covers both. Values below that already land on a 4px step
+       (0.5rem, 0.75rem, 1rem, 1.25rem, 1.5rem, 2.5rem, 4rem, ...) were
+       left as plain rem rather than forced onto one of these six
+       tokens — this scale is for the ones that were off-grid
+       (0.6rem/9.6px, 0.35rem/5.6px, 1.1rem/17.6px, etc.), not a
+       wholesale rewrite of every dimension in the file. */
+    --space-1: 4px; --space-2: 8px; --space-3: 12px;
+    --space-4: 16px; --space-5: 24px; --space-6: 32px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -225,7 +235,7 @@ STYLE = """
   }
   .top-nav-inner {
     width: 100%; max-width: 46rem; margin: 0 auto; padding: 0 1.5rem;
-    display: flex; gap: 1.1rem; align-items: center;
+    display: flex; gap: var(--space-4); align-items: center;
   }
   .top-nav a { color: var(--accent); font-size: 0.85rem; text-decoration: none; }
   .top-nav a:hover { text-decoration: underline; }
@@ -250,16 +260,16 @@ STYLE = """
   .step-dot { width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--rule); flex: none; margin-top: 0.3rem; }
   .step-dot.filled { background: var(--ink); }
   form {
-    display: flex; gap: 0.6rem; margin-bottom: 2rem; flex-wrap: wrap;
+    display: flex; gap: var(--space-2); margin-bottom: 2rem; flex-wrap: wrap;
   }
   input, select, textarea {
-    font: inherit; padding: 0.6rem 0.75rem; border: 1px solid var(--rule);
+    font: inherit; padding: var(--space-2) 0.75rem; border: 1px solid var(--rule);
     border-radius: var(--radius-md); background: var(--surface); color: var(--ink);
   }
   select { cursor: pointer; }
   input#bill { flex: 1; min-width: 8rem; }
   button {
-    font: inherit; font-weight: 600; padding: 0.6rem 1.1rem; border: none;
+    font: inherit; font-weight: 600; padding: var(--space-2) var(--space-4); border: none;
     border-radius: var(--radius-md); background: var(--accent-solid); color: var(--accent-solid-text); cursor: pointer;
   }
   button:hover { opacity: 0.9; }
@@ -271,8 +281,8 @@ STYLE = """
      rule only targets <button>, so links need their own copy of the
      same properties plus the anchor-specific reset. */
   a.secondary, a.danger {
-    display: inline-flex; align-items: center; gap: 0.4rem; font: inherit; font-weight: 600;
-    padding: 0.6rem 1.1rem; border-radius: var(--radius-md); text-decoration: none;
+    display: inline-flex; align-items: center; gap: var(--space-2); font: inherit; font-weight: 600;
+    padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); text-decoration: none;
   }
   a.secondary { background: var(--accent-soft); color: var(--accent); }
   a.danger { background: var(--error-soft); color: var(--error); }
@@ -280,8 +290,8 @@ STYLE = """
   /* Solid-fill counterpart to a.secondary/a.danger above, same reasoning
      — an <a> styled to look like the app's solid dark <button>. */
   a.primary {
-    display: inline-flex; align-items: center; gap: 0.4rem; font: inherit; font-weight: 600;
-    padding: 0.5rem 0.9rem; border-radius: var(--radius-md); text-decoration: none;
+    display: inline-flex; align-items: center; gap: var(--space-2); font: inherit; font-weight: 600;
+    padding: 0.5rem var(--space-4); border-radius: var(--radius-md); text-decoration: none;
     background: var(--accent-solid); color: var(--accent-solid-text);
   }
   a.primary:hover { opacity: 0.9; }
@@ -291,7 +301,7 @@ STYLE = """
   #result.show { display: block; }
   .card {
     background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-rest);
-    border-radius: 18px; padding: 1.25rem 1.4rem; margin-bottom: 1rem;
+    border-radius: 18px; padding: 1.25rem var(--space-5); margin-bottom: 1rem;
   }
   .bill-id { font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--accent); margin-bottom: 0.4rem; }
   .bill-title { font-size: 1.15rem; font-weight: 700; margin: 0 0 0.3rem; }
@@ -302,15 +312,15 @@ STYLE = """
      bills), and guessing which ones are "good" vs "bad" well enough to
      color them confidently isn't a call this restyle should make. */
   .status-badge {
-    display: inline-flex; align-items: center; gap: 0.35rem; background: var(--accent-soft); color: var(--accent);
-    font-size: 0.75rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: var(--radius-pill);
+    display: inline-flex; align-items: center; gap: var(--space-1); background: var(--accent-soft); color: var(--accent);
+    font-size: 0.75rem; font-weight: 700; padding: var(--space-1) var(--space-2); border-radius: var(--radius-pill);
     margin-bottom: 0.5rem;
   }
   .status-badge::before { content: ""; width: 0.4rem; height: 0.4rem; border-radius: 999px; background: currentColor; flex: none; }
   .card-actions { margin-top: 0.9rem; display: flex; gap: 0.5rem; }
   h2.section { font-size: 0.95rem; margin: 1.6rem 0 0.6rem; }
   table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
-  td, th { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--rule); vertical-align: top; text-align: left; }
+  td, th { padding: var(--space-2) 0.5rem; border-bottom: 1px solid var(--rule); vertical-align: top; text-align: left; }
   td.date { font-family: ui-monospace, monospace; white-space: nowrap; color: var(--slate); }
   /* Milestone left-edge on a history row (see milestoneClass() in
      LOOKUP_BODY / REPORT_BODY) — an inset box-shadow rather than a
@@ -324,14 +334,14 @@ STYLE = """
     white-space: nowrap; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
     color: var(--accent);
   }
-  .sponsor-list { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .sponsor-list { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .sponsor {
     background: var(--accent-soft); color: var(--accent); font-size: 0.8rem;
-    padding: 0.25rem 0.6rem; border-radius: var(--radius-pill);
+    padding: 0.25rem var(--space-2); border-radius: var(--radius-pill);
   }
   #error {
     display: none; background: var(--error-soft); color: var(--error);
-    padding: 0.8rem 1rem; border-radius: var(--radius-md); font-size: 0.88rem; margin-bottom: 1.5rem;
+    padding: var(--space-3) 1rem; border-radius: var(--radius-md); font-size: 0.88rem; margin-bottom: 1.5rem;
   }
   #error.show { display: block; }
   #loading { display: none; align-items: center; gap: 0.5rem; color: var(--slate); font-size: 0.9rem; }
@@ -345,7 +355,7 @@ STYLE = """
   /* Organization Search's own loading state — 3 rows shaped like the
      real results table (see LOBBYING_BODY) instead of plain "Searching…"
      text, so the layout doesn't jump when real rows replace it. */
-  .skeleton-row { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1.15rem; border-bottom: 1px solid var(--rule); }
+  .skeleton-row { display: flex; align-items: center; gap: 1rem; padding: 0.75rem var(--space-4); border-bottom: 1px solid var(--rule); }
   .skeleton-row:last-child { border-bottom: none; }
   .skeleton-bar { height: 0.8rem; border-radius: var(--radius-sm); background: var(--accent-soft); animation: skeleton-pulse 1.2s ease-in-out infinite; }
   @keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
@@ -353,7 +363,7 @@ STYLE = """
   tr.row-link { cursor: pointer; }
   tr.row-link:hover { background: var(--accent-soft); }
   .tag { display: inline-block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
-    color: var(--slate); background: var(--accent-soft); padding: 0.1rem 0.5rem; border-radius: var(--radius-pill);
+    color: var(--slate); background: var(--accent-soft); padding: var(--space-1) 0.5rem; border-radius: var(--radius-pill);
     text-decoration: none; }
   /* .tag doubles as a link when it's a bill-number pill inside free
      text (see billPills() in LOBBYING_DETAIL_BODY) — everywhere else
@@ -364,7 +374,7 @@ STYLE = """
      /flagged position selector and the /report page's read-only badge),
      colored consistently: support=good, oppose=error, watch=neutral. */
   .position-badge { display: inline-block; font-size: 0.75rem; font-weight: 700;
-    padding: 0.2rem 0.6rem; border-radius: var(--radius-pill); }
+    padding: var(--space-1) var(--space-2); border-radius: var(--radius-pill); }
   .position-badge.support { background: var(--good-soft); color: var(--good); }
   .position-badge.oppose { background: var(--error-soft); color: var(--error); }
   .position-badge.watch { background: var(--accent-soft); color: var(--accent); }
@@ -374,11 +384,11 @@ STYLE = """
   /* Filter tabs above a flagged/client-position list — same All/Support/
      Oppose/Watch vocabulary as the position badges above, just as a
      filter instead of a per-row value. */
-  .filter-tabs { display: flex; gap: 0.4rem; margin-bottom: 1.1rem; }
+  .filter-tabs { display: flex; gap: var(--space-2); margin-bottom: 1.1rem; }
   .filter-tab {
     font: inherit; font-size: 0.82rem; font-weight: 600; color: var(--slate);
     background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-pill);
-    padding: 0.35rem 0.75rem; cursor: pointer;
+    padding: var(--space-1) 0.75rem; cursor: pointer;
   }
   .filter-tab:hover { border-color: var(--ink); }
   .filter-tab.active {
@@ -390,7 +400,7 @@ STYLE = """
   .account-menu summary::-webkit-details-marker { display: none; }
   .account-menu-content {
     position: absolute; right: 0; top: 1.5rem; background: var(--surface);
-    border: 1px solid var(--rule); border-radius: var(--radius-md); padding: 0.5rem 0.7rem;
+    border: 1px solid var(--rule); border-radius: var(--radius-md); padding: 0.5rem var(--space-3);
     display: flex; flex-direction: column; gap: 0.5rem; min-width: 9.5rem;
     box-shadow: 0 4px 14px rgba(45, 43, 43, 0.16); z-index: 20;
   }
@@ -420,9 +430,9 @@ STYLE = """
      dark mark on white. Dark mode: white mark on black. */
   .app-brand-mark { display: flex; align-items: center; flex: none; color: var(--ink); }
   nav.app-nav { padding: 1rem 0.75rem; flex: 1; overflow-y: auto; }
-  .app-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+  .app-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
   .side-nav-item {
-    height: 2rem; display: flex; align-items: center; gap: 0.6rem; border-radius: var(--radius-md); padding: 0 0.75rem;
+    height: 2rem; display: flex; align-items: center; gap: var(--space-2); border-radius: var(--radius-md); padding: 0 0.75rem;
     font-size: 0.82rem; font-weight: 500; color: var(--slate); text-decoration: none;
     transition: background .12s ease, color .12s ease;
   }
@@ -435,7 +445,7 @@ STYLE = """
   }
   .app-sidebar-foot { padding: 0.75rem; border-top: 1px solid var(--rule); flex: none; position: relative; }
   .app-account {
-    display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.5rem; border-radius: var(--radius-md);
+    display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) 0.5rem; border-radius: var(--radius-md);
     cursor: pointer; transition: background .12s ease; background: none; border: none; width: 100%;
     text-align: left; color: var(--ink); /* button's own base rule sets color: var(--accent-solid-text) —
     white-on-white in light mode, dark-on-dark in dark — this overrides it back to the real text color. */
@@ -451,13 +461,13 @@ STYLE = """
   }
   .app-account-menu {
     position: absolute; left: 0.75rem; right: 0.75rem; bottom: 3.75rem; background: var(--surface);
-    border: 1px solid var(--rule); border-radius: var(--radius-md); padding: 0.4rem; box-shadow: 0 4px 14px rgba(0,0,0,0.16);
-    display: none; flex-direction: column; gap: 0.15rem; z-index: 20;
+    border: 1px solid var(--rule); border-radius: var(--radius-md); padding: var(--space-2); box-shadow: 0 4px 14px rgba(0,0,0,0.16);
+    display: none; flex-direction: column; gap: var(--space-1); z-index: 20;
   }
   .app-account-menu.show { display: flex; }
   .app-account-menu button {
     background: none; border: none; color: var(--ink); font: inherit; font-weight: 500; font-size: 0.82rem;
-    text-align: left; padding: 0.4rem 0.5rem; border-radius: var(--radius-sm); cursor: pointer;
+    text-align: left; padding: var(--space-2) 0.5rem; border-radius: var(--radius-sm); cursor: pointer;
   }
   .app-account-menu button:hover { background: var(--accent-soft); }
   /* Shown instead of the avatar/email button when /api/me says no one's
@@ -487,7 +497,7 @@ STYLE = """
      search field. */
   .search-box {
     display: flex; align-items: center; gap: 0.5rem; height: 2rem; width: 12.5rem; border-radius: var(--radius-md);
-    background: var(--accent-soft); border: 1px solid var(--rule); padding: 0 0.6rem; font-size: 0.8rem; color: var(--slate);
+    background: var(--accent-soft); border: 1px solid var(--rule); padding: 0 var(--space-2); font-size: 0.8rem; color: var(--slate);
   }
   .search-box svg { width: 0.75rem; height: 0.75rem; flex: none; }
   .search-box input {
@@ -518,10 +528,10 @@ STYLE = """
   .page-head h1 { font-size: 1.3rem; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
   .page-head .sub { font-size: 0.82rem; color: var(--slate); margin: 0.15rem 0 0; }
   .page-head .filter-tabs { margin-bottom: 0; }
-  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.85rem; margin-bottom: 1rem; }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: var(--space-3); margin-bottom: 1rem; }
   .stat-card {
     background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-rest);
-    border-radius: 18px; padding: 1.1rem; transition: box-shadow .15s ease;
+    border-radius: 18px; padding: var(--space-4); transition: box-shadow .15s ease;
   }
   .stat-card:hover { box-shadow: var(--shadow-hover); }
   .stat-icon {
@@ -540,20 +550,20 @@ STYLE = """
   }
   .panel-head {
     display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-    padding: 1rem 1.15rem; border-bottom: 1px solid var(--rule);
+    padding: 1rem var(--space-4); border-bottom: 1px solid var(--rule);
   }
   .panel-head .title { font-size: 0.95rem; font-weight: 600; letter-spacing: -0.005em; }
   .panel-head .sub { font-size: 0.75rem; color: var(--slate); margin-top: 0.15rem; }
   .panel-link {
-    height: 1.75rem; display: flex; align-items: center; gap: 0.35rem; border-radius: var(--radius-md);
+    height: 1.75rem; display: flex; align-items: center; gap: var(--space-1); border-radius: var(--radius-md);
     border: 1px solid var(--rule); background: var(--accent-soft); color: var(--slate);
-    font: inherit; font-size: 0.72rem; font-weight: 500; padding: 0 0.6rem; cursor: pointer; flex: none;
+    font: inherit; font-size: 0.72rem; font-weight: 500; padding: 0 var(--space-2); cursor: pointer; flex: none;
   }
   .panel-link:hover:not(:disabled) { background: var(--content-bg); }
   .panel-link:disabled { cursor: not-allowed; opacity: 0.6; }
   .panel table { margin: 0; }
-  .panel th { padding: 0.55rem 1.15rem; }
-  .panel td { padding: 0.75rem 1.15rem; }
+  .panel th { padding: var(--space-2) var(--space-4); }
+  .panel td { padding: 0.75rem var(--space-4); }
   .panel tbody tr:hover { background: var(--content-bg); }
   /* Organization Search's "+ N other filing variants" disclosure — a
      native <details> rather than a JS-driven toggle, and nothing in it
@@ -561,22 +571,22 @@ STYLE = """
      app.py's _cluster_client_mentions). */
   .variants-row:hover { background: none !important; }
   .variants-row td { padding: 0; }
-  .variants-row details { padding: 0.6rem 1.15rem; }
+  .variants-row details { padding: var(--space-2) var(--space-4); }
   .variants-row summary {
     cursor: pointer; font-size: 0.82rem; color: var(--slate); font-weight: 500;
-    list-style: none; display: flex; align-items: center; gap: 0.4rem;
+    list-style: none; display: flex; align-items: center; gap: var(--space-2);
   }
   .variants-row summary::-webkit-details-marker { display: none; }
   .variants-row summary::before { content: '▸'; display: inline-block; transition: transform .15s ease; }
   .variants-row details[open] summary::before { transform: rotate(90deg); }
   .variant-row {
-    display: flex; justify-content: space-between; gap: 1rem; padding: 0.5rem 0 0.5rem 1.3rem;
+    display: flex; justify-content: space-between; gap: 1rem; padding: 0.5rem 0 0.5rem var(--space-5);
     font-size: 0.82rem; border-top: 1px solid var(--rule); margin-top: 0.5rem;
   }
   /* A bill row's icon+title+id block — same .bill-title/.bill-id classes
      the /report page's big card already uses, just sized down here via
      the .bill-row scope rather than given new parallel class names. */
-  .bill-row { display: flex; align-items: center; gap: 0.6rem; }
+  .bill-row { display: flex; align-items: center; gap: var(--space-2); }
   .bill-row .bill-icon {
     height: 1.75rem; width: 1.75rem; border-radius: var(--radius-md); background: var(--accent-soft);
     display: flex; align-items: center; justify-content: center; flex: none;
@@ -588,10 +598,10 @@ STYLE = """
      .bill-row shape as the flagged-bills list, just given its own
      border/padding since it's a plain stacked list here, not table
      rows a table's own td/tr rules already handle. */
-  .hearing-row { display: flex; padding: 0.85rem 1.15rem; border-bottom: 1px solid var(--rule); }
+  .hearing-row { display: flex; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--rule); }
   .hearing-row:last-child { border-bottom: none; }
-  .row-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.35rem; }
-  .row-actions a { font-size: 0.78rem; padding: 0.3rem 0.6rem; }
+  .row-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: 0.35rem; }
+  .row-actions a { font-size: 0.78rem; padding: var(--space-1) var(--space-2); }
   /* A "..." overflow menu for row actions that are real but shouldn't
      shout — a bright red button on every row was too loud for
      something you do occasionally, not the primary action of the row. */
@@ -605,13 +615,13 @@ STYLE = """
   .row-menu-btn svg { width: 1rem; height: 1rem; }
   .row-menu-dropdown {
     position: absolute; right: 0; top: calc(100% + 0.25rem); background: var(--surface);
-    border: 1px solid var(--rule); border-radius: var(--radius-md); padding: 0.3rem; min-width: 9rem;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.16); z-index: 20; display: none; flex-direction: column; gap: 0.1rem;
+    border: 1px solid var(--rule); border-radius: var(--radius-md); padding: var(--space-1); min-width: 9rem;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.16); z-index: 20; display: none; flex-direction: column; gap: var(--space-1);
   }
   .row-menu-dropdown.show { display: flex; }
   .row-menu-dropdown button {
     background: none; border: none; color: var(--error); font: inherit; font-weight: 500; font-size: 0.82rem;
-    text-align: left; padding: 0.4rem 0.6rem; border-radius: var(--radius-sm); cursor: pointer;
+    text-align: left; padding: var(--space-2) var(--space-2); border-radius: var(--radius-sm); cursor: pointer;
   }
   .row-menu-dropdown button:hover { background: var(--error-soft); }
   th {
