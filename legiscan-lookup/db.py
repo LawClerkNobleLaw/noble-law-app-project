@@ -34,6 +34,17 @@ def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # app.py runs as a ThreadingHTTPServer — more than one request's
+    # connection can be open at once. SQLite's default rollback-journal
+    # mode takes an exclusive lock for the whole duration of any write,
+    # so a second thread's write (or even a read, depending on timing)
+    # can hit "database is locked" outright once there's real
+    # concurrent traffic — today's low request volume just hides it.
+    # WAL lets readers keep going while one writer commits; busy_timeout
+    # makes SQLite retry for up to 5s against whatever brief lock
+    # contention WAL doesn't eliminate, instead of failing immediately.
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 

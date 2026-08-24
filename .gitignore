@@ -1,5 +1,9 @@
 # Local, per-machine runtime data — not part of the app's source.
 legiscan-lookup/db/billwatch.db
+# WAL mode's sidecar files (see db.get_connection()) — transient,
+# SQLite manages them itself, never meant to be checked in.
+legiscan-lookup/db/billwatch.db-wal
+legiscan-lookup/db/billwatch.db-shm
 # refresh_watchlist.py's and refresh_calaccess.py's own refresh_*.log
 # (see their LOG_DIR) — lives under db.DB_DIR, same disk as the SQLite
 # file above, which locally resolves to legiscan-lookup/db/logs for both.

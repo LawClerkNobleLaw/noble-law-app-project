@@ -79,6 +79,7 @@ import os
 import re
 import sys
 import threading
+import traceback
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote
@@ -891,6 +892,35 @@ def app_shell(current, body):
 """
 
 
+def page(title, path, body):
+    """The 13-line <!doctype html>...<style>{STYLE}</style>...<body>
+    {app_shell(path, body)}...</html> skeleton every signed-in-shell
+    page below used to repeat verbatim — only title/path/body ever
+    differed between them. One place to edit the skeleton itself (a
+    new meta tag, a different STYLE variable) instead of the same edit
+    copied into 13 constants by hand.
+
+    Deliberately NOT used by the handful of pages that build their
+    <body> some other way (LANDING_PAGE and SIGNUP_PAGE/LOGIN_PAGE/
+    PROFILE_PAGE call top_nav() with page-specific left_extra/
+    show_account_menu args, not app_shell() — collapsing those would
+    mean restructuring how each one builds its body, not just
+    deduping this wrapper)."""
+    return f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>{STYLE}</style>
+</head>
+<body>
+{app_shell(path, body)}
+</body>
+</html>
+"""
+
+
 # The marketing homepage at "/" — everything else in this file is the
 # actual product; this is the only page that sells it. Reuses the same
 # STYLE (tokens, .card, .panel, .status-badge, .position-badge, buttons,
@@ -1248,6 +1278,80 @@ LANDING_PAGE = f"""<!doctype html>
 """
 
 
+# Shared history/amendment/hearing/vote row-rendering JS, used by both
+# LOOKUP_BODY (live LegiScan data from /api/bill) and REPORT_BODY (the
+# same table shapes from db.get_bill_report(), see legiscan_client.py's
+# shape_bill()) — a plain (non-f) string, interpolated into both pages'
+# own <script> blocks below via {BILL_TABLES_JS} rather than hand-
+# duplicated, so a future change to any of these four tables has one
+# place to edit instead of two that have to be kept in sync by hand.
+# Each function takes the already-extracted array (d.hearings vs
+# r.upcoming_hearings, etc.), not the whole bill/report object, since
+# the two pages don't even use the same field name for hearings.
+BILL_TABLES_JS = """
+// A history table is easy to skim by date/chamber but hard to skim by
+// WHAT HAPPENED — every row reads the same until you actually read it.
+// This buckets each row into one of three real legislative milestones
+// by keyword match on its own action text (LegiScan's own wording, not
+// a separate field) so the colored left edge is scannable down the
+// column instead. Keyword match, not a lookup table, because LegiScan's
+// action text is free-form and these three phrasings cover the cases
+// that matter here — a row that matches none of them just renders
+// unstyled, same as before.
+function milestoneClass(action) {
+  const a = (action || '').toLowerCase();
+  if (a.includes('introduced')) return 'milestone-intro';
+  if (a.includes('chaptered') || a.includes('approved by the governor') || a.includes('passed')) return 'milestone-passed';
+  if (a.includes('amended')) return 'milestone-amended';
+  return '';
+}
+
+function historyRowsHtml(history) {
+  return (history || []).map(h =>
+    `<tr class="${milestoneClass(h.action)}"><td class="date">${h.date || ''}</td><td class="chamber">${h.chamber || ''}</td><td>${h.action || ''}</td></tr>`
+  ).join('');
+}
+
+function amendmentRowsHtml(amendments) {
+  return (amendments || []).map(a => `
+    <tr>
+      <td class="date">${a.date || ''}</td>
+      <td class="chamber">${a.chamber || ''}</td>
+      <td>${a.title || a.description || ''}${a.adopted ? ' <span class="tag">Adopted</span>' : ''}${a.url ? ` — <a href="${a.url}" target="_blank" rel="noopener">View amended text →</a>` : ''}</td>
+    </tr>
+  `).join('');
+}
+
+function hearingRowsHtml(hearings) {
+  return (hearings || []).map(h => `
+    <tr>
+      <td class="date">${h.date || ''}${h.time ? ' ' + h.time : ''}</td>
+      <td class="chamber">${h.event_type || ''}</td>
+      <td>${h.description || ''}${h.location ? ` — ${h.location}` : ''}</td>
+    </tr>
+  `).join('');
+}
+
+// No page had a Votes panel until Phase 1 added it here — LegiScan's
+// own per-bill vote index (roll_call_id, chamber, tally), already
+// broken out by shape_bill(), just wasn't surfaced in the UI before.
+function voteRowsHtml(votes) {
+  return (votes || []).map(v => `
+    <tr>
+      <td class="date">${v.date || ''}</td>
+      <td class="chamber">${v.chamber || ''}</td>
+      <td>
+        ${v.description || ''}${v.passed ? ' <span class="tag">Passed</span>' : ''}
+        <div class="sub" style="margin:0.2rem 0 0;font-size:0.78rem">
+          Yea ${v.yea || 0} · Nay ${v.nay || 0} · NV ${v.nv || 0} · Absent ${v.absent || 0}
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+"""
+
+
 # The body for /lookup, wrapped in app_shell() below rather than
 # top_nav()+.wrap — this is one of the two pages (with /lobbying) that
 # render the full signed-in shell without requiring a session, so it
@@ -1275,6 +1379,7 @@ LOOKUP_BODY = f"""
 <div id="result"></div>
 
 <script>
+{BILL_TABLES_JS}
 const form = document.getElementById('f');
 const resultEl = document.getElementById('result');
 const errorEl = document.getElementById('error');
@@ -1347,68 +1452,15 @@ async function flagBill() {{
   }}
 }}
 
-// A history table is easy to skim by date/chamber but hard to skim by
-// WHAT HAPPENED — every row reads the same until you actually read it.
-// This buckets each row into one of three real legislative milestones
-// by keyword match on its own action text (LegiScan's own wording, not
-// a separate field) so the colored left edge is scannable down the
-// column instead. Keyword match, not a lookup table, because LegiScan's
-// action text is free-form and these three phrasings cover the cases
-// that matter here — a row that matches none of them just renders
-// unstyled, same as before.
-function milestoneClass(action) {{
-  const a = (action || '').toLowerCase();
-  if (a.includes('introduced')) return 'milestone-intro';
-  if (a.includes('chaptered') || a.includes('approved by the governor') || a.includes('passed')) return 'milestone-passed';
-  if (a.includes('amended')) return 'milestone-amended';
-  return '';
-}}
-
 function render(d) {{
   const sponsors = (d.sponsors || []).map(s =>
     `<span class="sponsor">${{s.name}}${{s.party ? ' (' + s.party + ')' : ''}}</span>`
   ).join('');
 
-  const history = (d.history || []).map(h =>
-    `<tr class="${{milestoneClass(h.action)}}"><td class="date">${{h.date || ''}}</td><td class="chamber">${{h.chamber || ''}}</td><td>${{h.action || ''}}</td></tr>`
-  ).join('');
-
-  // Same row-template pattern as the action-report page's amendmentRows/
-  // hearingRows (REPORT_BODY below) — reused as-is, not reinvented,
-  // since /api/bill's live LegiScan data (see shape_bill() in
-  // legiscan_client.py) already carries amendments/hearings/votes in
-  // this exact shape.
-  const amendmentRows = (d.amendments || []).map(a => `
-    <tr>
-      <td class="date">${{a.date || ''}}</td>
-      <td class="chamber">${{a.chamber || ''}}</td>
-      <td>${{a.title || a.description || ''}}${{a.adopted ? ' <span class="tag">Adopted</span>' : ''}}${{a.url ? ` — <a href="${{a.url}}" target="_blank" rel="noopener">View amended text →</a>` : ''}}</td>
-    </tr>
-  `).join('');
-
-  const hearingRows = (d.hearings || []).map(h => `
-    <tr>
-      <td class="date">${{h.date || ''}}${{h.time ? ' ' + h.time : ''}}</td>
-      <td class="chamber">${{h.event_type || ''}}</td>
-      <td>${{h.description || ''}}${{h.location ? ` — ${{h.location}}` : ''}}</td>
-    </tr>
-  `).join('');
-
-  // No page has a Votes panel yet — LegiScan's own per-bill vote index
-  // (roll_call_id, chamber, tally), already broken out by shape_bill(),
-  // just wasn't surfaced anywhere in the UI until now.
-  const voteRows = (d.votes || []).map(v => `
-    <tr>
-      <td class="date">${{v.date || ''}}</td>
-      <td class="chamber">${{v.chamber || ''}}</td>
-      <td>
-        ${{v.description || ''}}${{v.passed ? ' <span class="tag">Passed</span>' : ''}}
-        <div class="sub" style="margin:0.2rem 0 0;font-size:0.78rem">
-          Yea ${{v.yea || 0}} · Nay ${{v.nay || 0}} · NV ${{v.nv || 0}} · Absent ${{v.absent || 0}}
-        </div>
-      </td>
-    </tr>
-  `).join('');
+  const history = historyRowsHtml(d.history);
+  const amendmentRows = amendmentRowsHtml(d.amendments);
+  const hearingRows = hearingRowsHtml(d.hearings);
+  const voteRows = voteRowsHtml(d.votes);
 
   resultEl.innerHTML = `
     <div class="card">
@@ -1453,19 +1505,7 @@ function render(d) {{
 </script>
 """
 
-PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Look up a bill — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{app_shell("/lookup", LOOKUP_BODY)}
-</body>
-</html>
-"""
+PAGE = page("Look up a bill — Rotunda", "/lookup", LOOKUP_BODY)
 
 
 # Same reasoning as LOOKUP_BODY above — /lobbying is the other page that
@@ -1606,19 +1646,7 @@ function renderResults(rows) {{
 </script>
 """
 
-LOBBYING_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Organization Search — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{app_shell("/lobbying", LOBBYING_BODY)}
-</body>
-</html>
-"""
+LOBBYING_PAGE = page("Organization Search — Rotunda", "/lobbying", LOBBYING_BODY)
 
 
 # Free-text bill search — the third public tool alongside /lookup
@@ -1746,19 +1774,7 @@ function renderResults(data) {{
 </script>
 """
 
-DISCOVER_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Discover bills — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{app_shell("/discover", DISCOVER_BODY)}
-</body>
-</html>
-"""
+DISCOVER_PAGE = page("Discover bills — Rotunda", "/discover", DISCOVER_BODY)
 
 
 # A real destination for one organization's detail, rather than an
@@ -1870,19 +1886,7 @@ load();
 </script>
 """
 
-LOBBYING_DETAIL_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Organization Detail — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{app_shell("/lobbying", LOBBYING_DETAIL_BODY)}
-</body>
-</html>
-"""
+LOBBYING_DETAIL_PAGE = page("Organization Detail — Rotunda", "/lobbying", LOBBYING_DETAIL_BODY)
 
 
 SIGNUP_PAGE = f"""<!doctype html>
@@ -2260,19 +2264,7 @@ load();
 </script>
 """
 
-PROFILE_VIEW_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Your profile — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{app_shell("/profile", PROFILE_BODY)}
-</body>
-</html>
-"""
+PROFILE_VIEW_PAGE = page("Your profile — Rotunda", "/profile", PROFILE_BODY)
 
 
 FLAGGED_BODY = f"""
@@ -2583,19 +2575,7 @@ load();
 </script>
 """
 
-FLAGGED_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>My Flagged Bills — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{app_shell("/flagged", FLAGGED_BODY)}
-</body>
-</html>
-"""
+FLAGGED_PAGE = page("My Flagged Bills — Rotunda", "/flagged", FLAGGED_BODY)
 
 
 # Every scheduled hearing across every flagged bill, in one place,
@@ -2681,19 +2661,7 @@ fetch('/api/flagged/calendar').then(r => r.json()).then(rows => {{
 </script>
 """
 
-CALENDAR_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Hearing Calendar — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{app_shell("/flagged", CALENDAR_BODY)}
-</body>
-</html>
-"""
+CALENDAR_PAGE = page("Hearing Calendar — Rotunda", "/flagged", CALENDAR_BODY)
 
 
 # For every sponsor across a user's flagged bills: which of those
@@ -2777,19 +2745,7 @@ fetch('/api/flagged/sponsors').then(r => r.json()).then(sponsors => {{
 </script>
 """
 
-SPONSOR_ROLLUP_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sponsors &amp; Votes — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{app_shell("/flagged", SPONSOR_ROLLUP_BODY)}
-</body>
-</html>
-"""
+SPONSOR_ROLLUP_PAGE = page("Sponsors &amp; Votes — Rotunda", "/flagged", SPONSOR_ROLLUP_BODY)
 
 
 CLIENTS_BODY = f"""
@@ -3078,19 +3034,7 @@ applyPrefill();
 </script>
 """
 
-CLIENTS_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Clients — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{app_shell("/clients", CLIENTS_BODY)}
-</body>
-</html>
-"""
+CLIENTS_PAGE = page("Clients — Rotunda", "/clients", CLIENTS_BODY)
 
 
 # Action report — everything about one bill in one place: current
@@ -3274,19 +3218,7 @@ load();
 </script>
 """
 
-CLIENT_DETAIL_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Client — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{app_shell("/clients", CLIENT_DETAIL_BODY)}
-</body>
-</html>
-"""
+CLIENT_DETAIL_PAGE = page("Client — Rotunda", "/clients", CLIENT_DETAIL_BODY)
 
 
 # Action report — everything about one bill in one place: current
@@ -3301,21 +3233,11 @@ REPORT_BODY = f"""
 <div id="report"></div>
 
 <script>
+{BILL_TABLES_JS}
 const reportEl = document.getElementById('report');
 const errorEl = document.getElementById('error');
 const billId = new URLSearchParams(window.location.search).get('bill_id');
 const POSITION_LABELS = {{ support: 'Support', oppose: 'Oppose', watch: 'Watch' }};
-
-// Same milestone bucketing as /lookup's own history table (see
-// LOOKUP_BODY in app.py) — duplicated rather than shared, since this
-// is a separate page's inline script, not a separate module.
-function milestoneClass(action) {{
-  const a = (action || '').toLowerCase();
-  if (a.includes('introduced')) return 'milestone-intro';
-  if (a.includes('chaptered') || a.includes('approved by the governor') || a.includes('passed')) return 'milestone-passed';
-  if (a.includes('amended')) return 'milestone-amended';
-  return '';
-}}
 
 async function load() {{
   if (!billId) {{
@@ -3336,42 +3258,14 @@ async function load() {{
 }}
 
 function render(r) {{
-  const historyRows = (r.history || []).map(h => `
-    <tr class="${{milestoneClass(h.action)}}"><td class="date">${{h.date || ''}}</td><td class="chamber">${{h.chamber || ''}}</td><td>${{h.action || ''}}</td></tr>
-  `).join('');
-
-  const amendmentRows = (r.amendments || []).map(a => `
-    <tr>
-      <td class="date">${{a.date || ''}}</td>
-      <td class="chamber">${{a.chamber || ''}}</td>
-      <td>${{a.title || a.description || ''}}${{a.adopted ? ' <span class="tag">Adopted</span>' : ''}}${{a.url ? ` — <a href="${{a.url}}" target="_blank" rel="noopener">View amended text →</a>` : ''}}</td>
-    </tr>
-  `).join('');
-
-  const hearingRows = (r.upcoming_hearings || []).map(h => `
-    <tr>
-      <td class="date">${{h.date || ''}}${{h.time ? ' ' + h.time : ''}}</td>
-      <td class="chamber">${{h.event_type || ''}}</td>
-      <td>${{h.description || ''}}${{h.location ? ` — ${{h.location}}` : ''}}</td>
-    </tr>
-  `).join('');
-
-  // Same shape as /lookup's own voteRows (LOOKUP_BODY) — this page's
-  // r.votes now comes from db.get_bill_report() querying the votes
-  // table directly, rather than LegiScan's live feed, since this page
-  // reads the stored bill, not a fresh API call.
-  const voteRows = (r.votes || []).map(v => `
-    <tr>
-      <td class="date">${{v.date || ''}}</td>
-      <td class="chamber">${{v.chamber || ''}}</td>
-      <td>
-        ${{v.description || ''}}${{v.passed ? ' <span class="tag">Passed</span>' : ''}}
-        <div class="sub" style="margin:0.2rem 0 0;font-size:0.78rem">
-          Yea ${{v.yea || 0}} · Nay ${{v.nay || 0}} · NV ${{v.nv || 0}} · Absent ${{v.absent || 0}}
-        </div>
-      </td>
-    </tr>
-  `).join('');
+  const historyRows = historyRowsHtml(r.history);
+  const amendmentRows = amendmentRowsHtml(r.amendments);
+  // r.upcoming_hearings, not r.hearings — this page's own field name
+  // (see db.get_bill_report(), which pre-filters to date >= today,
+  // unlike /lookup's live d.hearings); hearingRowsHtml() itself doesn't
+  // care what the array's called, only what's in it.
+  const hearingRows = hearingRowsHtml(r.upcoming_hearings);
+  const voteRows = voteRowsHtml(r.votes);
 
   const clientBadges = (r.assigned_clients || []).map(c => {{
     const position = c.position || 'watch';
@@ -3433,19 +3327,7 @@ load();
 </script>
 """
 
-REPORT_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Action Report — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{app_shell("/flagged", REPORT_BODY)}
-</body>
-</html>
-"""
+REPORT_PAGE = page("Action Report — Rotunda", "/flagged", REPORT_BODY)
 
 
 # "Prepare my disclosure form" — /disclosures (pick a form, generate a
@@ -3618,19 +3500,7 @@ load();
 </script>
 """
 
-DISCLOSURES_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Disclosure Forms — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{app_shell("/disclosures", DISCLOSURES_BODY)}
-</body>
-</html>
-"""
+DISCLOSURES_PAGE = page("Disclosure Forms — Rotunda", "/disclosures", DISCLOSURES_BODY)
 
 
 DISCLOSURE_REVIEW_BODY = f"""
@@ -3746,19 +3616,7 @@ load();
 </script>
 """
 
-DISCLOSURE_REVIEW_PAGE = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Review Disclosure Form — Rotunda</title>
-<style>{STYLE}</style>
-</head>
-<body>
-{app_shell("/disclosures", DISCLOSURE_REVIEW_BODY)}
-</body>
-</html>
-"""
+DISCLOSURE_REVIEW_PAGE = page("Review Disclosure Form — Rotunda", "/disclosures", DISCLOSURE_REVIEW_BODY)
 
 
 # Multi-word corporate-suffix phrases stripped by normalize_org_name()
@@ -4101,7 +3959,86 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return accounts.user_id_for_session(conn, morsel.value)
 
+    # ── The ~30 route handlers below all start with "is anyone logged
+    # in," and only differ in what happens if not: a page route 302s to
+    # /login, an API route sends a 401 JSON body (message varies by
+    # route — "Sign in to flag bills." reads better than a generic
+    # "Not logged in." on that specific action). Both wrap the same
+    # core check, _current_user_id, above. ──
+
+    def _require_user_for_page(self):
+        """Page routes: opens its own connection just long enough to
+        check login status, then closes it — the page itself is a
+        pre-built HTML string (any per-request data is fetched by the
+        page's own client-side JS), so there's nothing else for the
+        caller to do with conn afterward. Returns user_id, or None
+        after already sending a 302 to /login (see
+        _redirect_to_login); `if not self._require_user_for_page():
+        return` is then sufficient at the call site.
+
+        Not used by every page route that checks login — a few (e.g.
+        /signup/profile, which redirects to /signup instead of /login
+        when logged out) genuinely need a different failure path, not
+        just a different page on success."""
+        conn = db.get_connection()
+        try:
+            user_id = self._current_user_id(conn)
+        finally:
+            conn.close()
+        if not user_id:
+            self._redirect_to_login()
+        return user_id
+
+    def _require_user_for_api(self, conn, message="Not logged in."):
+        """API routes: returns user_id, or None after already sending
+        a 401 {"error": message} — `if not user_id: return` right
+        after is then sufficient. Takes an already-open conn, since
+        every one of these callers needs it again right afterward for
+        their own query/write; unlike the page-route variant above,
+        this can't own the connection's lifecycle itself."""
+        user_id = self._current_user_id(conn)
+        if not user_id:
+            self._send_json(401, {"error": message})
+        return user_id
+
+    def _handle_unexpected_error(self):
+        """Last resort for do_GET/do_POST/do_DELETE below — logs the
+        full traceback (still visible in Render's log stream or local
+        stdout) and returns a clean 500 JSON body instead of letting
+        BaseHTTPRequestHandler's own default error handling take over,
+        which would send a raw traceback back to the client. Matters
+        more as real traffic grows — today's low request volume means
+        an unhandled exception here has been rare enough to not have
+        surfaced yet, not that it can't happen."""
+        traceback.print_exc()
+        try:
+            self._send_json(500, {"error": "Something went wrong on our end. Try again in a moment."})
+        except Exception:
+            # The original error already happened partway through
+            # writing a response (e.g. mid chunked send) — nothing
+            # more to do at that point beyond not raising a second
+            # exception on top of the first.
+            pass
+
     def do_GET(self):
+        try:
+            self._do_GET()
+        except Exception:
+            self._handle_unexpected_error()
+
+    def do_POST(self):
+        try:
+            self._do_POST()
+        except Exception:
+            self._handle_unexpected_error()
+
+    def do_DELETE(self):
+        try:
+            self._do_DELETE()
+        except Exception:
+            self._handle_unexpected_error()
+
+    def _do_GET(self):
         parsed = urlparse(self.path)
 
         if parsed.path == "/internal/status":
@@ -4215,25 +4152,13 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/profile":
-            conn = db.get_connection()
-            try:
-                user_id = self._current_user_id(conn)
-            finally:
-                conn.close()
-            if not user_id:
-                self._redirect_to_login()
+            if not self._require_user_for_page():
                 return
             self._send_html(200, PROFILE_VIEW_PAGE)
             return
 
         if parsed.path == "/flagged":
-            conn = db.get_connection()
-            try:
-                user_id = self._current_user_id(conn)
-            finally:
-                conn.close()
-            if not user_id:
-                self._redirect_to_login()
+            if not self._require_user_for_page():
                 return
             self._send_html(200, FLAGGED_PAGE)
             return
@@ -4241,9 +4166,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/flagged":
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn)
                 if not user_id:
-                    self._send_json(401, {"error": "Not logged in."})
                     return
                 self._send_json(200, db.list_flagged_bills(conn, user_id))
             finally:
@@ -4251,13 +4175,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/flagged/calendar":
-            conn = db.get_connection()
-            try:
-                user_id = self._current_user_id(conn)
-            finally:
-                conn.close()
-            if not user_id:
-                self._redirect_to_login()
+            if not self._require_user_for_page():
                 return
             self._send_html(200, CALENDAR_PAGE)
             return
@@ -4265,9 +4183,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/flagged/calendar":
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn)
                 if not user_id:
-                    self._send_json(401, {"error": "Not logged in."})
                     return
                 self._send_json(200, db.list_hearings_for_flagged_bills(conn, user_id))
             finally:
@@ -4275,13 +4192,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/flagged/sponsors":
-            conn = db.get_connection()
-            try:
-                user_id = self._current_user_id(conn)
-            finally:
-                conn.close()
-            if not user_id:
-                self._redirect_to_login()
+            if not self._require_user_for_page():
                 return
             self._send_html(200, SPONSOR_ROLLUP_PAGE)
             return
@@ -4289,9 +4200,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/flagged/sponsors":
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn)
                 if not user_id:
-                    self._send_json(401, {"error": "Not logged in."})
                     return
                 self._send_json(200, db.list_sponsor_vote_rollup(conn, user_id))
             finally:
@@ -4299,13 +4209,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/clients":
-            conn = db.get_connection()
-            try:
-                user_id = self._current_user_id(conn)
-            finally:
-                conn.close()
-            if not user_id:
-                self._redirect_to_login()
+            if not self._require_user_for_page():
                 return
             self._send_html(200, CLIENTS_PAGE)
             return
@@ -4313,9 +4217,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/clients":
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn)
                 if not user_id:
-                    self._send_json(401, {"error": "Not logged in."})
                     return
                 self._send_json(200, db.list_clients(conn, user_id))
             finally:
@@ -4323,13 +4226,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/clients/detail":
-            conn = db.get_connection()
-            try:
-                user_id = self._current_user_id(conn)
-            finally:
-                conn.close()
-            if not user_id:
-                self._redirect_to_login()
+            if not self._require_user_for_page():
                 return
             self._send_html(200, CLIENT_DETAIL_PAGE)
             return
@@ -4346,9 +4243,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn)
                 if not user_id:
-                    self._send_json(401, {"error": "Not logged in."})
                     return
                 client = db.get_client(conn, user_id, client_id)
                 if not client:
@@ -4374,13 +4270,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/report":
-            conn = db.get_connection()
-            try:
-                user_id = self._current_user_id(conn)
-            finally:
-                conn.close()
-            if not user_id:
-                self._redirect_to_login()
+            if not self._require_user_for_page():
                 return
             self._send_html(200, REPORT_PAGE)
             return
@@ -4403,9 +4293,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn)
                 if not user_id:
-                    self._send_json(401, {"error": "Not logged in."})
                     return
                 report = db.get_bill_report(conn, user_id, bill_id)
                 if not report:
@@ -4417,25 +4306,13 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/disclosures":
-            conn = db.get_connection()
-            try:
-                user_id = self._current_user_id(conn)
-            finally:
-                conn.close()
-            if not user_id:
-                self._redirect_to_login()
+            if not self._require_user_for_page():
                 return
             self._send_html(200, DISCLOSURES_PAGE)
             return
 
         if parsed.path == "/disclosures/review":
-            conn = db.get_connection()
-            try:
-                user_id = self._current_user_id(conn)
-            finally:
-                conn.close()
-            if not user_id:
-                self._redirect_to_login()
+            if not self._require_user_for_page():
                 return
             self._send_html(200, DISCLOSURE_REVIEW_PAGE)
             return
@@ -4443,9 +4320,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/prepared-filings":
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn)
                 if not user_id:
-                    self._send_json(401, {"error": "Not logged in."})
                     return
                 filing_id = (qs.get("id") or [""])[0]
                 if filing_id:
@@ -4474,9 +4350,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn)
                 if not user_id:
-                    self._send_json(401, {"error": "Not logged in."})
                     return
                 filing = db.get_prepared_filing(conn, user_id, filing_id)
             finally:
@@ -4508,9 +4383,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/profile":
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn)
                 if not user_id:
-                    self._send_json(401, {"error": "Not logged in."})
                     return
                 self._send_json(200, {"profile": accounts.get_profile(conn, user_id)})
             finally:
@@ -4585,7 +4459,7 @@ class Handler(BaseHTTPRequestHandler):
         supplied = self.headers.get("X-Refresh-Secret", "")
         return hmac.compare_digest(supplied, REFRESH_SECRET)
 
-    def do_POST(self):
+    def _do_POST(self):
         parsed = urlparse(self.path)
 
         if parsed.path in ("/internal/refresh-watchlist", "/internal/refresh-calaccess"):
@@ -4668,9 +4542,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn, "You need to sign up or log in first.")
                 if not user_id:
-                    self._send_json(401, {"error": "You need to sign up or log in first."})
                     return
                 if not (body.get("legal_name") or "").strip():
                     self._send_json(400, {"error": "Legal name is required."})
@@ -4697,9 +4570,8 @@ class Handler(BaseHTTPRequestHandler):
 
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to flag bills.")
                 if not user_id:
-                    self._send_json(401, {"error": "Sign in to flag bills."})
                     return
                 try:
                     # Same "re-fetch fresh rather than trust the client"
@@ -4728,9 +4600,8 @@ class Handler(BaseHTTPRequestHandler):
 
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to add clients.")
                 if not user_id:
-                    self._send_json(401, {"error": "Sign in to add clients."})
                     return
                 client_id = body.get("id")
                 if client_id:
@@ -4756,9 +4627,8 @@ class Handler(BaseHTTPRequestHandler):
 
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to assign clients.")
                 if not user_id:
-                    self._send_json(401, {"error": "Sign in to assign clients."})
                     return
                 position = body.get("position") or "watch"
                 try:
@@ -4796,9 +4666,8 @@ class Handler(BaseHTTPRequestHandler):
 
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to add bills to a client.")
                 if not user_id:
-                    self._send_json(401, {"error": "Sign in to add bills to a client."})
                     return
                 if not db.get_client(conn, user_id, client_id):
                     self._send_json(404, {"error": "No client found with that ID."})
@@ -4839,9 +4708,8 @@ class Handler(BaseHTTPRequestHandler):
 
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to prepare a disclosure form.")
                 if not user_id:
-                    self._send_json(401, {"error": "Sign in to prepare a disclosure form."})
                     return
                 profile = accounts.get_profile(conn, user_id)
                 if not profile:
@@ -4877,9 +4745,8 @@ class Handler(BaseHTTPRequestHandler):
 
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to sign off on a filing.")
                 if not user_id:
-                    self._send_json(401, {"error": "Sign in to sign off on a filing."})
                     return
                 try:
                     filing = db.sign_off_prepared_filing(
@@ -4897,7 +4764,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(404)
         self.end_headers()
 
-    def do_DELETE(self):
+    def _do_DELETE(self):
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
 
@@ -4918,9 +4785,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to manage flagged bills.")
                 if not user_id:
-                    self._send_json(401, {"error": "Sign in to manage flagged bills."})
                     return
                 db.unflag_bill(conn, user_id, bill_id)
                 conn.commit()
@@ -4941,9 +4807,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to manage clients.")
                 if not user_id:
-                    self._send_json(401, {"error": "Sign in to manage clients."})
                     return
                 db.delete_client(conn, user_id, client_id)
                 conn.commit()
@@ -4966,9 +4831,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             conn = db.get_connection()
             try:
-                user_id = self._current_user_id(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to manage client assignments.")
                 if not user_id:
-                    self._send_json(401, {"error": "Sign in to manage client assignments."})
                     return
                 db.unlink_bill_from_client(conn, user_id, bill_id, client_id)
                 conn.commit()
