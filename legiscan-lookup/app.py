@@ -1339,6 +1339,43 @@ function render(d) {{
     `<tr class="${{milestoneClass(h.action)}}"><td class="date">${{h.date || ''}}</td><td class="chamber">${{h.chamber || ''}}</td><td>${{h.action || ''}}</td></tr>`
   ).join('');
 
+  // Same row-template pattern as the action-report page's amendmentRows/
+  // hearingRows (REPORT_BODY below) — reused as-is, not reinvented,
+  // since /api/bill's live LegiScan data (see shape_bill() in
+  // legiscan_client.py) already carries amendments/hearings/votes in
+  // this exact shape.
+  const amendmentRows = (d.amendments || []).map(a => `
+    <tr>
+      <td class="date">${{a.date || ''}}</td>
+      <td class="chamber">${{a.chamber || ''}}</td>
+      <td>${{a.title || a.description || ''}}${{a.adopted ? ' <span class="tag">Adopted</span>' : ''}}${{a.url ? ` — <a href="${{a.url}}" target="_blank" rel="noopener">view</a>` : ''}}</td>
+    </tr>
+  `).join('');
+
+  const hearingRows = (d.hearings || []).map(h => `
+    <tr>
+      <td class="date">${{h.date || ''}}${{h.time ? ' ' + h.time : ''}}</td>
+      <td class="chamber">${{h.event_type || ''}}</td>
+      <td>${{h.description || ''}}${{h.location ? ` — ${{h.location}}` : ''}}</td>
+    </tr>
+  `).join('');
+
+  // No page has a Votes panel yet — LegiScan's own per-bill vote index
+  // (roll_call_id, chamber, tally), already broken out by shape_bill(),
+  // just wasn't surfaced anywhere in the UI until now.
+  const voteRows = (d.votes || []).map(v => `
+    <tr>
+      <td class="date">${{v.date || ''}}</td>
+      <td class="chamber">${{v.chamber || ''}}</td>
+      <td>
+        ${{v.description || ''}}${{v.passed ? ' <span class="tag">Passed</span>' : ''}}
+        <div class="sub" style="margin:0.2rem 0 0;font-size:0.78rem">
+          Yea ${{v.yea || 0}} · Nay ${{v.nay || 0}} · NV ${{v.nv || 0}} · Absent ${{v.absent || 0}}
+        </div>
+      </td>
+    </tr>
+  `).join('');
+
   resultEl.innerHTML = `
     <div class="card">
       <div class="bill-id">${{d.state}} ${{d.bill_number}}${{d.session_label ? ` — ${{d.session_label}}` : ''}}</div>
@@ -1354,6 +1391,27 @@ function render(d) {{
     <div class="panel" style="margin-top:1rem">
       <div class="panel-head"><div class="title">History</div></div>
       <table>${{history || '<tr><td style="padding:1rem 1.15rem">No history available.</td></tr>'}}</table>
+    </div>
+
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">Amendments</div></div>
+      ${{amendmentRows
+        ? `<table><thead><tr><th>Date</th><th>Chamber</th><th>Amendment</th></tr></thead><tbody>${{amendmentRows}}</tbody></table>`
+        : '<p class="empty" style="padding:1rem 1.15rem">No amendments recorded.</p>'}}
+    </div>
+
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">Upcoming hearings</div></div>
+      ${{hearingRows
+        ? `<table><thead><tr><th>When</th><th>Type</th><th>Details</th></tr></thead><tbody>${{hearingRows}}</tbody></table>`
+        : '<p class="empty" style="padding:1rem 1.15rem">No upcoming hearings scheduled.</p>'}}
+    </div>
+
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">Votes</div></div>
+      ${{voteRows
+        ? `<table><thead><tr><th>Date</th><th>Chamber</th><th>Result</th></tr></thead><tbody>${{voteRows}}</tbody></table>`
+        : '<p class="empty" style="padding:1rem 1.15rem">No votes recorded yet.</p>'}}
     </div>
   `;
   resultEl.className = 'show';
@@ -2926,6 +2984,23 @@ function render(r) {{
     </tr>
   `).join('');
 
+  // Same shape as /lookup's own voteRows (LOOKUP_BODY) — this page's
+  // r.votes now comes from db.get_bill_report() querying the votes
+  // table directly, rather than LegiScan's live feed, since this page
+  // reads the stored bill, not a fresh API call.
+  const voteRows = (r.votes || []).map(v => `
+    <tr>
+      <td class="date">${{v.date || ''}}</td>
+      <td class="chamber">${{v.chamber || ''}}</td>
+      <td>
+        ${{v.description || ''}}${{v.passed ? ' <span class="tag">Passed</span>' : ''}}
+        <div class="sub" style="margin:0.2rem 0 0;font-size:0.78rem">
+          Yea ${{v.yea || 0}} · Nay ${{v.nay || 0}} · NV ${{v.nv || 0}} · Absent ${{v.absent || 0}}
+        </div>
+      </td>
+    </tr>
+  `).join('');
+
   const clientBadges = (r.assigned_clients || []).map(c => {{
     const position = c.position || 'watch';
     return `
@@ -2971,6 +3046,13 @@ function render(r) {{
       ${{hearingRows
         ? `<table><thead><tr><th>When</th><th>Type</th><th>Details</th></tr></thead><tbody>${{hearingRows}}</tbody></table>`
         : '<p class="empty" style="padding:1rem 1.15rem">No upcoming hearings scheduled.</p>'}}
+    </div>
+
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">Votes</div></div>
+      ${{voteRows
+        ? `<table><thead><tr><th>Date</th><th>Chamber</th><th>Result</th></tr></thead><tbody>${{voteRows}}</tbody></table>`
+        : '<p class="empty" style="padding:1rem 1.15rem">No votes recorded yet.</p>'}}
     </div>
   `;
 }}

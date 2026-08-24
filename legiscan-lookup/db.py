@@ -485,8 +485,8 @@ def clients_for_bills(conn, user_id, bill_ids):
 
 # ── Action report — everything about one bill in a single call: its
 # current status, full status history, amendment history, upcoming
-# hearings, and (scoped to this user) which of their own clients it's
-# assigned to and each one's current position. ──
+# hearings, roll-call votes, and (scoped to this user) which of their
+# own clients it's assigned to and each one's current position. ──
 
 def get_bill_report(conn, user_id, bill_id):
     bill = conn.execute(
@@ -518,6 +518,13 @@ def get_bill_report(conn, user_id, bill_id):
             """SELECT event_type, date, time, location, description
                FROM bill_hearings WHERE bill_id = ? AND date >= date('now')
                ORDER BY date, time""",
+            (bill_id,),
+        ).fetchall()
+    ]
+    result["votes"] = [
+        dict(r) for r in conn.execute(
+            """SELECT date, chamber, description, yea, nay, nv, absent, total, passed
+               FROM votes WHERE bill_id = ? ORDER BY date""",
             (bill_id,),
         ).fetchall()
     ]
