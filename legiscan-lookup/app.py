@@ -422,6 +422,30 @@ STYLE = """
   .skeleton-bar { height: 0.8rem; border-radius: var(--radius-sm); background: var(--accent-soft); animation: skeleton-pulse 1.2s ease-in-out infinite; }
   @keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
   .empty { color: var(--slate); font-size: 0.9rem; }
+  /* Small centered dialog, used by the flag-confirmation modal (see
+     openFlagModal() in LOOKUP_BODY) and the "+ Add new client"
+     quick-add panel shared between it and clientCell() (see
+     CLIENT_QUICKADD_JS) — the app's only two true modals, everything
+     else (row menus, the account menu) is an anchored dropdown instead.
+     z-index comfortably clears .row-menu-dropdown/.app-account-menu's
+     own z-index: 20 above, since a modal has to sit above any dropdown
+     left open behind it. */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100;
+    display: none; align-items: center; justify-content: center; padding: var(--space-4);
+  }
+  .modal-backdrop.show { display: flex; }
+  .modal-panel {
+    background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-hover);
+    border-radius: 18px; padding: var(--space-5); width: 100%; max-width: 26rem; max-height: 90vh; overflow-y: auto;
+  }
+  .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-4); }
+  .modal-head .title { font-size: 1.05rem; font-weight: 700; }
+  .modal-head .sub { font-size: 0.82rem; color: var(--slate); margin-top: 0.2rem; }
+  .modal-panel form { margin: 0; flex-direction: column; gap: var(--space-3); }
+  .modal-panel label { display: block; }
+  .modal-panel input, .modal-panel select, .modal-panel textarea { width: 100%; }
+  .modal-actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
   tr.row-link { cursor: pointer; }
   tr.row-link:hover { background: var(--accent-soft); }
   .tag { display: inline-block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
@@ -1583,6 +1607,166 @@ function voteRowsHtml(votes) {
 """
 
 
+# Shared client-picking JS, used by the flag-confirmation modal in
+# LOOKUP_BODY and by clientCell()'s per-row "Assign to client" dropdown
+# in FLAGGED_BODY — same reasoning as BILL_TABLES_JS above (one place
+# to edit, not two hand-kept-in-sync copies), interpolated into both
+# pages' own <script> blocks via {CLIENT_QUICKADD_JS}. A plain
+# (non-f) string for the same reason BILL_TABLES_JS is: it's full of
+# JS template-literal ${{...}} expressions that must stay literal, not
+# get swallowed as Python f-string interpolation.
+#
+# Covers two things every client <select> in this app now needs:
+#   - POSITIONS / clientOptionsHtml(): the shared support/oppose/watch
+#     list and a client <option> list that always ends in "+ Add new
+#     client", so every picker offers the same escape hatch instead of
+#     dead-ending at "no clients yet" (see clientCell()'s old fallback
+#     for what that used to look like).
+#   - The "+ Add new client" quick-add panel itself — a small modal,
+#     built lazily on first use and reused by both callers rather than
+#     duplicated, since a page can only ever have one open at a time.
+#     A trimmed copy of CLIENTS_BODY's own form: same fields minus the
+#     "for disclosure forms" section (effective_date/contract_period/
+#     agencies_lobbied), which stays editable later on the full
+#     /clients page — this is a quick add, not the whole form.
+CLIENT_QUICKADD_JS = """
+const POSITIONS = [['watch', 'Watch'], ['support', 'Support'], ['oppose', 'Oppose']];
+
+const ADD_NEW_CLIENT_VALUE = '__add_new_client__';
+
+function clientOptionsHtml(available) {
+  const opts = (available || []).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+  return opts + `<option value="${ADD_NEW_CLIENT_VALUE}">+ Add new client</option>`;
+}
+
+// { existingClients, onCreated, onCancel } while the quick-add panel is
+// open — null the rest of the time. existingClients is only used to
+// tell which row of the POST /api/clients response (the endpoint
+// returns the caller's whole client list, not just the new one) is the
+// one just created: whichever id wasn't already in existingClients.
+let quickAddClientState = null;
+
+function ensureQuickAddClientModal() {
+  if (document.getElementById('quick-add-client-backdrop')) return;
+  const backdrop = document.createElement('div');
+  backdrop.id = 'quick-add-client-backdrop';
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="qac-title">
+      <div class="modal-head">
+        <div>
+          <div class="title" id="qac-title">Add new client</div>
+          <div class="sub">The rest of the form (effective date, agencies lobbied, etc.) can be filled in later on /clients.</div>
+        </div>
+        <button type="button" class="icon-btn" id="qac-close" aria-label="Close">×</button>
+      </div>
+      <form id="qac-form">
+        <label>
+          <div class="sub" style="margin:0 0 0.3rem">Client / employer name</div>
+          <input id="qac-name" required>
+        </label>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+          <input id="qac-bus_addr1" placeholder="Street address" style="flex:1 1 100%">
+          <input id="qac-bus_city" placeholder="City" style="flex:2">
+          <input id="qac-bus_st" placeholder="State" maxlength="2" style="flex:1;text-transform:uppercase">
+          <input id="qac-bus_zip4" placeholder="ZIP" style="flex:1">
+        </div>
+        <label>
+          <div class="sub" style="margin:0 0 0.3rem">Description of the client's industry or interests</div>
+          <textarea id="qac-interests" rows="2"></textarea>
+        </label>
+        <label>
+          <div class="sub" style="margin:0 0 0.3rem">California Secretary of State filer ID <span style="font-weight:400">(optional)</span></div>
+          <input id="qac-existing_filer_id" placeholder="e.g. 1486088">
+        </label>
+        <div id="qac-error" role="alert" aria-live="assertive"></div>
+        <div class="modal-actions">
+          <button type="submit" id="qac-submit">Add client →</button>
+          <button type="button" class="secondary" id="qac-cancel">Cancel</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) cancelQuickAddClient(); });
+  document.getElementById('qac-close').addEventListener('click', cancelQuickAddClient);
+  document.getElementById('qac-cancel').addEventListener('click', cancelQuickAddClient);
+  document.getElementById('qac-form').addEventListener('submit', submitQuickAddClient);
+}
+
+function openQuickAddClient(existingClients, onCreated, onCancel) {
+  ensureQuickAddClientModal();
+  quickAddClientState = { existingClients: existingClients || [], onCreated, onCancel };
+  document.getElementById('qac-form').reset();
+  document.getElementById('qac-error').className = '';
+  document.getElementById('quick-add-client-backdrop').classList.add('show');
+  document.getElementById('qac-name').focus();
+}
+
+function closeQuickAddClientModal() {
+  const backdrop = document.getElementById('quick-add-client-backdrop');
+  if (backdrop) backdrop.classList.remove('show');
+}
+
+function cancelQuickAddClient() {
+  const state = quickAddClientState;
+  quickAddClientState = null;
+  closeQuickAddClientModal();
+  if (state && state.onCancel) state.onCancel();
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const backdrop = document.getElementById('quick-add-client-backdrop');
+  if (backdrop && backdrop.classList.contains('show')) cancelQuickAddClient();
+});
+
+async function submitQuickAddClient(e) {
+  e.preventDefault();
+  const state = quickAddClientState;
+  if (!state) return;
+  const errorEl = document.getElementById('qac-error');
+  errorEl.className = '';
+  const name = document.getElementById('qac-name').value.trim();
+  if (!name) {
+    errorEl.textContent = 'Client / employer name is required.';
+    errorEl.className = 'show';
+    return;
+  }
+  const body = {
+    name,
+    bus_addr1: document.getElementById('qac-bus_addr1').value.trim(),
+    bus_city: document.getElementById('qac-bus_city').value.trim(),
+    bus_st: document.getElementById('qac-bus_st').value.trim(),
+    bus_zip4: document.getElementById('qac-bus_zip4').value.trim(),
+    interests: document.getElementById('qac-interests').value.trim(),
+    existing_filer_id: document.getElementById('qac-existing_filer_id').value.trim(),
+  };
+  const submitBtn = document.getElementById('qac-submit');
+  submitBtn.disabled = true;
+  try {
+    const beforeIds = new Set(state.existingClients.map(c => c.id));
+    const res = await fetch('/api/clients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const rows = await res.json();
+    if (!res.ok) throw new Error((rows && rows.error) || 'Could not add client');
+    const created = rows.find(c => !beforeIds.has(c.id)) || rows[rows.length - 1];
+    quickAddClientState = null;
+    closeQuickAddClientModal();
+    if (state.onCreated) state.onCreated(rows, created);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    submitBtn.disabled = false;
+  }
+}
+"""
+
+
 # The body for /lookup, wrapped in app_shell() below rather than
 # top_nav()+.wrap — this is one of the two pages (with /lobbying) that
 # render the full signed-in shell without requiring a session, so it
@@ -1612,6 +1796,7 @@ LOOKUP_BODY = f"""
 
 <script>
 {BILL_TABLES_JS}
+{CLIENT_QUICKADD_JS}
 const form = document.getElementById('f');
 const resultEl = document.getElementById('result');
 const errorEl = document.getElementById('error');
@@ -1653,34 +1838,189 @@ if (prefillBill) {{
   lookupBill(prefillBill);
 }}
 
-async function flagBill() {{
+// Flagging used to be a single click straight to POST /api/flag, with
+// client/position attached later (and separately) on /flagged via
+// clientCell()/positionSelect(). That left it easy to flag a bill and
+// never come back to say who it's actually for — this modal captures
+// client + position as part of flagging itself, using the same picker
+// (POSITIONS, clientOptionsHtml(), the quick-add panel) as /flagged's
+// own dropdown, see CLIENT_QUICKADD_JS.
+let flagModalClients = [];
+// Tracks whether POST /api/flag has actually succeeded for the current
+// modal session, so a retry after the client-link half fails doesn't
+// re-POST /api/flag (harmless — db.flag_bill is idempotent — but
+// pointless) and so Cancel after that point doesn't imply the flag
+// itself needs redoing too.
+let flagAlreadySaved = false;
+
+function ensureFlagModal() {{
+  if (document.getElementById('flag-modal-backdrop')) return;
+  const backdrop = document.createElement('div');
+  backdrop.id = 'flag-modal-backdrop';
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="flag-modal-title">
+      <div class="modal-head">
+        <div>
+          <div class="title" id="flag-modal-title">Flag this bill</div>
+          <div class="sub" id="flag-modal-bill"></div>
+        </div>
+        <button type="button" class="icon-btn" id="flag-modal-close" aria-label="Close">×</button>
+      </div>
+      <form id="flag-modal-form">
+        <label>
+          <div class="sub" style="margin:0 0 0.3rem">Client</div>
+          <select id="flag-client-select" required onchange="onFlagClientSelectChange(this)">
+            <option value="">Choose a client…</option>
+          </select>
+        </label>
+        <label>
+          <div class="sub" style="margin:0 0 0.3rem">Position</div>
+          <select id="flag-position-select"></select>
+        </label>
+        <div id="flag-modal-error" role="alert" aria-live="assertive"></div>
+        <div class="modal-actions">
+          <button type="submit" id="flag-modal-submit">Confirm Flagged Bill</button>
+          <button type="button" class="secondary" id="flag-modal-cancel">Cancel</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+  document.getElementById('flag-position-select').innerHTML =
+    POSITIONS.map(([value, label]) => `<option value="${{value}}" ${{value === 'watch' ? 'selected' : ''}}>${{label}}</option>`).join('');
+  backdrop.addEventListener('click', (e) => {{ if (e.target === backdrop) closeFlagModal(); }});
+  document.getElementById('flag-modal-close').addEventListener('click', closeFlagModal);
+  document.getElementById('flag-modal-cancel').addEventListener('click', closeFlagModal);
+  document.getElementById('flag-modal-form').addEventListener('submit', confirmFlagBill);
+  document.addEventListener('keydown', (e) => {{
+    if (e.key !== 'Escape') return;
+    if (backdrop.classList.contains('show')) closeFlagModal();
+  }});
+}}
+
+function renderFlagClientSelect(selectedId) {{
+  const sel = document.getElementById('flag-client-select');
+  sel.innerHTML = '<option value="">Choose a client…</option>' + clientOptionsHtml(flagModalClients);
+  sel.value = selectedId != null ? String(selectedId) : '';
+}}
+
+function onFlagClientSelectChange(selectEl) {{
+  if (selectEl.value !== ADD_NEW_CLIENT_VALUE) return;
+  openQuickAddClient(flagModalClients, (updatedClients, created) => {{
+    flagModalClients = updatedClients;
+    renderFlagClientSelect(created.id);
+  }}, () => {{
+    renderFlagClientSelect('');
+  }});
+}}
+
+async function openFlagModal() {{
   if (!current) return;
-  const btn = document.getElementById('flag-btn');
-  btn.disabled = true;
-  btn.textContent = 'Flagging…';
+  ensureFlagModal();
+  flagAlreadySaved = false;
+  document.getElementById('flag-modal-bill').textContent =
+    `${{current.state}} ${{current.bill_number}}${{current.title ? ' — ' + current.title : ''}}`;
+  document.getElementById('flag-modal-error').className = '';
+  document.getElementById('flag-position-select').value = 'watch';
+  const submitBtn = document.getElementById('flag-modal-submit');
+  submitBtn.disabled = false;
+  submitBtn.textContent = 'Confirm Flagged Bill';
+  renderFlagClientSelect('');
+  document.getElementById('flag-modal-backdrop').classList.add('show');
+
+  // /lookup doesn't otherwise need the client list, so it's fetched
+  // lazily here rather than on every page load like /flagged does.
+  const sel = document.getElementById('flag-client-select');
+  sel.disabled = true;
   try {{
-    const res = await fetch('/api/flag', {{
-      method: 'POST',
-      headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ bill_id: current.id }}),
-    }});
+    const res = await fetch('/api/clients');
     if (res.status === 401) {{
-      // Same convention as the server-side redirects in _redirect_to_login()
-      // (see app.py) — carry the bill you were looking at through the
-      // login wall via ?next=..., so signing in lands you back on it
-      // instead of a dead end.
       const next = `/lookup?bill=${{encodeURIComponent(current.bill_number || '')}}`;
       window.location.href = `/login?next=${{encodeURIComponent(next)}}`;
       return;
     }}
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not flag this bill');
-    btn.textContent = '🚩 Flagged';
+    flagModalClients = await res.json();
+    renderFlagClientSelect('');
   }} catch (err) {{
-    btn.disabled = false;
-    btn.textContent = 'Flag this bill';
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
+    document.getElementById('flag-modal-error').textContent = 'Could not load your clients. Try again.';
+    document.getElementById('flag-modal-error').className = 'show';
+  }} finally {{
+    sel.disabled = false;
+  }}
+}}
+
+function closeFlagModal() {{
+  const backdrop = document.getElementById('flag-modal-backdrop');
+  if (backdrop) backdrop.classList.remove('show');
+}}
+
+async function confirmFlagBill(e) {{
+  e.preventDefault();
+  if (!current) return;
+  const errorEl2 = document.getElementById('flag-modal-error');
+  errorEl2.className = '';
+  const clientId = document.getElementById('flag-client-select').value;
+  if (!clientId || clientId === ADD_NEW_CLIENT_VALUE) {{
+    errorEl2.textContent = 'Choose a client (or add a new one) before confirming.';
+    errorEl2.className = 'show';
+    return;
+  }}
+  const position = document.getElementById('flag-position-select').value;
+  const submitBtn = document.getElementById('flag-modal-submit');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Saving…';
+  const flagBtn = document.getElementById('flag-btn');
+
+  try {{
+    if (!flagAlreadySaved) {{
+      const flagRes = await fetch('/api/flag', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify({{ bill_id: current.id }}),
+      }});
+      if (flagRes.status === 401) {{
+        // Same convention as the server-side redirects in _redirect_to_login()
+        // (see app.py) — carry the bill you were looking at through the
+        // login wall via ?next=..., so signing in lands you back on it
+        // instead of a dead end.
+        const next = `/lookup?bill=${{encodeURIComponent(current.bill_number || '')}}`;
+        window.location.href = `/login?next=${{encodeURIComponent(next)}}`;
+        return;
+      }}
+      const flagData = await flagRes.json();
+      if (!flagRes.ok) throw new Error(flagData.error || 'Could not flag this bill');
+      flagAlreadySaved = true;
+      // The bill really is flagged now, even if assigning it to a
+      // client below fails — reflect that on the page right away
+      // instead of leaving "Flag this bill" showing while this modal
+      // retries the second half.
+      if (flagBtn) {{ flagBtn.disabled = true; flagBtn.textContent = '🚩 Flagged'; }}
+    }}
+
+    const linkRes = await fetch('/api/bill-clients', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ bill_id: current.id, client_id: Number(clientId), position }}),
+    }});
+    if (!linkRes.ok) {{
+      const linkData = await linkRes.json();
+      throw new Error(linkData.error || 'Bill was flagged, but assigning the client failed.');
+    }}
+    closeFlagModal();
+  }} catch (err) {{
+    // Don't let a failure here read as "nothing happened" when the
+    // flag half already went through — say so explicitly, and leave
+    // the modal open so Confirm can be clicked again (it only re-tries
+    // the client-link call at that point, see flagAlreadySaved above)
+    // instead of silently leaving a flagged-but-unassigned bill.
+    errorEl2.textContent = flagAlreadySaved
+      ? `${{err.message}} The bill is flagged — try again, or finish this later from your Flagged Bills list.`
+      : err.message;
+    errorEl2.className = 'show';
+  }} finally {{
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Confirm Flagged Bill';
   }}
 }}
 
@@ -1702,7 +2042,7 @@ function render(d) {{
       <div class="bill-desc">${{d.description || ''}}</div>
       ${{d.url ? `<a class="bill-link" href="${{d.url}}" target="_blank" rel="noopener">View on LegiScan →</a>` : ''}}
       <div class="card-actions">
-        <button id="flag-btn" class="secondary" onclick="flagBill()">Flag this bill</button>
+        <button id="flag-btn" class="secondary" onclick="openFlagModal()">Flag this bill</button>
       </div>
     </div>
     ${{sponsors ? `<h2 class="section">Sponsors</h2><div class="sponsor-list">${{sponsors}}</div>` : ''}}
@@ -2601,6 +2941,7 @@ FLAGGED_BODY = f"""
 </div>
 
 <script>
+{CLIENT_QUICKADD_JS}
 const listEl = document.getElementById('list');
 const loadingEl = document.getElementById('loading');
 const errorEl = document.getElementById('error');
@@ -2749,10 +3090,16 @@ document.addEventListener('keydown', (e) => {{
 async function unflag(billId) {{
   // Unflagging drops the bill's tracked position/client context with
   // no undo — worth a confirm, same reasoning as removeClient() on the
-  // Clients page.
+  // Clients page. "Confirm Unflagging" up front names the action the
+  // same way the flag-confirmation modal's own "Confirm Flagged Bill"
+  // button does, and spells out client + position explicitly (not just
+  // "position") since both go away together, not just one of them.
   const r = currentRows.find(x => x.bill_id === billId);
   const label = r ? `${{r.state}} ${{r.bill_number}}` : 'this bill';
-  if (!confirm(`Unflag ${{label}}? You'll stop tracking it and lose its saved position.`)) return;
+  const clientNote = r && (r.assigned_clients || []).length
+    ? ' Its assigned client(s) and saved position(s) will be removed too.'
+    : '';
+  if (!confirm(`Confirm Unflagging: unflag ${{label}}? You'll stop tracking it.${{clientNote}}`)) return;
   errorEl.className = '';
   try {{
     const res = await fetch(`/api/flag?bill_id=${{billId}}`, {{ method: 'DELETE' }});
@@ -2810,8 +3157,6 @@ async function unassignClient(billId, clientId, btnEl) {{
   }}
 }}
 
-const POSITIONS = [['watch', 'Watch'], ['support', 'Support'], ['oppose', 'Oppose']];
-
 async function setPosition(billId, clientId, selectEl) {{
   const newPosition = selectEl.value;
   const savedPosition = selectEl.dataset.saved;
@@ -2861,18 +3206,61 @@ function clientCell(r) {{
 
   const assignedIds = new Set((r.assigned_clients || []).map(c => c.id));
   const available = allClients.filter(c => !assignedIds.has(c.id));
-
-  if (!allClients.length) {{
-    return chips + '<div class="empty">No clients yet — <a href="/clients">add one</a>.</div>';
-  }}
-  const options = available.map(c => `<option value="${{c.id}}">${{c.name}}</option>`).join('');
+  const placeholder = allClients.length ? (available.length ? 'Assign to client…' : 'All clients assigned') : 'No clients yet…';
   return `
     <div>${{chips}}</div>
-    <select onchange="assignClient(${{r.bill_id}}, this); this.value=''" style="margin-top:0.2rem;font-size:0.8rem;padding:0.3rem 0.4rem">
-      <option value="">${{available.length ? 'Assign to client…' : 'All clients assigned'}}</option>
-      ${{options}}
+    <select onchange="handleClientCellSelect(${{r.bill_id}}, this)" style="margin-top:0.2rem;font-size:0.8rem;padding:0.3rem 0.4rem">
+      <option value="">${{placeholder}}</option>
+      ${{clientOptionsHtml(available)}}
     </select>
   `;
+}}
+
+// Selecting an existing client assigns it right away, same as before —
+// selecting "+ Add new client" (always the last option, see
+// clientOptionsHtml() in CLIENT_QUICKADD_JS) opens the quick-add panel
+// instead, then assigns whatever it creates to this row's bill, since
+// that's the whole reason to reach the quick-add form from here rather
+// than from /clients directly.
+function handleClientCellSelect(billId, selectEl) {{
+  const value = selectEl.value;
+  if (value !== ADD_NEW_CLIENT_VALUE) {{
+    // Same "reset right away, don't wait for the network round trip"
+    // behavior the old inline onchange="assignClient(...); this.value=''"
+    // had — assignClient() below is async and doesn't await here.
+    assignClient(billId, selectEl);
+    selectEl.value = '';
+    return;
+  }}
+  openQuickAddClient(allClients, (updatedClients, created) => {{
+    allClients = updatedClients;
+    assignNewClientToBill(billId, created.id);
+  }}, () => {{
+    selectEl.value = '';
+  }});
+}}
+
+async function assignNewClientToBill(billId, clientId) {{
+  errorEl.className = '';
+  try {{
+    const res = await fetch('/api/bill-clients', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ bill_id: billId, client_id: clientId }}),
+    }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Client was added, but could not be assigned to this bill.');
+    }}
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }} finally {{
+    // Refresh either way — the new client should show up in every
+    // row's dropdown from here on even if assigning it to *this* bill
+    // just failed.
+    load();
+  }}
 }}
 
 function render(rows) {{
