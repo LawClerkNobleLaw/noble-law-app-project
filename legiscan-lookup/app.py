@@ -192,6 +192,7 @@ STYLE = """
        wholesale rewrite of every dimension in the file. */
     --space-1: 4px; --space-2: 8px; --space-3: 12px;
     --space-4: 16px; --space-5: 24px; --space-6: 32px;
+    --brand-mark: url("data:image/png;base64,__BRAND_MARK_LIGHT_B64__");
   }
   /* :not([data-theme="light"]) so an explicit light choice (the
      manual toggle below, see account_widget()) beats the OS
@@ -208,6 +209,7 @@ STYLE = """
       --shadow-rest: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
       --shadow-hover: 0 4px 14px rgba(0,0,0,0.5);
       --radius-sm: 6px; --radius-md: 8px; --radius-pill: 999px;
+      --brand-mark: url("data:image/png;base64,__BRAND_MARK_DARK_B64__");
     }
   }
   /* The other half of the manual override: an explicit dark choice
@@ -224,6 +226,7 @@ STYLE = """
     --shadow-rest: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
     --shadow-hover: 0 4px 14px rgba(0,0,0,0.5);
     --radius-sm: 6px; --radius-md: 8px; --radius-pill: 999px;
+    --brand-mark: url("data:image/png;base64,__BRAND_MARK_DARK_B64__");
   }
   * { box-sizing: border-box; }
   body {
@@ -268,7 +271,17 @@ STYLE = """
     color: var(--ink); margin-right: 0.4rem;
   }
   .top-nav .top-brand:hover { text-decoration: none; }
-  .top-brand svg { color: var(--ink); }
+  /* Shared by every usage of the real Rotunda logo (TOP_BRAND, the
+     sidebar's .app-brand-mark, the landing page's .frame-brand mockup)
+     — a sized, empty element whose background-image is --brand-mark,
+     swapped per theme the same way every color above is (see the
+     three --brand-mark definitions in :root/the dark media query/
+     :root[data-theme="dark"]). Each usage sets its own width/height
+     inline, since the three contexts need different sizes. */
+  .brand-mark {
+    display: inline-block; flex: none; background-image: var(--brand-mark);
+    background-size: contain; background-repeat: no-repeat; background-position: center;
+  }
   h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
   .sub { color: var(--slate); margin: 0 0 2rem; font-size: 0.92rem; }
   /* Signup's own 2-step progress — two dots rather than a full wizard
@@ -432,7 +445,7 @@ STYLE = """
   /* No square badge — just the mark itself, colored like the rest of
      the app's text (--ink), sitting directly on --paper. Light mode:
      dark mark on white. Dark mode: white mark on black. */
-  .app-brand-mark { display: flex; align-items: center; flex: none; color: var(--ink); }
+  .app-brand-mark { display: flex; align-items: center; flex: none; }
   nav.app-nav { padding: 1rem 0.75rem; flex: 1; overflow-y: auto; }
   .app-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
   .side-nav-item {
@@ -833,12 +846,35 @@ def account_widget(extra_links="", menu_class="", guest_plain=False):
 """
 
 
+# The real Rotunda logo (the user's own artwork, not a redrawn
+# approximation) — two exports, "Original" (black icon) and "Inverse"
+# (white icon), both trimmed from their flat white/black backgrounds
+# to real alpha transparency (the source files had none) and resized,
+# so the mark drops cleanly onto any surface instead of carrying a
+# visible square behind it. The pixels themselves are untouched.
+# Same aspect ratio (240x225, ~1.067:1) in both, so any usage site can
+# just pick a height and derive width from it.
+#
+# Swapped per theme the same way every color in STYLE already is: one
+# custom property, redefined in the light :root, the dark media query
+# (guarded so an explicit light choice still wins), and the explicit
+# [data-theme="dark"] block. .brand-mark is a sized, empty element
+# with this as its background-image — an <img src="..."> can't be
+# swapped by CSS alone, but a background-image custom property can.
+BRAND_MARK_LIGHT_B64 = "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"
+BRAND_MARK_DARK_B64 = "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"
+
+
+# STYLE is a plain (non-f) string -- see its own definition above for why
+# -- so these swap in via .replace() on the placeholder tokens rather than
+# f-string interpolation. Has to happen down here, after both constants
+# above exist, not right after STYLE's own definition.
+STYLE = STYLE.replace("__BRAND_MARK_LIGHT_B64__", BRAND_MARK_LIGHT_B64).replace(
+    "__BRAND_MARK_DARK_B64__", BRAND_MARK_DARK_B64
+)
+
 TOP_BRAND = """<a href="/" class="top-brand">
-  <svg width="18" height="11" viewBox="0 0 180 112" fill="none">
-    <path d="M14 100 A76 76 0 0 1 82 24" stroke="currentColor" stroke-width="19"/>
-    <path d="M98 24 A76 76 0 0 1 166 100" stroke="currentColor" stroke-width="19"/>
-    <rect x="14" y="98.5" width="152" height="13.5" fill="currentColor"/>
-  </svg>
+  <span class="brand-mark" style="width:17px;height:16px"></span>
   Rotunda
 </a>"""
 
@@ -967,15 +1003,7 @@ def app_shell(current, body):
   <aside class="app-sidebar">
     <div class="app-brand">
       <span class="app-brand-mark">
-        <!-- Rotunda mark 1a — tentative logo/name. No badge behind it
-             now, just the mark in --ink on --paper, so sized per the
-             24px specimen (Rotunda Mark.dc.html) rather than the 16px
-             one the smaller square badge needed. -->
-        <svg width="22" height="14" viewBox="0 0 180 112" fill="none">
-          <path d="M14 100 A76 76 0 0 1 82 24" stroke="currentColor" stroke-width="18"/>
-          <path d="M98 24 A76 76 0 0 1 166 100" stroke="currentColor" stroke-width="18"/>
-          <rect x="14" y="99" width="152" height="13" fill="currentColor"/>
-        </svg>
+        <span class="brand-mark" style="width:20px;height:19px"></span>
       </span>
       Rotunda
     </div>
@@ -1231,11 +1259,7 @@ LANDING_PAGE = f"""<!doctype html>
       <div class="frame-body">
         <div class="frame-sidebar">
           <div class="frame-brand">
-            <svg width="14" height="9" viewBox="0 0 180 112" fill="none">
-              <path d="M14 100 A76 76 0 0 1 82 24" stroke="currentColor" stroke-width="20"/>
-              <path d="M98 24 A76 76 0 0 1 166 100" stroke="currentColor" stroke-width="20"/>
-              <rect x="14" y="98" width="152" height="14" fill="currentColor"/>
-            </svg>
+            <span class="brand-mark" style="width:13px;height:12px"></span>
             Rotunda
           </div>
           <div class="frame-nav-item">
