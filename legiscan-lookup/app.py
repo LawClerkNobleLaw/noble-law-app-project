@@ -737,6 +737,22 @@ STYLE = """
     text-align: left; padding: var(--space-2) var(--space-2); border-radius: var(--radius-sm); cursor: pointer;
   }
   .row-menu-dropdown button:hover { background: var(--error-soft); }
+  /* Same anchored-dropdown shape as .row-menu-dropdown (position,
+     border, shadow, z-index), but plain neutral rows instead of that
+     one's red "destructive action" styling — this is a list of name
+     suggestions to pick from (see the Add Client form's live
+     CAL-ACCESS autofill), not a menu of things to delete. */
+  .autofill-dropdown {
+    position: absolute; background: var(--surface); border: 1px solid var(--rule);
+    border-radius: var(--radius-md); padding: var(--space-1); box-shadow: 0 4px 14px rgba(0,0,0,0.16);
+    z-index: 20; display: none; flex-direction: column; gap: var(--space-1); max-height: 14rem; overflow-y: auto;
+  }
+  .autofill-dropdown.show { display: flex; }
+  .autofill-dropdown button {
+    background: none; border: none; color: var(--ink); font: inherit; font-size: 0.85rem;
+    text-align: left; padding: var(--space-2); border-radius: var(--radius-sm); cursor: pointer;
+  }
+  .autofill-dropdown button:hover { background: var(--accent-soft); }
   th {
     background: var(--content-bg); font-size: 0.68rem; font-weight: 600; color: var(--slate);
     text-transform: uppercase; letter-spacing: 0.04em;
@@ -3271,13 +3287,15 @@ CLIENTS_BODY = f"""
 
 <div class="card" id="form-card" style="display:none">
   <form id="f">
-    <label style="flex:1 1 100%">
+    <label style="flex:1 1 100%;position:relative">
       <div class="sub" style="margin:0 0 0.3rem">Client / employer name</div>
-      <input id="name" required style="width:100%">
+      <input id="name" required style="width:100%" autocomplete="off">
+      <div id="name-autofill-dropdown" class="autofill-dropdown" style="top:100%;left:0;right:0;width:auto"></div>
     </label>
 
     <div style="flex:1 1 100%">
       <h2 class="section" style="margin-top:1.2rem">Business address</h2>
+      <p class="sub" id="name-autofill-note" style="margin:0.2rem 0 0;display:none">Prefilled from CAL-ACCESS — edit anything below if it looks wrong.</p>
     </div>
     <label for="bus_addr1" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Street address</label>
     <input id="bus_addr1" placeholder="Street address" style="flex:1 1 100%">
@@ -3287,6 +3305,8 @@ CLIENTS_BODY = f"""
     <input id="bus_st" placeholder="State" maxlength="2" style="flex:1;text-transform:uppercase">
     <label for="bus_zip4" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">ZIP code</label>
     <input id="bus_zip4" placeholder="ZIP" style="flex:1">
+    <label for="bus_phone" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Phone</label>
+    <input id="bus_phone" placeholder="Phone — e.g. (916) 555-0100" style="flex:1 1 100%">
 
     <label style="flex:1 1 100%">
       <div class="sub" style="margin:1.2rem 0 0.3rem">Description of the client's industry or interests</div>
@@ -3362,12 +3382,32 @@ function renderStats() {{
   `;
 }}
 
+// Fills the address fields (+ filer ID) from one CAL-ACCESS entity
+// record and shows the "Prefilled from CAL-ACCESS" note — shared by
+// the URL-based prefill below (arriving from Organization Search) and
+// the live name-autofill dropdown further down, so there's one prefill
+// behavior instead of two that could drift apart. bus_phone is
+// deliberately left alone: no CAL-ACCESS filer record has a phone
+// number at all (see calaccess_db.py), so there's nothing to fill it
+// with — it stays a plain manual field either way. Every field this
+// touches stays a normal, editable input either way — there's no
+// separate "locked" mode, typing over a prefilled value IS completing
+// it manually.
+const nameAutofillNoteEl = document.getElementById('name-autofill-note');
+
+function applyEntityAutofill(e) {{
+  document.getElementById('bus_addr1').value = e.address || '';
+  document.getElementById('bus_city').value = e.city || '';
+  document.getElementById('bus_st').value = e.state || '';
+  document.getElementById('bus_zip4').value = e.zip || '';
+  if (e.filer_id) document.getElementById('existing_filer_id').value = e.filer_id;
+  nameAutofillNoteEl.style.display = '';
+}}
+
 // Arriving from Organization Search's "+ Client" link (?prefill_name=...
 // and, for a registered entity, &prefill_entity_id=...) opens the form
 // pre-filled from that entity's CAL-ACCESS record instead of leaving
-// name/address/etc. to be typed in by hand. Everything stays a normal,
-// editable field either way — there's no separate "manual mode," typing
-// over a prefilled value IS completing it manually.
+// name/address/etc. to be typed in by hand.
 const urlParams = new URLSearchParams(window.location.search);
 const prefillName = urlParams.get('prefill_name');
 const prefillEntityId = urlParams.get('prefill_entity_id');
@@ -3381,22 +3421,79 @@ async function applyPrefill() {{
     const res = await fetch(`/api/lobbying/detail?id=${{encodeURIComponent(prefillEntityId)}}`);
     const data = await res.json();
     if (!res.ok || !data.entity) return;
-    const e = data.entity;
-    document.getElementById('bus_addr1').value = e.address || '';
-    document.getElementById('bus_city').value = e.city || '';
-    document.getElementById('bus_st').value = e.state || '';
-    document.getElementById('bus_zip4').value = e.zip || '';
-    if (e.filer_id) document.getElementById('existing_filer_id').value = e.filer_id;
-    const note = document.createElement('p');
-    note.className = 'sub';
-    note.style.marginTop = '-0.5rem';
-    note.textContent = "Prefilled from CAL-ACCESS — edit anything below if it looks wrong.";
-    form.insertBefore(note, form.firstChild);
+    applyEntityAutofill(data.entity);
   }} catch (err) {{
     // Prefill is a convenience, not a requirement — if it fails, the form
     // is already open and named, same as clicking "+ Add client" directly.
   }}
 }}
+
+// Live autofill as the name is typed: after a short pause, search
+// CAL-ACCESS (the same /api/lobbying/search Organization Search uses)
+// and offer any matching REGISTERED entities as suggestions — only
+// those have an address on file to autofill from; unregistered
+// "mentioned as someone else's client" rows (kind: 'client') have
+// none, so they're filtered out here rather than shown as a dead end.
+// Picking one calls /api/lobbying/detail for its full record and
+// applies it the same way applyPrefill() above does.
+const nameInput = document.getElementById('name');
+const nameDropdown = document.getElementById('name-autofill-dropdown');
+let nameAutofillTimer = null;
+
+function closeNameAutofillDropdown() {{
+  nameDropdown.classList.remove('show');
+  nameDropdown.innerHTML = '';
+}}
+
+async function runNameAutofillSearch(q) {{
+  try {{
+    const res = await fetch(`/api/lobbying/search?q=${{encodeURIComponent(q)}}`);
+    const data = await res.json();
+    if (!res.ok) return;
+    // Still the same query the user's typing, not a stale response
+    // that raced in after they kept typing (or already picked one).
+    if (nameInput.value.trim() !== q) return;
+    const matches = (data.results || []).filter(r => r.kind === 'entity').slice(0, 6);
+    if (!matches.length) {{ closeNameAutofillDropdown(); return; }}
+    nameDropdown.innerHTML = matches.map(r => `
+      <button type="button" onclick="selectNameAutofillMatch(${{r.id}})">
+        ${{r.name}}${{r.city || r.state ? ` <span class="sub" style="margin:0">— ${{[r.city, r.state].filter(Boolean).join(', ')}}</span>` : ''}}
+      </button>
+    `).join('');
+    nameDropdown.classList.add('show');
+  }} catch (err) {{
+    // A failed suggestion lookup shouldn't block typing a name by
+    // hand — just don't offer any suggestions this time.
+  }}
+}}
+
+async function selectNameAutofillMatch(entityId) {{
+  closeNameAutofillDropdown();
+  try {{
+    const res = await fetch(`/api/lobbying/detail?id=${{encodeURIComponent(entityId)}}`);
+    const data = await res.json();
+    if (!res.ok || !data.entity) return;
+    nameInput.value = data.entity.name || nameInput.value;
+    applyEntityAutofill(data.entity);
+  }} catch (err) {{
+    // Same reasoning as runNameAutofillSearch's catch — leave the
+    // name as typed rather than blocking on this.
+  }}
+}}
+
+nameInput.addEventListener('input', () => {{
+  nameAutofillNoteEl.style.display = 'none';
+  clearTimeout(nameAutofillTimer);
+  const q = nameInput.value.trim();
+  if (q.length < 2) {{ closeNameAutofillDropdown(); return; }}
+  nameAutofillTimer = setTimeout(() => runNameAutofillSearch(q), 300);
+}});
+document.addEventListener('click', (e) => {{
+  if (!nameDropdown.contains(e.target) && e.target !== nameInput) closeNameAutofillDropdown();
+}});
+nameInput.addEventListener('keydown', (e) => {{
+  if (e.key === 'Escape') closeNameAutofillDropdown();
+}});
 
 function showForm() {{
   formCard.style.display = 'block';
@@ -3418,6 +3515,8 @@ function hideForm(afterSave) {{
   editingId = null;
   submitBtn.textContent = 'Add client →';
   errorEl.className = '';
+  nameAutofillNoteEl.style.display = 'none';
+  closeNameAutofillDropdown();
 }}
 
 function editClient(id) {{
@@ -3429,12 +3528,14 @@ function editClient(id) {{
   document.getElementById('bus_city').value = c.bus_city || '';
   document.getElementById('bus_st').value = c.bus_st || '';
   document.getElementById('bus_zip4').value = c.bus_zip4 || '';
+  document.getElementById('bus_phone').value = c.bus_phone || '';
   document.getElementById('interests').value = c.interests || '';
   document.getElementById('existing_filer_id').value = c.existing_filer_id || '';
   document.getElementById('effective_date').value = c.effective_date || '';
   document.getElementById('contract_period').value = c.contract_period || '';
   document.getElementById('agencies_lobbied').value = c.agencies_lobbied || '';
   submitBtn.textContent = 'Save changes →';
+  nameAutofillNoteEl.style.display = 'none';
   showForm();
 }}
 
@@ -3453,6 +3554,7 @@ form.addEventListener('submit', async (e) => {{
       bus_city: document.getElementById('bus_city').value.trim(),
       bus_st: document.getElementById('bus_st').value.trim(),
       bus_zip4: document.getElementById('bus_zip4').value.trim(),
+      bus_phone: document.getElementById('bus_phone').value.trim(),
       interests: document.getElementById('interests').value.trim(),
       existing_filer_id: document.getElementById('existing_filer_id').value.trim(),
       effective_date: document.getElementById('effective_date').value.trim(),
@@ -3528,7 +3630,7 @@ function render(rows) {{
       ${{rows.map(c => `
         <tr>
           <td><a href="/clients/detail?id=${{c.id}}">${{c.name}}</a></td>
-          <td>${{[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', ')}}</td>
+          <td>${{[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), c.bus_phone].filter(Boolean).join(' · ')}}</td>
           <td>${{c.interests || ''}}</td>
           <td>${{c.existing_filer_id || ''}}</td>
           <td class="row-menu">
@@ -3633,7 +3735,7 @@ function renderClient(d) {{
     <div class="card">
       <div class="bill-title">${{c.name}}</div>
       <div class="bill-desc" style="margin-top:0.4rem">
-        ${{[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', ') || 'No address on file'}}
+        ${{[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), c.bus_phone].filter(Boolean).join(' · ') || 'No address on file'}}
       </div>
       ${{c.interests ? `<div class="bill-desc" style="margin-top:0.4rem">${{c.interests}}</div>` : ''}}
       <div class="card-actions">

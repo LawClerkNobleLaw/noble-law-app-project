@@ -142,6 +142,24 @@ def test_update_client_changes_fields(conn):
     assert client["interests"] == "gadgets"
 
 
+def test_client_bus_phone_round_trips_through_create_and_update(conn):
+    # bus_phone was added alongside the Add Client form's CAL-ACCESS
+    # autofill (see CLIENTS_BODY) — no CAL-ACCESS filer record has a
+    # phone number at all, so this is always a plain manually-entered
+    # field, but it still needs to actually persist/reload like every
+    # other client field.
+    user_id = insert_user(conn)
+    client_id = db.create_client(conn, user_id, {"name": "Acme Corp", "bus_phone": "(916) 555-0100"})
+    conn.commit()
+
+    assert db.get_client(conn, user_id, client_id)["bus_phone"] == "(916) 555-0100"
+
+    db.update_client(conn, user_id, client_id, {"name": "Acme Corp", "bus_phone": "(916) 555-0199"})
+    conn.commit()
+
+    assert db.get_client(conn, user_id, client_id)["bus_phone"] == "(916) 555-0199"
+
+
 def test_update_client_scoped_to_owner_is_a_no_op_for_other_users(conn):
     user_a = insert_user(conn, email="a@example.com")
     user_b = insert_user(conn, email="b@example.com")

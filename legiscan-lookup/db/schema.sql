@@ -229,6 +229,7 @@ CREATE TABLE IF NOT EXISTS clients (
   user_id            INTEGER NOT NULL REFERENCES users(id),
   name               TEXT NOT NULL,        -- Form 603: client/employer name
   bus_addr1          TEXT, bus_city TEXT, bus_st TEXT, bus_zip4 TEXT,  -- Form 603-style business address
+  bus_phone          TEXT,                 -- business phone — not on any CAL-ACCESS filer record, manual-only
   interests          TEXT,                 -- Form 602: description of the client's industry/interests
   existing_filer_id  TEXT,                 -- optional — for future cross-check against lobbying_entities
   -- Form 601 Part II asks for these three per client relationship —
