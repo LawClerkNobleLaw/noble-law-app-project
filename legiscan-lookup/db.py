@@ -632,6 +632,15 @@ def get_bill_report(conn, user_id, bill_id):
         ).fetchall()
     ]
     result["assigned_clients"] = clients_for_bills(conn, user_id, [bill_id]).get(bill_id, [])
+    # /api/report will upsert a bill straight from LegiScan on first
+    # view now (see that route) — a bill can exist here without this
+    # user having flagged it at all, so the report page needs an
+    # explicit way to tell "not flagged yet" from "flagged, no client
+    # assigned" instead of inferring it from assigned_clients being
+    # empty either way.
+    result["flagged"] = bool(conn.execute(
+        "SELECT 1 FROM flagged_bills WHERE user_id = ? AND bill_id = ?", (user_id, bill_id)
+    ).fetchone())
     return result
 
 

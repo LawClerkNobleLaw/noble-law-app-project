@@ -90,7 +90,7 @@ import db
 import mailer
 import pdf_forms
 import refresh_watchlist
-from legiscan_client import lookup_bill, get_bill_detail, search_bills
+from legiscan_client import lookup_bill, get_bill_detail, search_bills, smart_search
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "calaccess-pipeline"))
 import refresh_calaccess  # noqa: E402 — must follow the sys.path insert above
@@ -423,7 +423,7 @@ STYLE = """
   @keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
   .empty { color: var(--slate); font-size: 0.9rem; }
   /* Small centered dialog, used by the flag-confirmation modal (see
-     openFlagModal() in LOOKUP_BODY) and the "+ Add new client"
+     openFlagModal() in REPORT_BODY) and the "+ Add new client"
      quick-add panel shared between it and clientCell() (see
      CLIENT_QUICKADD_JS) — the app's only two true modals, everything
      else (row menus, the account menu) is an anchored dropdown instead.
@@ -595,13 +595,13 @@ STYLE = """
   .app-topbar-sub { font-size: 0.78rem; color: var(--slate); margin-top: 0.1rem; }
   .app-topbar-actions { display: flex; align-items: center; gap: 0.5rem; flex: none; }
   /* Lives in the topbar (shared chrome). Its baseline behavior — Enter
-     runs a real /discover search (wired in app_shell()'s own script
+     runs a real /lookup search (wired in app_shell()'s own script
      below) — is the same on every page it appears on. A page can ALSO
      attach its own 'input' listener for its own live, local filtering
      (e.g. FLAGGED_BODY filtering the flagged-bills table as you type)
      without conflict, since that's a different event than the Enter
      key this box's global behavior listens for. Hidden only on
-     /discover itself, where it would just duplicate that page's own
+     /lookup itself, where it would just duplicate that page's own
      search field. */
   .search-box {
     display: flex; align-items: center; gap: 0.5rem; height: 2rem; width: 12.5rem; border-radius: var(--radius-md);
@@ -775,7 +775,7 @@ def nav_links(current):
     Flagged bills isn't listed here on purpose — it's personal and tied
     to login, so it lives in the account menu next to "View profile"
     rather than in this always-visible row (see account_widget())."""
-    pages = [("/lookup", "Lookup"), ("/discover", "Discover"), ("/lobbying", "Organization Search")]
+    pages = [("/lookup", "Lookup"), ("/lobbying", "Organization Search")]
     parts = []
     for href, label in pages:
         if href == current:
@@ -1006,12 +1006,11 @@ def top_nav(current, left_extra="", show_account_menu=True):
 # you're signed in. /flagged is the first page moved over — /clients,
 # /disclosures, /profile, /report, and /clients/detail follow later.
 SHELL_NAV_ITEMS = [
+    # Was two separate items ("Lookup" + "Discover") until the two
+    # pages merged into one search experience — see LOOKUP_BODY.
     ("/lookup", "Lookup",
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
      '<circle cx="6" cy="6" r="4"/><path d="M9.5 9.5L12.5 12.5" stroke-linecap="round"/></svg>'),
-    ("/discover", "Discover",
-     '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
-     '<circle cx="7" cy="7" r="5.5"/><path d="M9.2 4.8L7.8 7.8 4.8 9.2 6.2 6.2z" stroke-linejoin="round"/></svg>'),
     ("/lobbying", "Organization Search",
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
      '<path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>'),
@@ -1107,7 +1106,7 @@ def app_shell(current, body):
         <div class="app-topbar-sub" id="shell-date"></div>
       </div>
       <div class="app-topbar-actions">
-        {'' if current == "/discover" else '''<div class="search-box">
+        {'' if current == "/lookup" else '''<div class="search-box">
           <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="5" r="3.5"/><path d="M8 8l2 2" stroke-linecap="round"/></svg>
           <label for="shell-search" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Search bills</label>
           <input id="shell-search" type="text" placeholder="Search bills...">
@@ -1130,16 +1129,17 @@ def app_shell(current, body):
   // own <script>, not here — see the {{account_widget()}} call above.
 
   // The one baseline behavior every page's #shell-search shares: Enter
-  // runs a real search on /discover (see DISCOVER_BODY). Not present
-  // on /discover itself (see .search-box's own CSS comment for why),
-  // so this guards for the element missing rather than assuming it's
-  // always there.
+  // runs a real search on /lookup (see LOOKUP_BODY — merged with what
+  // used to be the separate /discover page). Not present on /lookup
+  // itself (see .search-box's own CSS comment for why — that page has
+  // its own, identical search field), so this guards for the element
+  // missing rather than assuming it's always there.
   const shellSearch = document.getElementById('shell-search');
   if (shellSearch) {{
     shellSearch.addEventListener('keydown', (e) => {{
       if (e.key !== 'Enter') return;
       const q = shellSearch.value.trim();
-      if (q) window.location.href = '/discover?q=' + encodeURIComponent(q);
+      if (q) window.location.href = '/lookup?q=' + encodeURIComponent(q);
     }});
   }}
 }})();
@@ -1317,7 +1317,7 @@ LANDING_PAGE = f"""<!doctype html>
 {THEME_INIT_SCRIPT}
 </head>
 <body>
-{top_nav("/", left_extra='<a href="/lookup">Lookup</a><a href="/discover">Discover</a><a href="#features">Product</a><a href="#workflow">Workflow</a><a href="#trust">Compliance</a>')}
+{top_nav("/", left_extra='<a href="/lookup">Lookup</a><a href="#features">Product</a><a href="#workflow">Workflow</a><a href="#trust">Compliance</a>')}
 
 <main>
 <header class="hero">
@@ -1341,10 +1341,6 @@ LANDING_PAGE = f"""<!doctype html>
           <div class="frame-nav-item">
             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="4"/><path d="M9.5 9.5L12.5 12.5" stroke-linecap="round"/></svg>
             Lookup
-          </div>
-          <div class="frame-nav-item">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M9.2 4.8L7.8 7.8 4.8 9.2 6.2 6.2z" stroke-linejoin="round"/></svg>
-            Discover
           </div>
           <div class="frame-nav-item">
             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>
@@ -1518,8 +1514,7 @@ LANDING_PAGE = f"""<!doctype html>
       </div>
       <div class="foot-col">
         <h4>Product</h4>
-        <a href="/lookup">Look up a bill</a>
-        <a href="/discover">Discover bills</a>
+        <a href="/lookup">Search bills</a>
         <a href="#features">Features</a>
         <a href="#workflow">Workflow</a>
         <a href="#trust">Compliance</a>
@@ -1774,305 +1769,142 @@ async function submitQuickAddClient(e) {
 # marketing homepage or clicked "Lookup" in your own sidebar. See
 # app_shell()'s docstring for how the sidebar footer handles being
 # logged out here.
+#
+# Merged with what used to be the separate /discover page — one search
+# box now handles both "I know the exact bill number" and "I don't,
+# just what it's about" (see smart_search() in legiscan_client.py,
+# behind the new /api/search), and results always render as a list —
+# even a single exact-number hit — instead of this page rendering full
+# bill detail inline the way it used to for a bill-number match.
+# Clicking any result goes to /report instead (see REPORT_BODY, which
+# now also carries the flag-confirmation modal this page used to have,
+# since /report is the one place bill detail — and now flagging too —
+# actually lives). /discover itself now just redirects here.
 LOOKUP_BODY = f"""
 <div class="page-head">
   <div>
-    <h1>Look up a bill</h1>
-    <p class="sub">California bill status, sponsors, and history from LegiScan.</p>
+    <h1>Search bills</h1>
+    <p class="sub">Look up an exact bill number or search free text across every California bill — powered by LegiScan.</p>
   </div>
 </div>
 
 <div class="card">
   <form id="f" style="margin:0">
-    <label for="bill" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Bill number</label>
-    <input id="bill" placeholder="e.g. SB122" required>
-    <button type="submit">Look up</button>
+    <label for="q" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Bill number or search terms</label>
+    <input id="q" placeholder="e.g. SB122, or housing element, cannabis licensing…" required style="flex:1">
+    <button type="submit">Search</button>
   </form>
 </div>
 
-<div id="loading"><span class="spinner"></span>Searching LegiScan…</div>
+<div id="loading" class="skeleton">
+  <div class="panel">
+    {"".join('''<div class="skeleton-row">
+      <div class="skeleton-bar" style="width:10%"></div>
+      <div class="skeleton-bar" style="width:45%"></div>
+      <div class="skeleton-bar" style="width:14%"></div>
+      <div class="skeleton-bar" style="width:12%"></div>
+    </div>''' for _ in range(3))}
+  </div>
+</div>
 <div id="error" role="alert" aria-live="assertive"></div>
-<div id="result"></div>
+<div id="results"></div>
 
 <script>
-{BILL_TABLES_JS}
-{CLIENT_QUICKADD_JS}
 const form = document.getElementById('f');
-const resultEl = document.getElementById('result');
+const resultsEl = document.getElementById('results');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
-let current = null;
+let currentQuery = '';
+let currentPage = 1;
 
 form.addEventListener('submit', (e) => {{
   e.preventDefault();
-  const bill = document.getElementById('bill').value.trim();
-  if (bill) lookupBill(bill);
+  const q = document.getElementById('q').value.trim();
+  if (q) runSearch(q, 1);
 }});
 
-async function lookupBill(bill) {{
-  errorEl.className = ''; resultEl.className = ''; loadingEl.className = 'show';
+// Two different things prefill this page: the global header search
+// box + any old /discover?q=... bookmark send ?q=..., while a link
+// that already knows an exact bill number (billPills() elsewhere in
+// this app, and the ?next=... round trip _redirect_to_login() builds)
+// sends ?bill=... — both just seed the same one search box now that
+// lookup and discovery are a single page.
+const urlParams = new URLSearchParams(window.location.search);
+const prefillQuery = urlParams.get('q') || urlParams.get('bill');
+if (prefillQuery) {{
+  document.getElementById('q').value = prefillQuery;
+  runSearch(prefillQuery, 1);
+}}
+
+async function runSearch(q, page) {{
+  currentQuery = q; currentPage = page;
+  errorEl.className = ''; loadingEl.className = 'skeleton show'; resultsEl.innerHTML = '';
   form.querySelector('button').disabled = true;
 
   try {{
-    const res = await fetch(`/api/bill?bill=${{encodeURIComponent(bill)}}`);
+    const res = await fetch(`/api/search?q=${{encodeURIComponent(q)}}&page=${{page}}`);
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Lookup failed');
-    current = data;
-    render(data);
+    if (!res.ok) throw new Error(data.error || 'Search failed');
+    renderResults(data);
   }} catch (err) {{
     errorEl.textContent = err.message;
     errorEl.className = 'show';
   }} finally {{
-    loadingEl.className = '';
+    loadingEl.className = 'skeleton';
     form.querySelector('button').disabled = false;
   }}
 }}
 
-// Lets a link like "/lookup?bill=SB122" (used by _redirect_to_login()'s
-// ?next=... round trip when "Flag this bill" bounces a logged-out
-// visitor through /login) land back on the same bill instead of a
-// blank form.
-const prefillBill = new URLSearchParams(window.location.search).get('bill');
-if (prefillBill) {{
-  document.getElementById('bill').value = prefillBill;
-  lookupBill(prefillBill);
+// LegiScan's search doesn't return a coded status the way getBill does
+// (see shape_bill() in legiscan_client.py) — just each result's own
+// last_action text, same keyword-match idea as milestoneClass()
+// elsewhere in this app, just condensed to one current-state label
+// instead of per-row history categories.
+function statusLabel(lastAction) {{
+  const a = (lastAction || '').toLowerCase();
+  if (a.includes('chaptered') || a.includes('approved by the governor')) return 'Passed';
+  if (a.includes('vetoed')) return 'Vetoed';
+  if (a.includes('died') || a.includes('failed')) return 'Failed';
+  if (a.includes('introduced')) return 'Introduced';
+  return 'In progress';
 }}
 
-// Flagging used to be a single click straight to POST /api/flag, with
-// client/position attached later (and separately) on /flagged via
-// clientCell()/positionSelect(). That left it easy to flag a bill and
-// never come back to say who it's actually for — this modal captures
-// client + position as part of flagging itself, using the same picker
-// (POSITIONS, clientOptionsHtml(), the quick-add panel) as /flagged's
-// own dropdown, see CLIENT_QUICKADD_JS.
-let flagModalClients = [];
-// Tracks whether POST /api/flag has actually succeeded for the current
-// modal session, so a retry after the client-link half fails doesn't
-// re-POST /api/flag (harmless — db.flag_bill is idempotent — but
-// pointless) and so Cancel after that point doesn't imply the flag
-// itself needs redoing too.
-let flagAlreadySaved = false;
-
-function ensureFlagModal() {{
-  if (document.getElementById('flag-modal-backdrop')) return;
-  const backdrop = document.createElement('div');
-  backdrop.id = 'flag-modal-backdrop';
-  backdrop.className = 'modal-backdrop';
-  backdrop.innerHTML = `
-    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="flag-modal-title">
-      <div class="modal-head">
-        <div>
-          <div class="title" id="flag-modal-title">Flag this bill</div>
-          <div class="sub" id="flag-modal-bill"></div>
-        </div>
-        <button type="button" class="icon-btn" id="flag-modal-close" aria-label="Close">×</button>
-      </div>
-      <form id="flag-modal-form">
-        <label>
-          <div class="sub" style="margin:0 0 0.3rem">Client</div>
-          <select id="flag-client-select" required onchange="onFlagClientSelectChange(this)">
-            <option value="">Choose a client…</option>
-          </select>
-        </label>
-        <label>
-          <div class="sub" style="margin:0 0 0.3rem">Position</div>
-          <select id="flag-position-select"></select>
-        </label>
-        <div id="flag-modal-error" role="alert" aria-live="assertive"></div>
-        <div class="modal-actions">
-          <button type="submit" id="flag-modal-submit">Confirm Flagged Bill</button>
-          <button type="button" class="secondary" id="flag-modal-cancel">Cancel</button>
-        </div>
-      </form>
-    </div>
-  `;
-  document.body.appendChild(backdrop);
-  document.getElementById('flag-position-select').innerHTML =
-    POSITIONS.map(([value, label]) => `<option value="${{value}}" ${{value === 'watch' ? 'selected' : ''}}>${{label}}</option>`).join('');
-  backdrop.addEventListener('click', (e) => {{ if (e.target === backdrop) closeFlagModal(); }});
-  document.getElementById('flag-modal-close').addEventListener('click', closeFlagModal);
-  document.getElementById('flag-modal-cancel').addEventListener('click', closeFlagModal);
-  document.getElementById('flag-modal-form').addEventListener('submit', confirmFlagBill);
-  document.addEventListener('keydown', (e) => {{
-    if (e.key !== 'Escape') return;
-    if (backdrop.classList.contains('show')) closeFlagModal();
-  }});
+function snippet(title) {{
+  if (!title) return '';
+  return title.length > 140 ? title.slice(0, 140).trim() + '…' : title;
 }}
 
-function renderFlagClientSelect(selectedId) {{
-  const sel = document.getElementById('flag-client-select');
-  sel.innerHTML = '<option value="">Choose a client…</option>' + clientOptionsHtml(flagModalClients);
-  sel.value = selectedId != null ? String(selectedId) : '';
-}}
-
-function onFlagClientSelectChange(selectEl) {{
-  if (selectEl.value !== ADD_NEW_CLIENT_VALUE) return;
-  openQuickAddClient(flagModalClients, (updatedClients, created) => {{
-    flagModalClients = updatedClients;
-    renderFlagClientSelect(created.id);
-  }}, () => {{
-    renderFlagClientSelect('');
-  }});
-}}
-
-async function openFlagModal() {{
-  if (!current) return;
-  ensureFlagModal();
-  flagAlreadySaved = false;
-  document.getElementById('flag-modal-bill').textContent =
-    `${{current.state}} ${{current.bill_number}}${{current.title ? ' — ' + current.title : ''}}`;
-  document.getElementById('flag-modal-error').className = '';
-  document.getElementById('flag-position-select').value = 'watch';
-  const submitBtn = document.getElementById('flag-modal-submit');
-  submitBtn.disabled = false;
-  submitBtn.textContent = 'Confirm Flagged Bill';
-  renderFlagClientSelect('');
-  document.getElementById('flag-modal-backdrop').classList.add('show');
-
-  // /lookup doesn't otherwise need the client list, so it's fetched
-  // lazily here rather than on every page load like /flagged does.
-  const sel = document.getElementById('flag-client-select');
-  sel.disabled = true;
-  try {{
-    const res = await fetch('/api/clients');
-    if (res.status === 401) {{
-      const next = `/lookup?bill=${{encodeURIComponent(current.bill_number || '')}}`;
-      window.location.href = `/login?next=${{encodeURIComponent(next)}}`;
-      return;
-    }}
-    flagModalClients = await res.json();
-    renderFlagClientSelect('');
-  }} catch (err) {{
-    document.getElementById('flag-modal-error').textContent = 'Could not load your clients. Try again.';
-    document.getElementById('flag-modal-error').className = 'show';
-  }} finally {{
-    sel.disabled = false;
-  }}
-}}
-
-function closeFlagModal() {{
-  const backdrop = document.getElementById('flag-modal-backdrop');
-  if (backdrop) backdrop.classList.remove('show');
-}}
-
-async function confirmFlagBill(e) {{
-  e.preventDefault();
-  if (!current) return;
-  const errorEl2 = document.getElementById('flag-modal-error');
-  errorEl2.className = '';
-  const clientId = document.getElementById('flag-client-select').value;
-  if (!clientId || clientId === ADD_NEW_CLIENT_VALUE) {{
-    errorEl2.textContent = 'Choose a client (or add a new one) before confirming.';
-    errorEl2.className = 'show';
+// Every search — one hit or a hundred — renders as this same row
+// list, one consistent UI regardless of result count. Clicking any
+// row goes to the full action report rather than expanding detail in
+// place (see REPORT_BODY, which now also has "Flag this bill" for a
+// bill that isn't flagged yet).
+function renderResults(data) {{
+  const rows = data.results || [];
+  if (!rows.length) {{
+    resultsEl.innerHTML = '<p class="empty">No bills match that search. Try a broader term, check the spelling, or a different bill number.</p>';
     return;
   }}
-  const position = document.getElementById('flag-position-select').value;
-  const submitBtn = document.getElementById('flag-modal-submit');
-  submitBtn.disabled = true;
-  submitBtn.textContent = 'Saving…';
-  const flagBtn = document.getElementById('flag-btn');
-
-  try {{
-    if (!flagAlreadySaved) {{
-      const flagRes = await fetch('/api/flag', {{
-        method: 'POST',
-        headers: {{ 'Content-Type': 'application/json' }},
-        body: JSON.stringify({{ bill_id: current.id }}),
-      }});
-      if (flagRes.status === 401) {{
-        // Same convention as the server-side redirects in _redirect_to_login()
-        // (see app.py) — carry the bill you were looking at through the
-        // login wall via ?next=..., so signing in lands you back on it
-        // instead of a dead end.
-        const next = `/lookup?bill=${{encodeURIComponent(current.bill_number || '')}}`;
-        window.location.href = `/login?next=${{encodeURIComponent(next)}}`;
-        return;
-      }}
-      const flagData = await flagRes.json();
-      if (!flagRes.ok) throw new Error(flagData.error || 'Could not flag this bill');
-      flagAlreadySaved = true;
-      // The bill really is flagged now, even if assigning it to a
-      // client below fails — reflect that on the page right away
-      // instead of leaving "Flag this bill" showing while this modal
-      // retries the second half.
-      if (flagBtn) {{ flagBtn.disabled = true; flagBtn.textContent = '🚩 Flagged'; }}
-    }}
-
-    const linkRes = await fetch('/api/bill-clients', {{
-      method: 'POST',
-      headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ bill_id: current.id, client_id: Number(clientId), position }}),
-    }});
-    if (!linkRes.ok) {{
-      const linkData = await linkRes.json();
-      throw new Error(linkData.error || 'Bill was flagged, but assigning the client failed.');
-    }}
-    closeFlagModal();
-  }} catch (err) {{
-    // Don't let a failure here read as "nothing happened" when the
-    // flag half already went through — say so explicitly, and leave
-    // the modal open so Confirm can be clicked again (it only re-tries
-    // the client-link call at that point, see flagAlreadySaved above)
-    // instead of silently leaving a flagged-but-unassigned bill.
-    errorEl2.textContent = flagAlreadySaved
-      ? `${{err.message}} The bill is flagged — try again, or finish this later from your Flagged Bills list.`
-      : err.message;
-    errorEl2.className = 'show';
-  }} finally {{
-    submitBtn.disabled = false;
-    submitBtn.textContent = 'Confirm Flagged Bill';
-  }}
-}}
-
-function render(d) {{
-  const sponsors = (d.sponsors || []).map(s =>
-    `<span class="sponsor">${{s.name}}${{s.party ? ' (' + s.party + ')' : ''}}</span>`
-  ).join('');
-
-  const history = historyRowsHtml(d.history);
-  const amendmentRows = amendmentRowsHtml(d.amendments);
-  const hearingRows = hearingRowsHtml(d.hearings);
-  const voteRows = voteRowsHtml(d.votes);
-
-  resultEl.innerHTML = `
-    <div class="card">
-      <div class="bill-id">${{d.state}} ${{d.bill_number}}${{d.session_label ? ` — ${{d.session_label}}` : ''}}</div>
-      ${{d.status_label ? `<div class="status-badge">${{d.status_label}}</div>` : ''}}
-      <div class="bill-title">${{d.title || ''}}</div>
-      <div class="bill-desc">${{d.description || ''}}</div>
-      ${{d.url ? `<a class="bill-link" href="${{d.url}}" target="_blank" rel="noopener">View on LegiScan →</a>` : ''}}
-      <div class="card-actions">
-        <button id="flag-btn" class="secondary" onclick="openFlagModal()">Flag this bill</button>
-      </div>
+  const rowsHtml = rows.map(r => `
+    <tr class="row-link" onclick="window.location.href='/report?bill_id=${{r.bill_id}}'">
+      <td><a href="/report?bill_id=${{r.bill_id}}">${{r.bill_number}}</a></td>
+      <td>${{snippet(r.title)}}</td>
+      <td><span class="status-badge">${{statusLabel(r.last_action)}}</span></td>
+      <td class="date">${{r.last_action_date || ''}}</td>
+    </tr>
+  `).join('');
+  const count = data.count || rows.length;
+  const hasMore = data.page_total && Number(data.page) < Number(data.page_total);
+  resultsEl.innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><div class="sub" style="margin:0">${{count.toLocaleString()}} bill${{count === 1 ? '' : 's'}} match — showing page ${{data.page || 1}} of ${{data.page_total || 1}}</div></div>
+      <table><thead><tr><th>Bill</th><th>Title</th><th>Status</th><th>Last action</th></tr></thead><tbody>${{rowsHtml}}</tbody></table>
     </div>
-    ${{sponsors ? `<h2 class="section">Sponsors</h2><div class="sponsor-list">${{sponsors}}</div>` : ''}}
-    <div class="panel" style="margin-top:1rem">
-      <div class="panel-head"><div class="title">History</div></div>
-      <table>${{history || '<tr><td style="padding:1rem 1.15rem">No history available.</td></tr>'}}</table>
-    </div>
-
-    <div class="panel" style="margin-top:1rem">
-      <div class="panel-head"><div class="title">Amendments</div></div>
-      ${{amendmentRows
-        ? `<table><thead><tr><th>Date</th><th>Chamber</th><th>Amendment</th></tr></thead><tbody>${{amendmentRows}}</tbody></table>`
-        : '<p class="empty" style="padding:1rem 1.15rem">No amendments recorded.</p>'}}
-    </div>
-
-    <div class="panel" style="margin-top:1rem">
-      <div class="panel-head"><div class="title">Upcoming hearings</div></div>
-      ${{hearingRows
-        ? `<table><thead><tr><th>When</th><th>Type</th><th>Details</th></tr></thead><tbody>${{hearingRows}}</tbody></table>`
-        : '<p class="empty" style="padding:1rem 1.15rem">No upcoming hearings scheduled.</p>'}}
-    </div>
-
-    <div class="panel" style="margin-top:1rem">
-      <div class="panel-head"><div class="title">Votes</div></div>
-      ${{voteRows
-        ? `<table><thead><tr><th>Date</th><th>Chamber</th><th>Result</th></tr></thead><tbody>${{voteRows}}</tbody></table>`
-        : '<p class="empty" style="padding:1rem 1.15rem">No votes recorded yet.</p>'}}
-    </div>
+    ${{hasMore ? '<div style="text-align:center;margin-top:1rem"><button type="button" class="secondary" id="next-page-btn">Next page →</button></div>' : ''}}
   `;
-  resultEl.className = 'show';
+  if (hasMore) {{
+    document.getElementById('next-page-btn').addEventListener('click', () => runSearch(currentQuery, currentPage + 1));
+  }}
 }}
 </script>
 """
@@ -2222,135 +2054,6 @@ function renderResults(rows, truncated) {{
 """
 
 LOBBYING_PAGE = page("Organization Search — Rotunda", "/lobbying", LOBBYING_BODY)
-
-
-# Free-text bill search — the third public tool alongside /lookup
-# (exact bill number) and /lobbying (org/employer name). Same
-# app_shell()-without-a-session pattern as those two (see app_shell()'s
-# docstring), same skeleton-loading treatment as Organization Search
-# (LOBBYING_BODY above), and its results link into the same /lookup
-# bill-detail view /lobbying/detail's bill pills already use.
-DISCOVER_BODY = f"""
-<div class="page-head">
-  <div>
-    <h1>Discover bills</h1>
-    <p class="sub">Free-text search across every California bill via LegiScan — for when you don't know the bill number yet.</p>
-  </div>
-</div>
-
-<div class="card">
-  <form id="f" style="margin:0">
-    <label for="q" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Search terms</label>
-    <input id="q" placeholder="e.g. housing element, cannabis licensing, data privacy" required style="flex:1">
-    <button type="submit">Search</button>
-  </form>
-</div>
-
-<div id="loading" class="skeleton">
-  <div class="panel">
-    {"".join(f'''<div class="skeleton-row">
-      <div class="skeleton-bar" style="width:10%"></div>
-      <div class="skeleton-bar" style="width:45%"></div>
-      <div class="skeleton-bar" style="width:14%"></div>
-      <div class="skeleton-bar" style="width:12%"></div>
-    </div>''' for _ in range(3))}
-  </div>
-</div>
-<div id="error" role="alert" aria-live="assertive"></div>
-<div id="results"></div>
-
-<script>
-const form = document.getElementById('f');
-const resultsEl = document.getElementById('results');
-const errorEl = document.getElementById('error');
-const loadingEl = document.getElementById('loading');
-let currentQuery = '';
-let currentPage = 1;
-
-form.addEventListener('submit', (e) => {{
-  e.preventDefault();
-  const q = document.getElementById('q').value.trim();
-  if (q) runSearch(q, 1);
-}});
-
-// Lets the global header search box (#shell-search, wired in
-// app_shell()'s own script to redirect here with ?q=...) land on this
-// page with a query already filled in and run, instead of just
-// dropping you on a blank Discover page.
-const prefillQuery = new URLSearchParams(window.location.search).get('q');
-if (prefillQuery) {{
-  document.getElementById('q').value = prefillQuery;
-  runSearch(prefillQuery, 1);
-}}
-
-async function runSearch(q, page) {{
-  currentQuery = q; currentPage = page;
-  errorEl.className = ''; loadingEl.className = 'skeleton show'; resultsEl.innerHTML = '';
-  form.querySelector('button').disabled = true;
-
-  try {{
-    const res = await fetch(`/api/bills/search?q=${{encodeURIComponent(q)}}&page=${{page}}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Search failed');
-    renderResults(data);
-  }} catch (err) {{
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
-  }} finally {{
-    loadingEl.className = 'skeleton';
-    form.querySelector('button').disabled = false;
-  }}
-}}
-
-// LegiScan's search doesn't return a coded status the way getBill
-// does (see shape_bill() in legiscan_client.py) — just each result's
-// own last_action text. Same keyword-match idea as milestoneClass()
-// elsewhere on this page, just condensed to one current-state label
-// instead of per-row history categories.
-function statusLabel(lastAction) {{
-  const a = (lastAction || '').toLowerCase();
-  if (a.includes('chaptered') || a.includes('approved by the governor')) return 'Passed';
-  if (a.includes('vetoed')) return 'Vetoed';
-  if (a.includes('died') || a.includes('failed')) return 'Failed';
-  if (a.includes('introduced')) return 'Introduced';
-  return 'In progress';
-}}
-
-function snippet(title) {{
-  if (!title) return '';
-  return title.length > 140 ? title.slice(0, 140).trim() + '…' : title;
-}}
-
-function renderResults(data) {{
-  const rows = data.results || [];
-  if (!rows.length) {{
-    resultsEl.innerHTML = '<p class="empty">No bills match that search. Try a broader term or check the spelling.</p>';
-    return;
-  }}
-  const rowsHtml = rows.map(r => `
-    <tr>
-      <td><a href="/lookup?bill=${{encodeURIComponent(r.bill_number)}}">${{r.bill_number}}</a></td>
-      <td>${{snippet(r.title)}}</td>
-      <td><span class="status-badge">${{statusLabel(r.last_action)}}</span></td>
-      <td class="date">${{r.last_action_date || ''}}</td>
-    </tr>
-  `).join('');
-  const hasMore = data.page_total && Number(data.page) < Number(data.page_total);
-  resultsEl.innerHTML = `
-    <div class="panel">
-      <div class="panel-head"><div class="sub" style="margin:0">${{(data.count || rows.length).toLocaleString()}} bills match — showing page ${{data.page || 1}} of ${{data.page_total || 1}}</div></div>
-      <table><thead><tr><th>Bill</th><th>Title</th><th>Status</th><th>Last action</th></tr></thead><tbody>${{rowsHtml}}</tbody></table>
-    </div>
-    ${{hasMore ? '<div style="text-align:center;margin-top:1rem"><button type="button" class="secondary" id="next-page-btn">Next page →</button></div>' : ''}}
-  `;
-  if (hasMore) {{
-    document.getElementById('next-page-btn').addEventListener('click', () => runSearch(currentQuery, currentPage + 1));
-  }}
-}}
-</script>
-"""
-
-DISCOVER_PAGE = page("Discover bills — Rotunda", "/discover", DISCOVER_BODY)
 
 
 # A real destination for one organization's detail, rather than an
@@ -4118,10 +3821,18 @@ REPORT_BODY = f"""
 
 <script>
 {BILL_TABLES_JS}
+{CLIENT_QUICKADD_JS}
 const reportEl = document.getElementById('report');
 const errorEl = document.getElementById('error');
 const billId = new URLSearchParams(window.location.search).get('bill_id');
 const POSITION_LABELS = {{ support: 'Support', oppose: 'Oppose', watch: 'Watch' }};
+// Set by render() each time a report loads — the flag-confirmation
+// modal below reads this instead of re-fetching, same role `current`
+// played in the old /lookup page this modal moved here from (see
+// LOOKUP_BODY's own comment on why: /report is now the one place bill
+// detail, and flagging, actually happen — a search result routes
+// straight here whether or not it's ever been flagged before).
+let currentReport = null;
 
 async function load() {{
   if (!billId) {{
@@ -4145,6 +3856,7 @@ async function load() {{
 }}
 
 function render(r) {{
+  currentReport = r;
   const historyRows = historyRowsHtml(r.history);
   const amendmentRows = amendmentRowsHtml(r.amendments);
   // r.upcoming_hearings, not r.hearings — this page's own field name
@@ -4171,12 +3883,19 @@ function render(r) {{
       <div class="bill-title">${{r.title || ''}}</div>
       ${{r.description ? `<div class="bill-desc">${{r.description}}</div>` : ''}}
       ${{r.url ? `<a class="bill-link" href="${{r.url}}" target="_blank" rel="noopener">View on LegiScan →</a>` : ''}}
+      <div class="card-actions">
+        ${{r.flagged
+          ? '<span class="status-badge">🚩 Flagged</span>'
+          : '<button id="flag-btn" class="secondary" onclick="openFlagModal()">Flag this bill</button>'}}
+      </div>
     </div>
 
     <div class="panel" style="margin-top:1rem">
       <div class="panel-head"><div class="title">Assigned client${{(r.assigned_clients || []).length === 1 ? '' : 's'}}</div></div>
       <div style="padding:1rem 1.15rem">
-        ${{clientBadges || '<p class="empty">Not currently assigned to any of your clients.</p>'}}
+        ${{r.flagged
+          ? (clientBadges || '<p class="empty">Not currently assigned to any of your clients.</p>')
+          : '<p class="empty">Flag this bill to assign it to a client.</p>'}}
       </div>
     </div>
 
@@ -4208,6 +3927,189 @@ function render(r) {{
         : '<p class="empty" style="padding:1rem 1.15rem">No votes recorded yet.</p>'}}
     </div>
   `;
+}}
+
+// Flagging used to be a single click straight to POST /api/flag, with
+// client/position attached later (and separately) on /flagged via
+// clientCell()/positionSelect(). This modal captures client + position
+// as part of flagging itself, using the same picker (POSITIONS,
+// clientOptionsHtml(), the quick-add panel) as /flagged's own
+// dropdown, see CLIENT_QUICKADD_JS. Moved here from /lookup once
+// search results stopped rendering full detail inline — see
+// LOOKUP_BODY's own comment.
+let flagModalClients = [];
+// Tracks whether POST /api/flag has actually succeeded for the current
+// modal session, so a retry after the client-link half fails doesn't
+// re-POST /api/flag (harmless — db.flag_bill is idempotent — but
+// pointless) and so Cancel after that point doesn't imply the flag
+// itself needs redoing too.
+let flagAlreadySaved = false;
+
+function ensureFlagModal() {{
+  if (document.getElementById('flag-modal-backdrop')) return;
+  const backdrop = document.createElement('div');
+  backdrop.id = 'flag-modal-backdrop';
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="flag-modal-title">
+      <div class="modal-head">
+        <div>
+          <div class="title" id="flag-modal-title">Flag this bill</div>
+          <div class="sub" id="flag-modal-bill"></div>
+        </div>
+        <button type="button" class="icon-btn" id="flag-modal-close" aria-label="Close">×</button>
+      </div>
+      <form id="flag-modal-form">
+        <label>
+          <div class="sub" style="margin:0 0 0.3rem">Client</div>
+          <select id="flag-client-select" required onchange="onFlagClientSelectChange(this)">
+            <option value="">Choose a client…</option>
+          </select>
+        </label>
+        <label>
+          <div class="sub" style="margin:0 0 0.3rem">Position</div>
+          <select id="flag-position-select"></select>
+        </label>
+        <div id="flag-modal-error" role="alert" aria-live="assertive"></div>
+        <div class="modal-actions">
+          <button type="submit" id="flag-modal-submit">Confirm Flagged Bill</button>
+          <button type="button" class="secondary" id="flag-modal-cancel">Cancel</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+  document.getElementById('flag-position-select').innerHTML =
+    POSITIONS.map(([value, label]) => `<option value="${{value}}" ${{value === 'watch' ? 'selected' : ''}}>${{label}}</option>`).join('');
+  backdrop.addEventListener('click', (e) => {{ if (e.target === backdrop) closeFlagModal(); }});
+  document.getElementById('flag-modal-close').addEventListener('click', closeFlagModal);
+  document.getElementById('flag-modal-cancel').addEventListener('click', closeFlagModal);
+  document.getElementById('flag-modal-form').addEventListener('submit', confirmFlagBill);
+  document.addEventListener('keydown', (e) => {{
+    if (e.key !== 'Escape') return;
+    if (backdrop.classList.contains('show')) closeFlagModal();
+  }});
+}}
+
+function renderFlagClientSelect(selectedId) {{
+  const sel = document.getElementById('flag-client-select');
+  sel.innerHTML = '<option value="">Choose a client…</option>' + clientOptionsHtml(flagModalClients);
+  sel.value = selectedId != null ? String(selectedId) : '';
+}}
+
+function onFlagClientSelectChange(selectEl) {{
+  if (selectEl.value !== ADD_NEW_CLIENT_VALUE) return;
+  openQuickAddClient(flagModalClients, (updatedClients, created) => {{
+    flagModalClients = updatedClients;
+    renderFlagClientSelect(created.id);
+  }}, () => {{
+    renderFlagClientSelect('');
+  }});
+}}
+
+async function openFlagModal() {{
+  if (!currentReport) return;
+  ensureFlagModal();
+  flagAlreadySaved = false;
+  document.getElementById('flag-modal-bill').textContent =
+    `${{currentReport.state}} ${{currentReport.bill_number}}${{currentReport.title ? ' — ' + currentReport.title : ''}}`;
+  document.getElementById('flag-modal-error').className = '';
+  document.getElementById('flag-position-select').value = 'watch';
+  const submitBtn = document.getElementById('flag-modal-submit');
+  submitBtn.disabled = false;
+  submitBtn.textContent = 'Confirm Flagged Bill';
+  renderFlagClientSelect('');
+  document.getElementById('flag-modal-backdrop').classList.add('show');
+
+  // /report doesn't otherwise need the client list, so it's fetched
+  // lazily here rather than on every page load like /flagged does.
+  const sel = document.getElementById('flag-client-select');
+  sel.disabled = true;
+  try {{
+    const res = await fetch('/api/clients');
+    if (res.status === 401) {{
+      window.location.href = `/login?next=${{encodeURIComponent(window.location.pathname + window.location.search)}}`;
+      return;
+    }}
+    flagModalClients = await res.json();
+    renderFlagClientSelect('');
+  }} catch (err) {{
+    document.getElementById('flag-modal-error').textContent = 'Could not load your clients. Try again.';
+    document.getElementById('flag-modal-error').className = 'show';
+  }} finally {{
+    sel.disabled = false;
+  }}
+}}
+
+function closeFlagModal() {{
+  const backdrop = document.getElementById('flag-modal-backdrop');
+  if (backdrop) backdrop.classList.remove('show');
+}}
+
+async function confirmFlagBill(e) {{
+  e.preventDefault();
+  if (!currentReport) return;
+  const errorEl2 = document.getElementById('flag-modal-error');
+  errorEl2.className = '';
+  const clientId = document.getElementById('flag-client-select').value;
+  if (!clientId || clientId === ADD_NEW_CLIENT_VALUE) {{
+    errorEl2.textContent = 'Choose a client (or add a new one) before confirming.';
+    errorEl2.className = 'show';
+    return;
+  }}
+  const position = document.getElementById('flag-position-select').value;
+  const submitBtn = document.getElementById('flag-modal-submit');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Saving…';
+
+  try {{
+    if (!flagAlreadySaved) {{
+      const flagRes = await fetch('/api/flag', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify({{ bill_id: currentReport.bill_id }}),
+      }});
+      if (flagRes.status === 401) {{
+        // Same convention as the server-side redirects in _redirect_to_login()
+        // (see app.py) — carry the report you were looking at through the
+        // login wall via ?next=..., so signing in lands you back on it
+        // instead of a dead end.
+        window.location.href = `/login?next=${{encodeURIComponent(window.location.pathname + window.location.search)}}`;
+        return;
+      }}
+      const flagData = await flagRes.json();
+      if (!flagRes.ok) throw new Error(flagData.error || 'Could not flag this bill');
+      flagAlreadySaved = true;
+    }}
+
+    const linkRes = await fetch('/api/bill-clients', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ bill_id: currentReport.bill_id, client_id: Number(clientId), position }}),
+    }});
+    if (!linkRes.ok) {{
+      const linkData = await linkRes.json();
+      throw new Error(linkData.error || 'Bill was flagged, but assigning the client failed.');
+    }}
+    closeFlagModal();
+    // Re-fetch so the card/assigned-client panel reflect the new
+    // flagged (and now assigned) state instead of staying stale until
+    // the next page load.
+    load();
+  }} catch (err) {{
+    // Don't let a failure here read as "nothing happened" when the
+    // flag half already went through — say so explicitly, and leave
+    // the modal open so Confirm can be clicked again (it only re-tries
+    // the client-link call at that point, see flagAlreadySaved above)
+    // instead of silently leaving a flagged-but-unassigned bill.
+    errorEl2.textContent = flagAlreadySaved
+      ? `${{err.message}} The bill is flagged — try again, or finish this later from your Flagged Bills list.`
+      : err.message;
+    errorEl2.className = 'show';
+  }} finally {{
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Confirm Flagged Bill';
+  }}
 }}
 
 load();
@@ -5005,7 +4907,16 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/discover":
-            self._send_html(200, DISCOVER_PAGE)
+            # Retired — merged into /lookup, which now handles both
+            # exact bill-number lookups and free-text search in one
+            # page (see smart_search() in legiscan_client.py). A
+            # redirect rather than a 404 so an old bookmark or external
+            # link still lands somewhere useful, carrying over ?q=...
+            # if it had one.
+            location = "/lookup" + (f"?{parsed.query}" if parsed.query else "")
+            self.send_response(302)
+            self.send_header("Location", location)
+            self.end_headers()
             return
 
         if parsed.path == "/watchlist":
@@ -5207,6 +5118,25 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 report = db.get_bill_report(conn, user_id, bill_id)
                 if not report:
+                    # Not stored locally yet — used to only happen for a
+                    # bad bill_id, but now that the merged /lookup search
+                    # sends you straight here for ANY result (see
+                    # LOOKUP_BODY), including one nobody's ever flagged,
+                    # this is the normal first-view case too. Fetch it
+                    # fresh from LegiScan and store it the same way
+                    # /api/flag already does, then serve the report —
+                    # same "re-fetch fresh rather than trust the client"
+                    # pattern as /api/watchlist.
+                    try:
+                        bill = get_bill_detail(bill_id)
+                    except Exception:
+                        traceback.print_exc()
+                        self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
+                        return
+                    db.upsert_bill(conn, bill)
+                    conn.commit()
+                    report = db.get_bill_report(conn, user_id, bill_id)
+                if not report:
                     self._send_json(404, {"error": "No bill found with that ID."})
                     return
                 self._send_json(200, report)
@@ -5336,6 +5266,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/bill":
+            # Superseded by /api/search below (the merged /lookup+
+            # /discover page uses that one) — left in place in case
+            # anything else still calls it directly rather than ripped
+            # out along with the page that used to be its only caller.
             bill = (qs.get("bill") or [""])[0]
             if not bill:
                 self._send_json(400, {"error": "Missing bill parameter."})
@@ -5353,6 +5287,8 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/bills/search":
+            # Same as /api/bill above — superseded by /api/search, kept
+            # alive for any other caller.
             q = (qs.get("q") or [""])[0]
             if not q:
                 self._send_json(400, {"error": "Missing q parameter."})
@@ -5365,6 +5301,30 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 data = search_bills(q, page=page)
+                self._send_json(200, data)
+            except Exception:
+                traceback.print_exc()
+                self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
+            return
+
+        if parsed.path == "/api/search":
+            # The merged /lookup page's one search endpoint — routes to
+            # a bill-number search or a free-text one depending on the
+            # query itself (see smart_search()'s own docstring), so the
+            # page doesn't have to guess which of the two old endpoints
+            # (/api/bill, /api/bills/search) to call.
+            q = (qs.get("q") or [""])[0]
+            if not q:
+                self._send_json(400, {"error": "Missing q parameter."})
+                return
+            page_raw = (qs.get("page") or ["1"])[0]
+            try:
+                page = int(page_raw)
+            except ValueError:
+                self._send_json(400, {"error": "page must be a number."})
+                return
+            try:
+                data = smart_search(q, page=page)
                 self._send_json(200, data)
             except Exception:
                 traceback.print_exc()
