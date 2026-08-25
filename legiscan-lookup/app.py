@@ -4899,6 +4899,26 @@ class Handler(BaseHTTPRequestHandler):
         qs = parse_qs(parsed.query)
 
         if parsed.path == "/":
+            # Unlike every other route, this one has no session check
+            # at all by default — a signed-in visitor landing on "/"
+            # (e.g. clicking the logo, see TOP_BRAND/TOP_NAV_ACCOUNT_LINKS,
+            # both of which keep pointing here on purpose) would just
+            # see the marketing page again instead of their own app.
+            # Same short-lived-connection pattern as
+            # _require_user_for_page(); /flagged is the same fallback
+            # destination _redirect_to_login()/the retired /watchlist
+            # route already use for "somewhere real, now that you're
+            # signed in."
+            conn = db.get_connection()
+            try:
+                logged_in = bool(self._current_user_id(conn))
+            finally:
+                conn.close()
+            if logged_in:
+                self.send_response(302)
+                self.send_header("Location", "/flagged")
+                self.end_headers()
+                return
             self._send_html(200, LANDING_PAGE)
             return
 
