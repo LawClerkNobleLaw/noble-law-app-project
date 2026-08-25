@@ -296,6 +296,27 @@ def test_get_bill_report_upcoming_hearings_stay_soonest_first(conn):
     assert [h["date"] for h in report["upcoming_hearings"]] == ["2099-01-05", "2099-02-10", "2099-03-20"]
 
 
+def test_get_bill_report_flagged_reflects_whether_this_user_flagged_it(conn):
+    # /api/report now upserts a bill straight from LegiScan on first
+    # view (see app.py) — a bill can exist in `bills` without this user
+    # having flagged it at all, which is exactly what happens when the
+    # merged /lookup search sends someone to a report for a bill nobody
+    # has flagged yet. report['flagged'] is how the page tells that
+    # apart from "flagged, no client assigned" (an empty
+    # assigned_clients list alone can't distinguish the two).
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+
+    report = db.get_bill_report(conn, user_id, bill_id)
+    assert report["flagged"] is False
+
+    db.flag_bill(conn, user_id, bill_id)
+    conn.commit()
+
+    report = db.get_bill_report(conn, user_id, bill_id)
+    assert report["flagged"] is True
+
+
 # ── list_flagged_bills' latest_activity_date ────────────────────────
 
 def test_list_flagged_bills_includes_latest_activity_date(conn):

@@ -161,28 +161,20 @@ def lookup_bill(bill_number):
     return get_bill_detail(match["bill_id"])
 
 
-def search_bills(query, page=1):
-    """Free-text bill search (Discover) — unlike lookup_bill(), which
-    resolves one known bill number to its full detail, this is for "I
-    don't know the bill number, just what it's about." Returns
-    lightweight rows straight from getSearch's own result, not a full
-    getBill call per row (that would be one LegiScan API call per
-    search result, which doesn't scale to a results list).
+def _shape_search_rows(results):
+    """searchresult dict (each entry keyed by an opaque result id, plus
+    one 'summary' key to skip) -> the lightweight row list both
+    search_bills() and smart_search() return: bill_id, bill_number,
+    title, relevance, last_action, last_action_date, straight off
+    getSearch's own result shape — no per-row getBill call, see
+    search_bills()'s own docstring for why. Field names were checked
+    against a live getSearch response for query='housing', not guessed
+    from the API docs.
 
-    California only, same reasoning as lookup_bill().
-
-    Field names below were checked against a live getSearch response
-    for query='housing', not guessed from the API docs — searchresult
-    entries already come back with exactly these keys (relevance,
-    bill_id, bill_number, title, last_action, last_action_date), so
-    this only picks the subset the results list actually shows rather
-    than renaming anything."""
-    search = legiscan_call("getSearch", state="CA", query=query, page=page)
-    if search.get("status") != "OK":
-        raise RuntimeError(f"LegiScan search failed: {search}")
-
-    results = search.get("searchresult", {})
-    summary = results.get("summary", {})
+    Sorted by LegiScan's own relevance score, not left in whatever
+    order the dict/JSON happened to iterate in — same reasoning as
+    lookup_bill()'s own relevance pick, just across every candidate
+    instead of collapsing to one."""
     rows = [
         {
             "bill_id": r.get("bill_id"),
@@ -196,9 +188,76 @@ def search_bills(query, page=1):
         if k != "summary"
     ]
     rows.sort(key=lambda r: int(r["relevance"] or 0), reverse=True)
+    return rows
+
+
+def search_bills(query, page=1):
+    """Free-text bill search (Discover) — unlike lookup_bill(), which
+    resolves one known bill number to its full detail, this is for "I
+    don't know the bill number, just what it's about." Returns
+    lightweight rows straight from getSearch's own result, not a full
+    getBill call per row (that would be one LegiScan API call per
+    search result, which doesn't scale to a results list).
+
+    California only, same reasoning as lookup_bill()."""
+    search = legiscan_call("getSearch", state="CA", query=query, page=page)
+    if search.get("status") != "OK":
+        raise RuntimeError(f"LegiScan search failed: {search}")
+
+    results = search.get("searchresult", {})
+    summary = results.get("summary", {})
     return {
-        "results": rows,
+        "results": _shape_search_rows(results),
         "page": summary.get("page_current"),
         "page_total": summary.get("page_total"),
         "count": summary.get("count"),
     }
+
+
+def smart_search(query, page=1):
+    """The merged /lookup search: one function that figures out whether
+    `query` looks like a bill number ('SB122', or even a bare '122' —
+    anything with a digit in it) or free text ('housing licensing'),
+    and searches LegiScan accordingly, always as a results list.
+
+    Unlike lookup_bill(), a digit query never collapses to one "best"
+    match — getSearch can return the same bill number from more than
+    one past session (bill numbers get reused every two-year session),
+    and the whole point of merging lookup into a search page is to show
+    all of them and let the user pick, not guess on their behalf. Same
+    lightweight per-row shape as search_bills() either way (no per-row
+    getBill call — see that function's own docstring for why); a full
+    getBill only happens once the user picks a specific bill (see
+    /api/report in app.py).
+
+    A digit query that comes back with zero bill-number matches but
+    also has non-digit characters in it (e.g. someone typed "housing
+    2024" or a bill number with a typo) falls back to a free-text
+    search of that same raw query, on the theory that a literal
+    zero-results bill lookup usually means the query wasn't actually a
+    bill number after all — a pure-digit query (no letters at all)
+    skips that fallback, since there's no free-text signal in it to
+    search on.
+
+    California only, same reasoning as lookup_bill()/search_bills()."""
+    query = (query or "").strip()
+    has_digit = any(ch.isdigit() for ch in query)
+    has_non_digit = any(not ch.isdigit() for ch in query)
+
+    if not has_digit:
+        return search_bills(query, page=page)
+
+    search = legiscan_call("getSearch", state="CA", bill=query.upper())
+    if search.get("status") != "OK":
+        raise RuntimeError(f"LegiScan search failed: {search}")
+    results = search.get("searchresult", {})
+    rows = _shape_search_rows(results)
+    if rows or not has_non_digit:
+        summary = results.get("summary", {})
+        return {
+            "results": rows,
+            "page": summary.get("page_current"),
+            "page_total": summary.get("page_total"),
+            "count": summary.get("count"),
+        }
+    return search_bills(query, page=page)
