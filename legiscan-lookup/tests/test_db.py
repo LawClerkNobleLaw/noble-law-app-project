@@ -294,3 +294,39 @@ def test_get_bill_report_upcoming_hearings_stay_soonest_first(conn):
     report = db.get_bill_report(conn, user_id, bill_id)
 
     assert [h["date"] for h in report["upcoming_hearings"]] == ["2099-01-05", "2099-02-10", "2099-03-20"]
+
+
+# ── list_flagged_bills' latest_activity_date ────────────────────────
+
+def test_list_flagged_bills_includes_latest_activity_date(conn):
+    # Backs the /flagged page's "Most recent activity" sort option (see
+    # FLAGGED_BODY) — the newest bill_status_history date for each
+    # flagged bill, not bills.status_date (LegiScan's own reported
+    # status date, a different column entirely).
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    conn.executemany(
+        "INSERT INTO bill_status_history (bill_id, date, chamber, action) VALUES (?, ?, ?, ?)",
+        [
+            (bill_id, "2026-01-05", "Senate", "Introduced"),
+            (bill_id, "2026-03-20", "Assembly", "Passed"),
+        ],
+    )
+    conn.commit()
+
+    rows = db.list_flagged_bills(conn, user_id)
+
+    assert len(rows) == 1
+    assert rows[0]["latest_activity_date"] == "2026-03-20"
+
+
+def test_list_flagged_bills_latest_activity_date_is_none_without_history(conn):
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    conn.commit()
+
+    rows = db.list_flagged_bills(conn, user_id)
+
+    assert rows[0]["latest_activity_date"] is None

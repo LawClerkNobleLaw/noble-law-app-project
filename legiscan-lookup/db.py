@@ -307,7 +307,9 @@ def unflag_bill(conn, user_id, bill_id):
 def list_flagged_bills(conn, user_id):
     rows = conn.execute(
         """SELECT f.bill_id, f.flagged_at, w.last_checked_at,
-                  b.state, b.bill_number, b.title, b.status_label, b.status_date, b.url
+                  b.state, b.bill_number, b.title, b.status_label, b.status_date, b.url,
+                  (SELECT MAX(h.date) FROM bill_status_history h
+                   WHERE h.bill_id = f.bill_id) AS latest_activity_date
            FROM flagged_bills f
            JOIN bills b ON b.id = f.bill_id
            LEFT JOIN watchlist w ON w.bill_id = f.bill_id
