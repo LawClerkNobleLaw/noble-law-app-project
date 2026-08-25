@@ -86,7 +86,7 @@ def _migrate(conn):
         conn.execute("ALTER TABLE bill_client_links ADD COLUMN position TEXT NOT NULL DEFAULT 'watch'")
 
     client_cols = {row["name"] for row in conn.execute("PRAGMA table_info(clients)")}
-    for col in ("effective_date", "contract_period", "agencies_lobbied"):
+    for col in ("effective_date", "contract_period", "agencies_lobbied", "bus_phone"):
         if col not in client_cols:
             conn.execute(f"ALTER TABLE clients ADD COLUMN {col} TEXT")
 
@@ -437,14 +437,14 @@ def get_bill_basic(conn, bill_id):
 def create_client(conn, user_id, fields):
     cur = conn.execute(
         """INSERT INTO clients
-             (user_id, name, bus_addr1, bus_city, bus_st, bus_zip4,
+             (user_id, name, bus_addr1, bus_city, bus_st, bus_zip4, bus_phone,
               interests, existing_filer_id, effective_date, contract_period,
               agencies_lobbied, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?, datetime('now'))""",
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))""",
         (
             user_id, fields.get("name"),
             fields.get("bus_addr1"), fields.get("bus_city"),
-            fields.get("bus_st"), fields.get("bus_zip4"),
+            fields.get("bus_st"), fields.get("bus_zip4"), fields.get("bus_phone"),
             fields.get("interests"), fields.get("existing_filer_id") or None,
             fields.get("effective_date") or None, fields.get("contract_period") or None,
             fields.get("agencies_lobbied") or None,
@@ -495,13 +495,14 @@ def update_client(conn, user_id, client_id, fields):
     leave every already-existing client permanently gapped."""
     conn.execute(
         """UPDATE clients
-           SET name = ?, bus_addr1 = ?, bus_city = ?, bus_st = ?, bus_zip4 = ?,
+           SET name = ?, bus_addr1 = ?, bus_city = ?, bus_st = ?, bus_zip4 = ?, bus_phone = ?,
                interests = ?, existing_filer_id = ?, effective_date = ?,
                contract_period = ?, agencies_lobbied = ?
            WHERE id = ? AND user_id = ?""",
         (
             fields.get("name"), fields.get("bus_addr1"), fields.get("bus_city"),
-            fields.get("bus_st"), fields.get("bus_zip4"), fields.get("interests"),
+            fields.get("bus_st"), fields.get("bus_zip4"), fields.get("bus_phone"),
+            fields.get("interests"),
             fields.get("existing_filer_id") or None, fields.get("effective_date") or None,
             fields.get("contract_period") or None, fields.get("agencies_lobbied") or None,
             client_id, user_id,
