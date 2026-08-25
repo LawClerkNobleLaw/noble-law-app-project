@@ -1538,7 +1538,7 @@ function milestoneClass(action) {
 }
 
 function historyRowsHtml(history) {
-  return (history || []).map(h =>
+  return (history || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(h =>
     `<tr class="${milestoneClass(h.action)}"><td class="date">${h.date || ''}</td><td class="chamber">${h.chamber || ''}</td><td>${h.action || ''}</td></tr>`
   ).join('');
 }

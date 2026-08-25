@@ -255,5 +255,42 @@ def test_unlink_bill_from_client(conn):
 
     db.unlink_bill_from_client(conn, user_id, bill_id, client_id)
     conn.commit()
-
     assert db.get_client_bills(conn, user_id, client_id) == []
+
+
+# ── get_bill_report row ordering ────────────────────────────────────
+
+def test_get_bill_report_status_history_is_newest_first(conn):
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    conn.executemany(
+        "INSERT INTO bill_status_history (bill_id, date, chamber, action) VALUES (?, ?, ?, ?)",
+        [
+            (bill_id, "2026-01-05", "Senate", "Introduced"),
+            (bill_id, "2026-03-20", "Assembly", "Passed"),
+            (bill_id, "2026-02-10", "Senate", "Amended"),
+        ],
+    )
+    conn.commit()
+
+    report = db.get_bill_report(conn, user_id, bill_id)
+
+    assert [h["date"] for h in report["history"]] == ["2026-03-20", "2026-02-10", "2026-01-05"]
+
+
+def test_get_bill_report_upcoming_hearings_stay_soonest_first(conn):
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    conn.executemany(
+        "INSERT INTO bill_hearings (bill_id, event_type, date, time, location, description) VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            (bill_id, "Hearing", "2099-03-20", "10:00", "Room 1", "Later hearing"),
+            (bill_id, "Hearing", "2099-01-05", "09:00", "Room 2", "Soonest hearing"),
+            (bill_id, "Hearing", "2099-02-10", "14:00", "Room 3", "Middle hearing"),
+        ],
+    )
+    conn.commit()
+
+    report = db.get_bill_report(conn, user_id, bill_id)
+
+    assert [h["date"] for h in report["upcoming_hearings"]] == ["2099-01-05", "2099-02-10", "2099-03-20"]

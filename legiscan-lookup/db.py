@@ -601,7 +601,7 @@ def get_bill_report(conn, user_id, bill_id):
     result = dict(bill)
     result["history"] = [
         dict(r) for r in conn.execute(
-            "SELECT date, chamber, action FROM bill_status_history WHERE bill_id = ? ORDER BY date",
+            "SELECT date, chamber, action FROM bill_status_history WHERE bill_id = ? ORDER BY date DESC",
             (bill_id,),
         ).fetchall()
     ]
