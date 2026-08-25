@@ -152,6 +152,22 @@ def _clear_login_failures(email):
         _login_failures.pop(email, None)
 
 
+def _login_lockout_remaining_minutes(email):
+    """How many whole minutes are actually left on this email's lockout
+    — separate from _login_locked_out() (which just returns a bool, and
+    has direct `is True`/`is False` test coverage that a changed return
+    type would break) so the message shown at lockout time can state
+    the real wait instead of a generic "a few minutes" regardless of
+    whether it's minute 1 or minute 14 of the window."""
+    with _login_failures_lock:
+        entry = _login_failures.get(email)
+        if not entry:
+            return 0
+        _, first_failure = entry
+        remaining = LOGIN_LOCKOUT_WINDOW - (datetime.datetime.now() - first_failure)
+        return max(1, int(remaining.total_seconds() // 60) + 1)
+
+
 STYLE = """
   :root {
     /* Monochrome — replaces the earlier indigo/Linear palette. No brand
@@ -192,6 +208,12 @@ STYLE = """
        wholesale rewrite of every dimension in the file. */
     --space-1: 4px; --space-2: 8px; --space-3: 12px;
     --space-4: 16px; --space-5: 24px; --space-6: 32px;
+    /* Not redeclared per-theme, same reasoning as --space-* above — the
+       font stack doesn't change with light/dark. Matches the stack
+       already hardcoded at each of .bill-id/td.date/.filter-tab .n/etc.
+       below; LANDING_STYLE references this token directly instead of
+       repeating the stack a sixth time. */
+    --mono: ui-monospace, monospace;
     --brand-mark: url("data:image/png;base64,__BRAND_MARK_LIGHT_B64__");
   }
   /* :not([data-theme="light"]) so an explicit light choice (the
@@ -350,6 +372,13 @@ STYLE = """
     margin-bottom: 0.5rem;
   }
   .status-badge::before { content: ""; width: 0.4rem; height: 0.4rem; border-radius: 999px; background: currentColor; flex: none; }
+  /* Unlike the base rule above (deliberately neutral because LegiScan's
+     own status_label is a freeform string not worth guessing at — see
+     that rule's comment), a caller that owns its own small, known status
+     enum (e.g. disclosure filings' draft/ready_to_file) can opt into a
+     real color here instead of reaching for .position-badge, a
+     different component meant for a client's stance on a bill. */
+  .status-badge.good { background: var(--good-soft); color: var(--good); }
   .card-actions { margin-top: 0.9rem; display: flex; gap: 0.5rem; }
   h2.section { font-size: 0.95rem; margin: 1.6rem 0 0.6rem; }
   table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
@@ -667,7 +696,12 @@ STYLE = """
     cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease;
   }
   .row-menu-btn:hover { background: var(--accent-soft); color: var(--ink); border-color: var(--ink); }
-  .row-menu-btn svg { width: 1rem; height: 1rem; }
+  /* flex: none for the same reason .icon-btn svg (above) needs it — an
+     <svg> with no width/height HTML attributes collapses to 0 width in
+     a flex container's default flex-shrink:1, even with this explicit
+     CSS width set. Confirmed via getComputedStyle(): this "..." button
+     was rendering the icon at 0px wide, an empty-looking button. */
+  .row-menu-btn svg { width: 1rem; height: 1rem; flex: none; }
   .row-menu-dropdown {
     position: absolute; right: 0; top: calc(100% + 0.25rem); background: var(--surface);
     border: 1px solid var(--rule); border-radius: var(--radius-md); padding: var(--space-1); min-width: 9rem;
@@ -779,7 +813,7 @@ def account_widget(extra_links="", menu_class="", guest_plain=False):
 <div class="app-account-guest{' plain-links' if guest_plain else ''}" id="shell-guest">
   {guest_links}
 </div>
-<button type="button" class="app-account" id="shell-account-btn" style="display:none">
+<button type="button" class="app-account" id="shell-account-btn" style="display:none" aria-haspopup="true" aria-expanded="false">
   <span class="app-avatar" id="shell-avatar">&nbsp;</span>
   <span class="app-account-email" id="shell-email">&nbsp;</span>
   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--slate);flex:none">
@@ -811,9 +845,24 @@ def account_widget(extra_links="", menu_class="", guest_plain=False):
 
   const acctBtn = document.getElementById('shell-account-btn');
   const acctMenu = document.getElementById('shell-account-menu');
-  acctBtn.addEventListener('click', () => acctMenu.classList.toggle('show'));
+  // aria-expanded on the trigger mirrors the .show class so screen readers
+  // know this is a disclosure control and whether it's currently open —
+  // sighted-only before, since only the CSS class changed.
+  const setAcctMenuOpen = (open) => {{
+    acctMenu.classList.toggle('show', open);
+    acctBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }};
+  acctBtn.addEventListener('click', () => setAcctMenuOpen(!acctMenu.classList.contains('show')));
   document.addEventListener('click', (e) => {{
-    if (!acctBtn.contains(e.target) && !acctMenu.contains(e.target)) acctMenu.classList.remove('show');
+    if (!acctBtn.contains(e.target) && !acctMenu.contains(e.target)) setAcctMenuOpen(false);
+  }});
+  // Escape closes the menu and returns focus to the button that opened it,
+  // matching the standard disclosure-menu keyboard pattern.
+  document.addEventListener('keydown', (e) => {{
+    if (e.key === 'Escape' && acctMenu.classList.contains('show')) {{
+      setAcctMenuOpen(false);
+      acctBtn.focus();
+    }}
   }});
   document.getElementById('shell-signout-btn').addEventListener('click', async () => {{
     await fetch('/api/logout', {{ method: 'POST' }});
@@ -916,10 +965,14 @@ def top_nav(current, left_extra="", show_account_menu=True):
     account = (
         f'<div style="margin-left:auto;position:relative;max-width:14rem">'
         f'{account_widget(TOP_NAV_ACCOUNT_LINKS, "top-anchored", guest_plain=True)}</div>'
-        '</div></div>'
-        if show_account_menu else "</div></div>"
+        '</div></nav>'
+        if show_account_menu else "</div></nav>"
     )
-    return f'<div class="top-nav"><div class="top-nav-inner">{TOP_BRAND}{left}{account}'
+    # <nav>, not <div> — public pages (landing/signup/login/profile, the
+    # only callers of top_nav()) otherwise had no navigation landmark at
+    # all for screen-reader users to jump to; the .top-nav class and its
+    # styling are unaffected since STYLE targets the class, not the tag.
+    return f'<nav class="top-nav" aria-label="Main"><div class="top-nav-inner">{TOP_BRAND}{left}{account}'
 
 
 # ── Sidebar app shell — for signed-in pages only, rolled out one page
@@ -1032,11 +1085,9 @@ def app_shell(current, body):
       <div class="app-topbar-actions">
         {'' if current == "/discover" else '''<div class="search-box">
           <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="5" r="3.5"/><path d="M8 8l2 2" stroke-linecap="round"/></svg>
+          <label for="shell-search" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Search bills</label>
           <input id="shell-search" type="text" placeholder="Search bills...">
         </div>'''}
-        <button type="button" class="icon-btn" aria-label="Notifications">
-          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M7 1.5A3.5 3.5 0 003.5 5v2L2 9.5h10L10.5 7V5A3.5 3.5 0 007 1.5z"/><path d="M5.5 9.5A1.5 1.5 0 008.5 9.5" stroke-linecap="round"/></svg>
-        </button>
         {_flag_a_bill_action(current)}
       </div>
     </header>
@@ -1087,7 +1138,7 @@ def page(title, path, body):
     mean restructuring how each one builds its body, not just
     deduping this wrapper)."""
     return f"""<!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1233,7 +1284,7 @@ LANDING_STYLE = """
 """
 
 LANDING_PAGE = f"""<!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1244,18 +1295,19 @@ LANDING_PAGE = f"""<!doctype html>
 <body>
 {top_nav("/", left_extra='<a href="/lookup">Lookup</a><a href="/discover">Discover</a><a href="#features">Product</a><a href="#workflow">Workflow</a><a href="#trust">Compliance</a>')}
 
+<main>
 <header class="hero">
   <div class="mkt-wrap hero-inner">
     <div class="eyebrow"><span class="dot"></span>Built for California lobbying compliance</div>
     <h1 class="headline">The system of record for every bill your clients care about.</h1>
     <p class="sub-lg">Rotunda watches Sacramento so you don't have to. Flag a bill, assign a client and a position, and get one plain-English digest the moment anything actually changes — then let it fill out your FPPC paperwork before the deadline finds you.</p>
     <div class="hero-ctas">
-      <a href="/signup" class="btn" style="display:inline-flex;align-items:center;justify-content:center;min-height:2.75rem;padding:0 1.1rem;border-radius:8px;background:var(--accent-solid);color:var(--accent-solid-text);font-weight:600;font-size:0.875rem;">Start tracking bills</a>
-      <a href="#features" class="secondary" style="display:inline-flex;align-items:center;justify-content:center;min-height:2.75rem;padding:0 1.1rem;border-radius:8px;">See how it works</a>
+      <a href="/signup" class="primary" style="min-height:2.75rem;font-size:0.875rem;">Start tracking bills</a>
+      <a href="#features" class="secondary" style="min-height:2.75rem;">See how it works</a>
     </div>
     <p class="hero-note">Free to <a href="/lookup">look up any bill</a>. No account needed until you flag one.</p>
 
-    <div class="frame">
+    <div class="frame" aria-hidden="true">
       <div class="frame-body">
         <div class="frame-sidebar">
           <div class="frame-brand">
@@ -1425,12 +1477,13 @@ LANDING_PAGE = f"""<!doctype html>
     <div class="cta-band card">
       <h2>Stop tracking bills in a spreadsheet.</h2>
       <div class="hero-ctas">
-        <a href="/signup" class="btn" style="display:inline-flex;align-items:center;justify-content:center;min-height:2.75rem;padding:0 1.1rem;border-radius:8px;background:var(--accent-solid);color:var(--accent-solid-text);font-weight:600;font-size:0.875rem;">Start tracking bills</a>
+        <a href="/signup" class="primary" style="min-height:2.75rem;font-size:0.875rem;">Start tracking bills</a>
       </div>
       <p class="foot">Look up your first bill in seconds. No account needed until you flag one.</p>
     </div>
   </div>
 </section>
+</main>
 
 <footer class="mkt-footer">
   <div class="mkt-wrap">
@@ -1547,13 +1600,14 @@ LOOKUP_BODY = f"""
 
 <div class="card">
   <form id="f" style="margin:0">
-    <input id="bill" placeholder="e.g. SB122" autocomplete="off" required>
+    <label for="bill" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Bill number</label>
+    <input id="bill" placeholder="e.g. SB122" required>
     <button type="submit">Look up</button>
   </form>
 </div>
 
 <div id="loading"><span class="spinner"></span>Searching LegiScan…</div>
-<div id="error"></div>
+<div id="error" role="alert" aria-live="assertive"></div>
 <div id="result"></div>
 
 <script>
@@ -1698,7 +1752,8 @@ LOBBYING_BODY = f"""
 
 <div class="card">
   <form id="f" style="margin:0 0 1rem">
-    <input id="q" placeholder="Firm, employer, or client name" autocomplete="off" required style="flex:1">
+    <label for="q" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Firm, employer, or client name</label>
+    <input id="q" placeholder="Firm, employer, or client name" required style="flex:1">
     <button type="submit">Search</button>
   </form>
   <p class="sub" style="margin:0;font-size:0.82rem">
@@ -1719,7 +1774,7 @@ LOBBYING_BODY = f"""
     </div>''' for _ in range(3))}
   </div>
 </div>
-<div id="error"></div>
+<div id="error" role="alert" aria-live="assertive"></div>
 <div id="results"></div>
 
 <script>
@@ -1740,7 +1795,7 @@ form.addEventListener('submit', async (e) => {{
     const res = await fetch(`/api/lobbying/search?q=${{encodeURIComponent(q)}}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Search failed');
-    renderResults(data);
+    renderResults(data.results, data.truncated);
   }} catch (err) {{
     errorEl.textContent = err.message;
     errorEl.className = 'show';
@@ -1788,6 +1843,7 @@ function variantsRow(r) {{
       <td colspan="5">
         <details>
           <summary>+ ${{r.variants.length}} other filing variant${{r.variants.length === 1 ? '' : 's'}}</summary>
+          <p class="sub" style="margin:0 0 0.5rem">Grouped by name similarity, not a verified match — check each one below.</p>
           ${{items}}
         </details>
       </td>
@@ -1795,9 +1851,9 @@ function variantsRow(r) {{
   `;
 }}
 
-function renderResults(rows) {{
+function renderResults(rows, truncated) {{
   if (!rows.length) {{
-    resultsEl.innerHTML = '<p class="empty">No firms, employers, or named clients match that.</p>';
+    resultsEl.innerHTML = '<p class="empty">No firms, employers, or named clients match that. Try a broader term or check the spelling.</p>';
     return;
   }}
   resultsEl.innerHTML = `
@@ -1818,6 +1874,7 @@ function renderResults(rows) {{
         </tbody>
       </table>
     </div>
+    ${{truncated ? '<p class="sub" style="margin-top:0.75rem">Showing the first 50 matches — narrow your search if you don\\'t see what you\\'re looking for.</p>' : ''}}
   `;
 }}
 
@@ -1843,7 +1900,8 @@ DISCOVER_BODY = f"""
 
 <div class="card">
   <form id="f" style="margin:0">
-    <input id="q" placeholder="e.g. housing element, cannabis licensing, data privacy" autocomplete="off" required style="flex:1">
+    <label for="q" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Search terms</label>
+    <input id="q" placeholder="e.g. housing element, cannabis licensing, data privacy" required style="flex:1">
     <button type="submit">Search</button>
   </form>
 </div>
@@ -1858,7 +1916,7 @@ DISCOVER_BODY = f"""
     </div>''' for _ in range(3))}
   </div>
 </div>
-<div id="error"></div>
+<div id="error" role="alert" aria-live="assertive"></div>
 <div id="results"></div>
 
 <script>
@@ -1926,7 +1984,7 @@ function snippet(title) {{
 function renderResults(data) {{
   const rows = data.results || [];
   if (!rows.length) {{
-    resultsEl.innerHTML = '<p class="empty">No bills match that search.</p>';
+    resultsEl.innerHTML = '<p class="empty">No bills match that search. Try a broader term or check the spelling.</p>';
     return;
   }}
   const rowsHtml = rows.map(r => `
@@ -1962,8 +2020,9 @@ DISCOVER_PAGE = page("Discover bills — Rotunda", "/discover", DISCOVER_BODY)
 # named in someone else's filing, never independently registered).
 LOBBYING_DETAIL_BODY = f"""
 <div class="page-head"><div><a href="/lobbying" class="sub">← Organization Search</a></div></div>
-<div id="error"></div>
-<div id="detail"><p class="empty">Loading…</p></div>
+<div id="error" role="alert" aria-live="assertive"></div>
+<div id="loading" class="show"><span class="spinner"></span>Loading…</div>
+<div id="detail"></div>
 
 <script>
 const errorEl = document.getElementById('error');
@@ -2001,13 +2060,15 @@ function relationshipRows(rows, selectedName) {{
   return `
     <div class="panel">
       <div class="panel-head"><div class="title">Lobbying relationships</div></div>
+      <div style="overflow-x:auto">
       <table>
-        <thead><tr><th>Firm</th><th>Client / employer</th><th>Period</th><th>Amount</th><th>Bill / activity</th></tr></thead>
+        <thead><tr><th>Firm</th><th>Client / employer</th><th>Form</th><th>Period</th><th>Amount</th><th>Bill / activity</th></tr></thead>
         <tbody>
         ${{rows.map(r => `
           <tr>
             <td>${{highlight(r.firm, selectedName)}}</td>
             <td>${{highlight(r.client, selectedName)}}</td>
+            <td><span class="tag" title="Firm/client direction is inferred from this form type">${{r.form_type || '—'}}</span></td>
             <td class="date">${{(r.period_start || '').split(' ')[0]}} – ${{(r.period_end || '').split(' ')[0]}}</td>
             <td>${{money(r.amount_spent)}}</td>
             <td>${{billPills(r.raw_bill_text)}}</td>
@@ -2015,6 +2076,7 @@ function relationshipRows(rows, selectedName) {{
         `).join('')}}
         </tbody>
       </table>
+      </div>
     </div>
   `;
 }}
@@ -2057,6 +2119,8 @@ async function load() {{
     detailEl.innerHTML = '';
     errorEl.textContent = err.message;
     errorEl.className = 'show';
+  }} finally {{
+    document.getElementById('loading').className = '';
   }}
 }}
 
@@ -2068,7 +2132,7 @@ LOBBYING_DETAIL_PAGE = page("Organization Detail — Rotunda", "/lobbying", LOBB
 
 
 SIGNUP_PAGE = f"""<!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2078,6 +2142,7 @@ SIGNUP_PAGE = f"""<!doctype html>
 </head>
 <body>
 {top_nav("/signup", left_extra='<a href="/lookup">← Lookup</a><a href="/login">Log in →</a>', show_account_menu=False)}
+<main>
 <div class="wrap">
   <h1>Create your account</h1>
   <div class="step-indicator">
@@ -2093,7 +2158,10 @@ SIGNUP_PAGE = f"""<!doctype html>
       </label>
       <label style="flex:1 1 100%">
         <div class="sub" style="margin:0 0 0.3rem">Password</div>
-        <input id="password" type="password" autocomplete="new-password" required style="width:100%">
+        <div style="display:flex;gap:0.5rem">
+          <input id="password" type="password" autocomplete="new-password" required minlength="8" style="width:100%">
+          <button type="button" id="toggle-password" class="secondary" aria-pressed="false" style="flex:none">Show</button>
+        </div>
         <div class="sub" style="margin:0.3rem 0 0;font-size:0.78rem">8+ characters</div>
       </label>
       <button type="submit">Continue →</button>
@@ -2101,10 +2169,19 @@ SIGNUP_PAGE = f"""<!doctype html>
   </div>
 
   <div id="loading"><span class="spinner"></span>Creating account…</div>
-  <div id="error"></div>
+  <div id="error" role="alert" aria-live="assertive"></div>
 </div>
+</main>
 
 <script>
+const togglePasswordBtn = document.getElementById('toggle-password');
+const passwordInput = document.getElementById('password');
+togglePasswordBtn.addEventListener('click', () => {{
+  const show = passwordInput.type === 'password';
+  passwordInput.type = show ? 'text' : 'password';
+  togglePasswordBtn.textContent = show ? 'Hide' : 'Show';
+  togglePasswordBtn.setAttribute('aria-pressed', show ? 'true' : 'false');
+}});
 const form = document.getElementById('f');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
@@ -2140,7 +2217,7 @@ form.addEventListener('submit', async (e) => {{
 
 
 LOGIN_PAGE = f"""<!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2150,6 +2227,7 @@ LOGIN_PAGE = f"""<!doctype html>
 </head>
 <body>
 {top_nav("/login", left_extra='<a href="/lookup">← Lookup</a><a href="/signup">Sign up →</a>', show_account_menu=False)}
+<main>
 <div class="wrap">
   <h1>Log in</h1>
 
@@ -2161,17 +2239,29 @@ LOGIN_PAGE = f"""<!doctype html>
       </label>
       <label style="flex:1 1 100%">
         <div class="sub" style="margin:0 0 0.3rem">Password</div>
-        <input id="password" type="password" autocomplete="current-password" required style="width:100%">
+        <div style="display:flex;gap:0.5rem">
+          <input id="password" type="password" autocomplete="current-password" required style="width:100%">
+          <button type="button" id="toggle-password" class="secondary" aria-pressed="false" style="flex:none">Show</button>
+        </div>
       </label>
       <button type="submit">Log in</button>
     </form>
   </div>
 
   <div id="loading"><span class="spinner"></span>Logging in…</div>
-  <div id="error"></div>
+  <div id="error" role="alert" aria-live="assertive"></div>
 </div>
+</main>
 
 <script>
+const togglePasswordBtn = document.getElementById('toggle-password');
+const passwordInput = document.getElementById('password');
+togglePasswordBtn.addEventListener('click', () => {{
+  const show = passwordInput.type === 'password';
+  passwordInput.type = show ? 'text' : 'password';
+  togglePasswordBtn.textContent = show ? 'Hide' : 'Show';
+  togglePasswordBtn.setAttribute('aria-pressed', show ? 'true' : 'false');
+}});
 const form = document.getElementById('f');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
@@ -2215,7 +2305,7 @@ form.addEventListener('submit', async (e) => {{
 
 
 PROFILE_PAGE = f"""<!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2225,9 +2315,13 @@ PROFILE_PAGE = f"""<!doctype html>
 </head>
 <body>
 {top_nav("/signup/profile", left_extra='<a href="/flagged">Skip for now →</a>')}
+<main>
 <div class="wrap">
   <h1>Registration details</h1>
-  <p class="sub">Step 2 of 2 — modeled on CAL-ACCESS Form 601 (Lobbying Firm Registration Statement), so the fields match what you'd already recognize from the state's own form.</p>
+  <div class="step-indicator">
+    <span id="profile-step-dots"><span class="step-dot filled"></span><span class="step-dot filled"></span></span>
+    <p class="sub" style="margin:0">Step 2 of 2 — modeled on CAL-ACCESS Form 601 (Lobbying Firm Registration Statement), so the fields match what you'd already recognize from the state's own form.</p>
+  </div>
 
   <div class="card">
   <form id="f">
@@ -2249,9 +2343,13 @@ PROFILE_PAGE = f"""<!doctype html>
     <div style="flex:1 1 100%">
       <h2 class="section" style="margin-top:1.2rem">Business address</h2>
     </div>
+    <label for="bus_addr1" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Street address</label>
     <input id="bus_addr1" placeholder="Street address" style="flex:1 1 100%">
+    <label for="bus_city" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">City</label>
     <input id="bus_city" placeholder="City" style="flex:2">
+    <label for="bus_st" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">State</label>
     <input id="bus_st" placeholder="State" maxlength="2" style="flex:1;text-transform:uppercase">
+    <label for="bus_zip4" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">ZIP code</label>
     <input id="bus_zip4" placeholder="ZIP" style="flex:1">
 
     <div style="flex:1 1 100%">
@@ -2261,9 +2359,13 @@ PROFILE_PAGE = f"""<!doctype html>
       </label>
     </div>
     <div id="mail_fields" style="display:none;flex:1 1 100%;gap:0.6rem;flex-wrap:wrap">
+      <label for="mail_addr1" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing street address</label>
       <input id="mail_addr1" placeholder="Street address" style="flex:1 1 100%">
+      <label for="mail_city" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing city</label>
       <input id="mail_city" placeholder="City" style="flex:2">
+      <label for="mail_st" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing state</label>
       <input id="mail_st" placeholder="State" maxlength="2" style="flex:1;text-transform:uppercase">
+      <label for="mail_zip4" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing ZIP code</label>
       <input id="mail_zip4" placeholder="ZIP" style="flex:1">
     </div>
 
@@ -2282,8 +2384,9 @@ PROFILE_PAGE = f"""<!doctype html>
   </div>
 
   <div id="loading"><span class="spinner"></span>Saving…</div>
-  <div id="error"></div>
+  <div id="error" role="alert" aria-live="assertive"></div>
 </div>
+</main>
 
 <script>
 const form = document.getElementById('f');
@@ -2324,6 +2427,17 @@ mailSame.addEventListener('change', () => {{
     document.querySelector('h1').textContent = 'Edit your registration details';
     document.querySelector('.sub').textContent =
       'Modeled on CAL-ACCESS Form 601 (Lobbying Firm Registration Statement).';
+    // Editing an existing profile isn't "step 2 of anything" — drop the
+    // signup step dots, and swap the top-nav's "Skip for now" (which
+    // only made sense mid-signup) for a real way back to the profile
+    // page instead of leaving the browser back button as the only exit.
+    const stepDots = document.getElementById('profile-step-dots');
+    if (stepDots) stepDots.style.display = 'none';
+    const skipLink = document.querySelector('nav.top-nav a[href="/flagged"]');
+    if (skipLink) {{
+      skipLink.textContent = '← Back to profile';
+      skipLink.href = '/profile';
+    }}
   }} catch (err) {{ /* no profile yet — leave the blank sign-up form as-is */ }}
 }})();
 
@@ -2343,12 +2457,16 @@ form.addEventListener('submit', async (e) => {{
         registrant_type: registrantType ? registrantType.value : '',
         bus_addr1: document.getElementById('bus_addr1').value.trim(),
         bus_city: document.getElementById('bus_city').value.trim(),
-        bus_st: document.getElementById('bus_st').value.trim(),
+        // .toUpperCase() to match what the field's own CSS
+        // (text-transform:uppercase) already shows on screen — without
+        // it, a user who types "ca" sees "CA" but "ca" is what actually
+        // gets saved, silently out of sync with the displayed value.
+        bus_st: document.getElementById('bus_st').value.trim().toUpperCase(),
         bus_zip4: document.getElementById('bus_zip4').value.trim(),
         mail_same_as_bus: mailSame.checked,
         mail_addr1: document.getElementById('mail_addr1').value.trim(),
         mail_city: document.getElementById('mail_city').value.trim(),
-        mail_st: document.getElementById('mail_st').value.trim(),
+        mail_st: document.getElementById('mail_st').value.trim().toUpperCase(),
         mail_zip4: document.getElementById('mail_zip4').value.trim(),
         bus_phone: document.getElementById('bus_phone').value.trim(),
         existing_filer_id: document.getElementById('existing_filer_id').value.trim(),
@@ -2378,7 +2496,7 @@ PROFILE_BODY = f"""
   </div>
 </div>
 <div id="loading"><span class="spinner"></span>Loading…</div>
-<div id="error"></div>
+<div id="error" role="alert" aria-live="assertive"></div>
 <div id="content"></div>
 
 <script>
@@ -2460,7 +2578,7 @@ FLAGGED_BODY = f"""
     <div class="filter-tabs" id="tabs"></div>
   </div>
 </div>
-<div id="error"></div>
+<div id="error" role="alert" aria-live="assertive"></div>
 <div class="stat-grid" id="stats"></div>
 
 <div class="panel">
@@ -2478,11 +2596,13 @@ FLAGGED_BODY = f"""
     <div class="title">Flagged Bills</div>
     <div class="sub">Sorted by bill number</div>
   </div>
+  <div id="loading" class="show" style="padding:1rem 1.15rem"><span class="spinner"></span>Loading…</div>
   <div id="list"></div>
 </div>
 
 <script>
 const listEl = document.getElementById('list');
+const loadingEl = document.getElementById('loading');
 const errorEl = document.getElementById('error');
 const tabsEl = document.getElementById('tabs');
 const statsEl = document.getElementById('stats');
@@ -2585,21 +2705,55 @@ async function load() {{
   }} catch (err) {{
     errorEl.textContent = err.message;
     errorEl.className = 'show';
+  }} finally {{
+    loadingEl.className = '';
   }}
 }}
 
+// A friendly "Aug 24, 2:03 PM" instead of the raw
+// "2026-08-24T14:03:00" ISO string the API returns.
+function fmtDateTime(iso) {{
+  if (!iso) return '';
+  const d = new Date(iso.includes('Z') || iso.includes('+') ? iso : iso + 'Z');
+  if (isNaN(d)) return iso;
+  return d.toLocaleString('en-US', {{ month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }});
+}}
+
+function closeRowMenus() {{
+  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {{
+    m.classList.remove('show');
+    const openBtn = document.querySelector(`[aria-controls="${{m.id}}"]`);
+    if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
+  }});
+}}
 function toggleRowMenu(e, billId) {{
   e.stopPropagation();
   const menu = document.getElementById(`row-menu-${{billId}}`);
   const wasOpen = menu.classList.contains('show');
-  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => m.classList.remove('show'));
-  if (!wasOpen) menu.classList.add('show');
+  closeRowMenus();
+  if (!wasOpen) {{
+    menu.classList.add('show');
+    e.currentTarget.setAttribute('aria-expanded', 'true');
+  }}
 }}
-document.addEventListener('click', () => {{
-  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => m.classList.remove('show'));
+document.addEventListener('click', closeRowMenus);
+document.addEventListener('keydown', (e) => {{
+  if (e.key !== 'Escape') return;
+  const openMenu = document.querySelector('.row-menu-dropdown.show');
+  if (!openMenu) return;
+  const openBtn = document.querySelector(`[aria-controls="${{openMenu.id}}"]`);
+  closeRowMenus();
+  if (openBtn) openBtn.focus();
 }});
 
 async function unflag(billId) {{
+  // Unflagging drops the bill's tracked position/client context with
+  // no undo — worth a confirm, same reasoning as removeClient() on the
+  // Clients page.
+  const r = currentRows.find(x => x.bill_id === billId);
+  const label = r ? `${{r.state}} ${{r.bill_number}}` : 'this bill';
+  if (!confirm(`Unflag ${{label}}? You'll stop tracking it and lose its saved position.`)) return;
+  errorEl.className = '';
   try {{
     const res = await fetch(`/api/flag?bill_id=${{billId}}`, {{ method: 'DELETE' }});
     if (!res.ok) {{
@@ -2616,6 +2770,8 @@ async function unflag(billId) {{
 async function assignClient(billId, selectEl) {{
   const clientId = selectEl.value;
   if (!clientId) return;
+  errorEl.className = '';
+  selectEl.disabled = true;
   try {{
     const res = await fetch('/api/bill-clients', {{
       method: 'POST',
@@ -2628,12 +2784,18 @@ async function assignClient(billId, selectEl) {{
     }}
     load();
   }} catch (err) {{
+    selectEl.disabled = false;
     errorEl.textContent = err.message;
     errorEl.className = 'show';
   }}
 }}
 
-async function unassignClient(billId, clientId) {{
+async function unassignClient(billId, clientId, btnEl) {{
+  const r = currentRows.find(x => x.bill_id === billId);
+  const c = r && (r.assigned_clients || []).find(x => x.id === clientId);
+  if (!confirm(`Remove ${{c ? c.name : 'this client'}} from this bill?`)) return;
+  errorEl.className = '';
+  btnEl.disabled = true;
   try {{
     const res = await fetch(`/api/bill-clients?bill_id=${{billId}}&client_id=${{clientId}}`, {{ method: 'DELETE' }});
     if (!res.ok) {{
@@ -2642,6 +2804,7 @@ async function unassignClient(billId, clientId) {{
     }}
     load();
   }} catch (err) {{
+    btnEl.disabled = false;
     errorEl.textContent = err.message;
     errorEl.className = 'show';
   }}
@@ -2649,19 +2812,31 @@ async function unassignClient(billId, clientId) {{
 
 const POSITIONS = [['watch', 'Watch'], ['support', 'Support'], ['oppose', 'Oppose']];
 
-async function setPosition(billId, clientId, position) {{
+async function setPosition(billId, clientId, selectEl) {{
+  const newPosition = selectEl.value;
+  const savedPosition = selectEl.dataset.saved;
+  errorEl.className = '';
+  // Optimistic repaint so the picked color shows right away — reverted
+  // in the catch below if the server rejects the change, so a failed
+  // save can no longer look identical to a successful one.
+  selectEl.className = 'position-select ' + newPosition;
+  selectEl.disabled = true;
   try {{
     const res = await fetch('/api/bill-clients', {{
       method: 'POST',
       headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ bill_id: billId, client_id: clientId, position }}),
+      body: JSON.stringify({{ bill_id: billId, client_id: clientId, position: newPosition }}),
     }});
     if (!res.ok) {{
       const data = await res.json();
       throw new Error(data.error || 'Could not update position');
     }}
+    selectEl.dataset.saved = newPosition;
     load();
   }} catch (err) {{
+    selectEl.value = savedPosition;
+    selectEl.className = 'position-select ' + savedPosition;
+    selectEl.disabled = false;
     errorEl.textContent = err.message;
     errorEl.className = 'show';
   }}
@@ -2672,7 +2847,7 @@ function positionSelect(r, c) {{
   const options = POSITIONS.map(([value, label]) =>
     `<option value="${{value}}" ${{position === value ? 'selected' : ''}}>${{label}}</option>`
   ).join('');
-  return `<select class="position-select ${{position}}" onchange="setPosition(${{r.bill_id}}, ${{c.id}}, this.value); this.className = 'position-select ' + this.value" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${{options}}</select>`;
+  return `<select class="position-select ${{position}}" data-saved="${{position}}" onchange="setPosition(${{r.bill_id}}, ${{c.id}}, this)" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${{options}}</select>`;
 }}
 
 function clientCell(r) {{
@@ -2680,7 +2855,7 @@ function clientCell(r) {{
     <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem">
       <a href="/clients/detail?id=${{c.id}}">${{c.name}}</a>
       ${{positionSelect(r, c)}}
-      <a href="#" onclick="event.preventDefault(); unassignClient(${{r.bill_id}}, ${{c.id}})" style="color:var(--slate)" title="Remove client">×</a>
+      <button type="button" class="icon-btn" onclick="unassignClient(${{r.bill_id}}, ${{c.id}}, this)" aria-label="Remove client from this bill" title="Remove client" style="height:1.5rem;width:1.5rem;color:var(--slate)">×</button>
     </div>
   `).join('');
 
@@ -2735,10 +2910,10 @@ function render(rows) {{
             </div>
           </td>
           <td>${{r.status_label ? `<span class="status-badge">${{r.status_label}}</span>` : ''}}</td>
-          <td class="date">${{(r.last_checked_at || '').replace('T', ' ').slice(0, 16)}}</td>
+          <td class="date">${{fmtDateTime(r.last_checked_at)}}</td>
           <td>${{clientCell(r)}}</td>
           <td class="row-menu">
-            <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, ${{r.bill_id}})" aria-label="Bill actions">
+            <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, ${{r.bill_id}})" aria-label="Bill actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-${{r.bill_id}}">
               <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
             </button>
             <div class="row-menu-dropdown" id="row-menu-${{r.bill_id}}">
@@ -2775,7 +2950,7 @@ CALENDAR_BODY = f"""
   </div>
 </div>
 
-<div id="error"></div>
+<div id="error" role="alert" aria-live="assertive"></div>
 <div id="loading"><span class="spinner"></span>Loading…</div>
 <div id="calendar"></div>
 
@@ -2865,7 +3040,7 @@ SPONSOR_ROLLUP_BODY = f"""
   </div>
 </div>
 
-<div id="error"></div>
+<div id="error" role="alert" aria-live="assertive"></div>
 <div id="loading"><span class="spinner"></span>Loading…</div>
 <div id="sponsors"></div>
 
@@ -2950,9 +3125,13 @@ CLIENTS_BODY = f"""
     <div style="flex:1 1 100%">
       <h2 class="section" style="margin-top:1.2rem">Business address</h2>
     </div>
+    <label for="bus_addr1" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Street address</label>
     <input id="bus_addr1" placeholder="Street address" style="flex:1 1 100%">
+    <label for="bus_city" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">City</label>
     <input id="bus_city" placeholder="City" style="flex:2">
+    <label for="bus_st" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">State</label>
     <input id="bus_st" placeholder="State" maxlength="2" style="flex:1;text-transform:uppercase">
+    <label for="bus_zip4" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">ZIP code</label>
     <input id="bus_zip4" placeholder="ZIP" style="flex:1">
 
     <label style="flex:1 1 100%">
@@ -2987,7 +3166,7 @@ CLIENTS_BODY = f"""
 </div>
 
 <div id="loading"><span class="spinner"></span>Saving…</div>
-<div id="error"></div>
+<div id="error" role="alert" aria-live="assertive"></div>
 
 <div class="panel">
   <div class="panel-head"><div class="title">Your clients</div></div>
@@ -3070,7 +3249,15 @@ function showForm() {{
   addBtn.style.display = 'none';
 }}
 
-function hideForm() {{
+function hideForm(afterSave) {{
+  // Only ask before discarding if there's actually something typed to
+  // lose — an empty/untouched form can just close silently. Skipped
+  // entirely after a successful save (afterSave=true, from the submit
+  // handler below) — the data wasn't lost, it's the reason the form is
+  // closing, so a "discard?" prompt right after saving would be a
+  // confusing false alarm rather than a safeguard.
+  const hasInput = !afterSave && Array.from(form.querySelectorAll('input, textarea')).some(el => el.value.trim());
+  if (hasInput && !confirm('Discard this client info? Anything typed here will be lost.')) return;
   formCard.style.display = 'none';
   addBtn.style.display = '';
   form.reset();
@@ -3126,7 +3313,7 @@ form.addEventListener('submit', async (e) => {{
     }});
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not save client');
-    hideForm();
+    hideForm(true);
     load();
   }} catch (err) {{
     errorEl.textContent = err.message;
@@ -3138,6 +3325,12 @@ form.addEventListener('submit', async (e) => {{
 }});
 
 async function removeClient(id) {{
+  // Deleting a client also deletes every bill/position it's linked to
+  // (see db.delete_client) — no undo exists, so this is worth a real
+  // confirmation naming what's about to be lost, not just a click.
+  const c = allClients.find(x => x.id === id);
+  const name = c ? c.name : 'this client';
+  if (!confirm(`Remove ${{name}}? This also removes all of its bill and position assignments. This can't be undone.`)) return;
   try {{
     const res = await fetch(`/api/clients?id=${{id}}`, {{ method: 'DELETE' }});
     if (!res.ok) {{
@@ -3174,6 +3367,7 @@ function render(rows) {{
     return;
   }}
   listEl.innerHTML = `
+    <div style="overflow-x:auto">
     <table>
       <thead><tr><th>Name</th><th>Business address</th><th>Industry / interests</th><th>Filer ID</th><th></th></tr></thead>
       <tbody>
@@ -3184,8 +3378,8 @@ function render(rows) {{
           <td>${{c.interests || ''}}</td>
           <td>${{c.existing_filer_id || ''}}</td>
           <td class="row-menu">
-            <a class="secondary" href="#" onclick="event.preventDefault(); editClient(${{c.id}})" style="margin-right:0.4rem">Edit</a>
-            <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'client-${{c.id}}')" aria-label="More actions">
+            <button type="button" class="secondary" onclick="editClient(${{c.id}})" style="margin-right:0.4rem">Edit</button>
+            <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'client-${{c.id}}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-client-${{c.id}}">
               <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
             </button>
             <div class="row-menu-dropdown" id="row-menu-client-${{c.id}}">
@@ -3196,18 +3390,37 @@ function render(rows) {{
       `).join('')}}
       </tbody>
     </table>
+    </div>
   `;
 }}
 
+function closeRowMenus() {{
+  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {{
+    m.classList.remove('show');
+    const openBtn = document.querySelector(`[aria-controls="${{m.id}}"]`);
+    if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
+  }});
+}}
 function toggleRowMenu(e, key) {{
   e.stopPropagation();
   const menu = document.getElementById(`row-menu-${{key}}`);
   const wasOpen = menu.classList.contains('show');
-  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => m.classList.remove('show'));
-  if (!wasOpen) menu.classList.add('show');
+  closeRowMenus();
+  if (!wasOpen) {{
+    menu.classList.add('show');
+    e.currentTarget.setAttribute('aria-expanded', 'true');
+  }}
 }}
-document.addEventListener('click', () => {{
-  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => m.classList.remove('show'));
+document.addEventListener('click', closeRowMenus);
+// Escape closes whichever row menu is open and returns focus to its
+// trigger, matching the standard disclosure-menu keyboard pattern.
+document.addEventListener('keydown', (e) => {{
+  if (e.key !== 'Escape') return;
+  const openMenu = document.querySelector('.row-menu-dropdown.show');
+  if (!openMenu) return;
+  const openBtn = document.querySelector(`[aria-controls="${{openMenu.id}}"]`);
+  closeRowMenus();
+  if (openBtn) openBtn.focus();
 }});
 
 load();
@@ -3226,13 +3439,16 @@ CLIENTS_PAGE = page("Clients — Rotunda", "/clients", CLIENTS_BODY)
 # or Organization Search's "+ Add as client" link.
 CLIENT_DETAIL_BODY = f"""
 <div class="page-head"><div><a href="/clients" class="sub">← Clients</a></div></div>
-<div id="error"></div>
+<div id="error" role="alert" aria-live="assertive"></div>
+<div id="loading" class="show"><span class="spinner"></span>Loading…</div>
 <div id="client"></div>
 
 <div class="card" style="margin-top:1rem">
   <div class="bill-title" style="margin-bottom:0.8rem">Add a bill</div>
   <form id="add-bill-f">
+    <label for="bill_number" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Bill number</label>
     <input id="bill_number" placeholder="e.g. SB122" autocomplete="off" required style="flex:1;min-width:8rem">
+    <label for="add-bill-position" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Position</label>
     <select id="add-bill-position">
       <option value="watch">Watch</option>
       <option value="support">Support</option>
@@ -3275,18 +3491,21 @@ function renderClient(d) {{
 }}
 
 function positionSelect(billId, position) {{
-  const options = POSITIONS.map(([value, label]) =>
+  return `<select class="position-select ${{position}}" data-saved="${{position}}" onchange="setPosition(${{billId}}, this)" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${{POSITIONS.map(([value, label]) =>
     `<option value="${{value}}" ${{position === value ? 'selected' : ''}}>${{label}}</option>`
-  ).join('');
-  return `<select class="position-select ${{position}}" onchange="setPosition(${{billId}}, this.value); this.className = 'position-select ' + this.value" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${{options}}</select>`;
+  ).join('')}}</select>`;
 }}
 
+let currentBills = [];
+
 function renderBills(bills) {{
+  currentBills = bills;
   if (!bills.length) {{
     billsEl.innerHTML = '<p class="empty">No bills assigned to this client yet — add one above.</p>';
     return;
   }}
   billsEl.innerHTML = `
+    <div style="overflow-x:auto">
     <table>
       <thead><tr><th>Bill</th><th>Title</th><th>Status</th><th>Position</th><th></th></tr></thead>
       <tbody>
@@ -3298,7 +3517,7 @@ function renderBills(bills) {{
           <td>${{positionSelect(b.bill_id, b.position || 'watch')}}</td>
           <td class="row-menu">
             <a class="secondary" href="/report?bill_id=${{b.bill_id}}" style="margin-right:0.4rem">Report</a>
-            <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'bill-${{b.bill_id}}')" aria-label="More actions">
+            <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'bill-${{b.bill_id}}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-bill-${{b.bill_id}}">
               <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
             </button>
             <div class="row-menu-dropdown" id="row-menu-bill-${{b.bill_id}}">
@@ -3309,18 +3528,35 @@ function renderBills(bills) {{
       `).join('')}}
       </tbody>
     </table>
+    </div>
   `;
 }}
 
+function closeRowMenus() {{
+  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {{
+    m.classList.remove('show');
+    const openBtn = document.querySelector(`[aria-controls="${{m.id}}"]`);
+    if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
+  }});
+}}
 function toggleRowMenu(e, key) {{
   e.stopPropagation();
   const menu = document.getElementById(`row-menu-${{key}}`);
   const wasOpen = menu.classList.contains('show');
-  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => m.classList.remove('show'));
-  if (!wasOpen) menu.classList.add('show');
+  closeRowMenus();
+  if (!wasOpen) {{
+    menu.classList.add('show');
+    e.currentTarget.setAttribute('aria-expanded', 'true');
+  }}
 }}
-document.addEventListener('click', () => {{
-  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => m.classList.remove('show'));
+document.addEventListener('click', closeRowMenus);
+document.addEventListener('keydown', (e) => {{
+  if (e.key !== 'Escape') return;
+  const openMenu = document.querySelector('.row-menu-dropdown.show');
+  if (!openMenu) return;
+  const openBtn = document.querySelector(`[aria-controls="${{openMenu.id}}"]`);
+  closeRowMenus();
+  if (openBtn) openBtn.focus();
 }});
 
 async function load() {{
@@ -3334,28 +3570,43 @@ async function load() {{
   }} catch (err) {{
     errorEl.textContent = err.message;
     errorEl.className = 'show';
+  }} finally {{
+    document.getElementById('loading').className = '';
   }}
 }}
 
-async function setPosition(billId, position) {{
+async function setPosition(billId, selectEl) {{
+  const newPosition = selectEl.value;
+  const savedPosition = selectEl.dataset.saved;
+  errorEl.className = '';
+  selectEl.className = 'position-select ' + newPosition;
+  selectEl.disabled = true;
   try {{
     const res = await fetch('/api/bill-clients', {{
       method: 'POST',
       headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ bill_id: billId, client_id: Number(clientId), position }}),
+      body: JSON.stringify({{ bill_id: billId, client_id: Number(clientId), position: newPosition }}),
     }});
     if (!res.ok) {{
       const data = await res.json();
       throw new Error(data.error || 'Could not update position');
     }}
+    selectEl.dataset.saved = newPosition;
     load();
   }} catch (err) {{
+    selectEl.value = savedPosition;
+    selectEl.className = 'position-select ' + savedPosition;
+    selectEl.disabled = false;
     errorEl.textContent = err.message;
     errorEl.className = 'show';
   }}
 }}
 
 async function removeBill(billId) {{
+  const b = currentBills.find(x => x.bill_id === billId);
+  const label = b ? `${{b.state}} ${{b.bill_number}}` : 'this bill';
+  if (!confirm(`Remove ${{label}} from this client?`)) return;
+  errorEl.className = '';
   try {{
     const res = await fetch(`/api/bill-clients?bill_id=${{billId}}&client_id=${{clientId}}`, {{ method: 'DELETE' }});
     if (!res.ok) {{
@@ -3410,7 +3661,8 @@ CLIENT_DETAIL_PAGE = page("Client — Rotunda", "/clients", CLIENT_DETAIL_BODY)
 # than being a page anyone navigates to on its own.
 REPORT_BODY = f"""
 <div class="page-head"><div><a href="/flagged" class="sub">← Flagged bills</a></div></div>
-<div id="error"></div>
+<div id="error" role="alert" aria-live="assertive"></div>
+<div id="loading" class="show"><span class="spinner"></span>Loading…</div>
 <div id="report"></div>
 
 <script>
@@ -3424,6 +3676,7 @@ async function load() {{
   if (!billId) {{
     errorEl.textContent = 'Missing bill_id in the URL.';
     errorEl.className = 'show';
+    document.getElementById('loading').className = '';
     return;
   }}
   try {{
@@ -3435,6 +3688,8 @@ async function load() {{
   }} catch (err) {{
     errorEl.textContent = err.message;
     errorEl.className = 'show';
+  }} finally {{
+    document.getElementById('loading').className = '';
   }}
 }}
 
@@ -3547,7 +3802,7 @@ DISCLOSURES_BODY = f"""
 </div>
 
 <div id="loading"><span class="spinner"></span>Generating…</div>
-<div id="error"></div>
+<div id="error" role="alert" aria-live="assertive"></div>
 
 <div class="panel" style="margin-top:1rem">
   <div class="panel-head"><div class="title">Your prepared filings</div></div>
@@ -3555,6 +3810,15 @@ DISCLOSURES_BODY = f"""
 </div>
 
 <script>
+// A friendly "Aug 21, 2:03 PM" instead of the raw
+// "2026-08-21T14:03:00" ISO string the API returns.
+function fmtDateTime(iso) {{
+  if (!iso) return '';
+  const d = new Date(iso.includes('Z') || iso.includes('+') ? iso : iso + 'Z');
+  if (isNaN(d)) return iso;
+  return d.toLocaleString('en-US', {{ month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }});
+}}
+
 // Only 601 exists today, but this stays keyed by form_type so adding a
 // form that DOES need a period later is just one more entry here.
 const FORM_META = {{
@@ -3660,14 +3924,14 @@ function render(rows) {{
       ${{rows.map(r => {{
         const meta = FORM_META[r.form_type];
         const statusBadge = r.status === 'ready_to_file'
-          ? '<span class="position-badge support">Ready to file</span>'
-          : '<span class="position-badge watch">Draft</span>';
+          ? '<span class="status-badge good">Ready to file</span>'
+          : '<span class="status-badge">Draft</span>';
         return `
           <tr>
             <td>${{(meta && meta.label) || ('Form ' + r.form_type)}}</td>
             <td>${{r.period_label || '—'}}</td>
             <td>${{statusBadge}}</td>
-            <td class="date">${{(r.created_at || '').slice(0, 16)}}</td>
+            <td class="date">${{fmtDateTime(r.created_at)}}</td>
             <td><a class="secondary" href="/disclosures/review?id=${{r.id}}">Review</a></td>
           </tr>
         `;
@@ -3686,10 +3950,20 @@ DISCLOSURES_PAGE = page("Disclosure Forms — Rotunda", "/disclosures", DISCLOSU
 
 DISCLOSURE_REVIEW_BODY = f"""
 <div class="page-head"><div><a href="/disclosures" class="sub">← Disclosures</a></div></div>
-<div id="error"></div>
+<div id="error" role="alert" aria-live="assertive"></div>
+<div id="loading" class="show"><span class="spinner"></span>Loading…</div>
 <div id="content"></div>
 
 <script>
+// A friendly "Aug 21, 2:03 PM" instead of the raw
+// "2026-08-21T14:03:00" ISO string the API returns.
+function fmtDateTime(iso) {{
+  if (!iso) return '';
+  const d = new Date(iso.includes('Z') || iso.includes('+') ? iso : iso + 'Z');
+  if (isNaN(d)) return iso;
+  return d.toLocaleString('en-US', {{ month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }});
+}}
+
 const errorEl = document.getElementById('error');
 const contentEl = document.getElementById('content');
 const filingId = new URLSearchParams(window.location.search).get('id');
@@ -3699,6 +3973,7 @@ async function load() {{
   if (!filingId) {{
     errorEl.textContent = 'Missing filing id in the URL.';
     errorEl.className = 'show';
+    document.getElementById('loading').className = '';
     return;
   }}
   try {{
@@ -3710,6 +3985,8 @@ async function load() {{
   }} catch (err) {{
     errorEl.textContent = err.message;
     errorEl.className = 'show';
+  }} finally {{
+    document.getElementById('loading').className = '';
   }}
 }}
 
@@ -3739,13 +4016,13 @@ function render(r) {{
   const pdfUrl = `/api/prepared-filings/pdf?id=${{r.id}}`;
   const ready = r.status === 'ready_to_file';
   const statusBadge = ready
-    ? '<span class="position-badge support">Ready to file</span>'
-    : '<span class="position-badge watch">Draft — not yet signed off</span>';
+    ? '<span class="status-badge good">Ready to file</span>'
+    : '<span class="status-badge">Draft — not yet signed off</span>';
 
   const signOffSection = ready ? `
     <div class="card">
       <div class="bill-title" style="margin-bottom:0.4rem">Signed off</div>
-      <div class="bill-desc">Confirmed accurate by <strong>${{r.signed_name}}</strong> on ${{(r.signed_at || '').replace('T', ' ').slice(0, 16)}}.</div>
+      <div class="bill-desc">Confirmed accurate by <strong>${{r.signed_name}}</strong> on ${{fmtDateTime(r.signed_at)}}.</div>
       <div class="sub" style="margin:0.6rem 0 0">This app has not filed anything. Download the PDF above and file it yourself with the FPPC / Secretary of State.</div>
     </div>
   ` : `
@@ -3768,7 +4045,7 @@ function render(r) {{
 
   contentEl.innerHTML = `
     <h1>${{FORM_LABELS[r.form_type] || ('Form ' + r.form_type)}}</h1>
-    <p class="sub">${{r.period_label ? 'Period: ' + r.period_label + ' — ' : ''}}Prepared ${{(r.created_at || '').slice(0, 16)}}.</p>
+    <p class="sub">${{r.period_label ? 'Period: ' + r.period_label + ' — ' : ''}}Prepared ${{fmtDateTime(r.created_at)}}.</p>
     <div style="margin-bottom:1rem">${{statusBadge}}</div>
 
     <div class="card">
@@ -4347,7 +4624,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/flagged":
             conn = db.get_connection()
             try:
-                user_id = self._require_user_for_api(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to view your flagged bills.")
                 if not user_id:
                     return
                 self._send_json(200, db.list_flagged_bills(conn, user_id))
@@ -4364,7 +4641,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/flagged/calendar":
             conn = db.get_connection()
             try:
-                user_id = self._require_user_for_api(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to view your hearing calendar.")
                 if not user_id:
                     return
                 self._send_json(200, db.list_hearings_for_flagged_bills(conn, user_id))
@@ -4381,7 +4658,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/flagged/sponsors":
             conn = db.get_connection()
             try:
-                user_id = self._require_user_for_api(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to view sponsors and votes.")
                 if not user_id:
                     return
                 self._send_json(200, db.list_sponsor_vote_rollup(conn, user_id))
@@ -4398,7 +4675,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/clients":
             conn = db.get_connection()
             try:
-                user_id = self._require_user_for_api(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to view your clients.")
                 if not user_id:
                     return
                 self._send_json(200, db.list_clients(conn, user_id))
@@ -4424,7 +4701,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             conn = db.get_connection()
             try:
-                user_id = self._require_user_for_api(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to view this client.")
                 if not user_id:
                     return
                 client = db.get_client(conn, user_id, client_id)
@@ -4474,7 +4751,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             conn = db.get_connection()
             try:
-                user_id = self._require_user_for_api(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to view this report.")
                 if not user_id:
                     return
                 report = db.get_bill_report(conn, user_id, bill_id)
@@ -4501,7 +4778,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/prepared-filings":
             conn = db.get_connection()
             try:
-                user_id = self._require_user_for_api(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to view your disclosure filings.")
                 if not user_id:
                     return
                 filing_id = (qs.get("id") or [""])[0]
@@ -4531,7 +4808,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             conn = db.get_connection()
             try:
-                user_id = self._require_user_for_api(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to download this filing.")
                 if not user_id:
                     return
                 filing = db.get_prepared_filing(conn, user_id, filing_id)
@@ -4542,8 +4819,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 pdf_bytes = pdf_forms.render_prepared_filing(filing)
-            except Exception as e:
-                self._send_json(500, {"error": f"Could not render PDF: {e}"})
+            except Exception:
+                # Log the real exception server-side; the user gets a
+                # stable, plain-language message instead of whatever
+                # pypdf/formatting internals happened to raise (see
+                # _handle_unexpected_error for the same pattern elsewhere).
+                traceback.print_exc()
+                self._send_json(500, {"error": "Couldn't generate the PDF. Try again, or contact support if this keeps happening."})
                 return
             self._send_bytes(200, "application/pdf", pdf_bytes, filename=f"form_{filing['form_type']}.pdf")
             return
@@ -4564,7 +4846,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/profile":
             conn = db.get_connection()
             try:
-                user_id = self._require_user_for_api(conn)
+                user_id = self._require_user_for_api(conn, "Sign in to view your profile.")
                 if not user_id:
                     return
                 self._send_json(200, {"profile": accounts.get_profile(conn, user_id)})
@@ -4579,7 +4861,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             conn = db.get_connection()
             try:
-                self._send_json(200, search_lobbying(conn, q))
+                results = search_lobbying(conn, q)
+                # search_lobbying() itself caps at 50 (see its own
+                # docstring) — a full 50 back almost certainly means more
+                # exist, so the frontend can flag that rather than the
+                # list silently looking complete in a compliance search.
+                self._send_json(200, {"results": results, "truncated": len(results) >= 50})
             finally:
                 conn.close()
             return
@@ -4605,8 +4892,13 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 data = lookup_bill(bill)
                 self._send_json(200, data)
-            except Exception as e:
-                self._send_json(502, {"error": str(e)})
+            except Exception:
+                # LegiScan network hiccups / bad JSON otherwise surfaced
+                # their raw text (e.g. "Expecting value: line 1 column 1")
+                # straight into the lookup UI — log it, tell the user
+                # something they can act on instead.
+                traceback.print_exc()
+                self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
             return
 
         if parsed.path == "/api/bills/search":
@@ -4623,12 +4915,12 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 data = search_bills(q, page=page)
                 self._send_json(200, data)
-            except Exception as e:
-                self._send_json(502, {"error": str(e)})
+            except Exception:
+                traceback.print_exc()
+                self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
             return
 
-        self.send_response(404)
-        self.end_headers()
+        self._send_json(404, {"error": "Not found."})
 
     def _authorized_for_refresh(self):
         """These routes are hit by a cron job with no browser and no
@@ -4683,9 +4975,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             email = (body.get("email") or "").strip().lower()
             if _login_locked_out(email):
+                minutes = _login_lockout_remaining_minutes(email)
                 self._send_json(
                     429,
-                    {"error": "Too many failed attempts. Try again in a few minutes."},
+                    {"error": f"Too many failed attempts. Try again in about {minutes} minute{'s' if minutes != 1 else ''}."},
                 )
                 return
             conn = db.get_connection()
@@ -4723,7 +5016,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             conn = db.get_connection()
             try:
-                user_id = self._require_user_for_api(conn, "You need to sign up or log in first.")
+                user_id = self._require_user_for_api(conn, "Sign in to save your profile.")
                 if not user_id:
                     return
                 if not (body.get("legal_name") or "").strip():
@@ -4758,8 +5051,9 @@ class Handler(BaseHTTPRequestHandler):
                     # Same "re-fetch fresh rather than trust the client"
                     # pattern as /api/watchlist — see that route.
                     bill = get_bill_detail(bill_id)
-                except Exception as e:
-                    self._send_json(502, {"error": str(e)})
+                except Exception:
+                    traceback.print_exc()
+                    self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
                     return
                 db.upsert_bill(conn, bill)
                 db.flag_bill(conn, user_id, bill_id)
@@ -4855,8 +5149,9 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 try:
                     bill = lookup_bill(bill_number)
-                except Exception as e:
-                    self._send_json(502, {"error": str(e)})
+                except Exception:
+                    traceback.print_exc()
+                    self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
                     return
                 db.upsert_bill(conn, bill)
                 db.flag_bill(conn, user_id, bill["id"])
@@ -4942,8 +5237,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
-        self.send_response(404)
-        self.end_headers()
+        self._send_json(404, {"error": "Not found."})
 
     def _do_DELETE(self):
         parsed = urlparse(self.path)
@@ -5022,8 +5316,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
-        self.send_response(404)
-        self.end_headers()
+        self._send_json(404, {"error": "Not found."})
 
 
 def main():
