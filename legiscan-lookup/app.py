@@ -2934,7 +2934,15 @@ FLAGGED_BODY = f"""
 <div class="panel">
   <div class="panel-head">
     <div class="title">Flagged Bills</div>
-    <div class="sub">Sorted by bill number</div>
+    <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.75rem;color:var(--slate)">
+      Sort by
+      <select id="sort-by" style="font-size:0.78rem;padding:0.3rem 0.5rem">
+        <option value="bill_number">Bill number</option>
+        <option value="title">Alphabetical</option>
+        <option value="client">Client</option>
+        <option value="activity">Most recent activity</option>
+      </select>
+    </label>
   </div>
   <div id="loading" class="show" style="padding:1rem 1.15rem"><span class="spinner"></span>Loading…</div>
   <div id="list"></div>
@@ -2948,10 +2956,65 @@ const errorEl = document.getElementById('error');
 const tabsEl = document.getElementById('tabs');
 const statsEl = document.getElementById('stats');
 const searchEl = document.getElementById('shell-search');
+const sortSelectEl = document.getElementById('sort-by');
 let allClients = [];
 let currentRows = [];
 let preparedFilings = [];
 let activeFilter = 'all';
+
+// A pure front-end re-sort of whatever GET /api/flagged already
+// returned (currentRows) — no extra API call/param, since the whole
+// list is already in memory for filtering/search anyway. currentRows
+// itself stays in the server's own order (db.list_flagged_bills's
+// ORDER BY b.bill_number), which is exactly what the 'bill_number'
+// option wants, so that one's a no-op instead of re-implementing
+// SQLite's own string ordering here. Persisted across reloads —
+// same localStorage pattern THEME_INIT_SCRIPT uses for the dark-mode
+// toggle, just scoped to this page's own key.
+const SORT_STORAGE_KEY = 'flaggedBills.sortBy';
+let sortBy = localStorage.getItem(SORT_STORAGE_KEY) || 'bill_number';
+if (sortSelectEl) sortSelectEl.value = sortBy;
+
+function firstClientName(r) {{
+  const names = (r.assigned_clients || []).map(c => c.name).sort((a, b) => a.localeCompare(b));
+  return names[0] || '';
+}}
+
+function sortRows(rows) {{
+  if (sortBy === 'title') {{
+    return rows.slice().sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  }}
+  if (sortBy === 'client') {{
+    // Unassigned bills (no client name to sort by) fall to the end
+    // rather than sorting first the way an empty string normally would.
+    return rows.slice().sort((a, b) => {{
+      const an = firstClientName(a), bn = firstClientName(b);
+      if (!an && bn) return 1;
+      if (an && !bn) return -1;
+      return an.localeCompare(bn);
+    }});
+  }}
+  if (sortBy === 'activity') {{
+    // latest_activity_date is the newest bill_status_history date for
+    // that bill (see db.list_flagged_bills) — newest first, and bills
+    // with no recorded history yet sort to the end rather than first.
+    return rows.slice().sort((a, b) => {{
+      const ad = a.latest_activity_date || '', bd = b.latest_activity_date || '';
+      if (!ad && bd) return 1;
+      if (ad && !bd) return -1;
+      return bd.localeCompare(ad);
+    }});
+  }}
+  return rows;
+}}
+
+if (sortSelectEl) {{
+  sortSelectEl.addEventListener('change', () => {{
+    sortBy = sortSelectEl.value;
+    localStorage.setItem(SORT_STORAGE_KEY, sortBy);
+    applyFilters();
+  }});
+}}
 
 const ICON_FLAG = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 1v12M2 2h8l-2 2.5L10 7H2" stroke-linejoin="round"/></svg>';
 const ICON_CLIENTS = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5.5" cy="4.5" r="2.5"/><path d="M1 12c0-2.5 2-4.2 4.5-4.2S10 9.5 10 12" stroke-linecap="round"/></svg>';
@@ -3004,7 +3067,7 @@ function matchesSearch(r, q) {{
 
 function applyFilters() {{
   const q = (searchEl ? searchEl.value : '').trim().toLowerCase();
-  render(currentRows.filter(r => matchesFilter(r, activeFilter) && matchesSearch(r, q)));
+  render(sortRows(currentRows.filter(r => matchesFilter(r, activeFilter) && matchesSearch(r, q))));
 }}
 
 function setFilter(filter) {{
