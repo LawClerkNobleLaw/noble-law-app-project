@@ -38,7 +38,7 @@ Capabilities live here:
     files) and where this name was mentioned as someone else's client.
   - Individual accounts: /signup (email + password, then a CAL-ACCESS
     Form 601-style profile step), /login, /profile (view and edit), and
-    the account-menu dropdown on every page (see ACCOUNT_MENU_SCRIPT) —
+    the account-menu dropdown on every page (see account_widget()) —
     real password hashing lives in accounts.py. There used to also be
     an outer shared LOOKUP_USER/PASSWORD login gating the whole site
     (a coworker-wide Basic Auth prompt just to view anything); that's
@@ -395,22 +395,6 @@ STYLE = """
     background: var(--accent-solid); color: var(--accent-solid-text); border-color: var(--accent-solid);
   }
   .filter-tab .n { font-family: ui-monospace, monospace; font-size: 0.75rem; opacity: 0.7; margin-left: 0.35rem; }
-  .account-menu { position: relative; font-size: 0.85rem; }
-  .account-menu summary { cursor: pointer; color: var(--accent); list-style: none; }
-  .account-menu summary::-webkit-details-marker { display: none; }
-  .account-menu-content {
-    position: absolute; right: 0; top: 1.5rem; background: var(--surface);
-    border: 1px solid var(--rule); border-radius: var(--radius-md); padding: 0.5rem var(--space-3);
-    display: flex; flex-direction: column; gap: 0.5rem; min-width: 9.5rem;
-    box-shadow: 0 4px 14px rgba(45, 43, 43, 0.16); z-index: 20;
-  }
-  .account-menu-content a, .account-menu-content button {
-    color: var(--accent); font-size: 0.85rem; background: none; border: none;
-    padding: 0; text-align: left; font-weight: 400; cursor: pointer; text-decoration: none;
-  }
-  .account-menu-content a:hover, .account-menu-content button:hover { text-decoration: underline; }
-  .account-menu-email { font-size: 0.75rem; color: var(--slate); border-bottom: 1px solid var(--rule);
-    padding-bottom: 0.4rem; margin-bottom: 0.1rem; word-break: break-all; }
 
   /* ── Sidebar app shell (app_shell()) ──────────────────────────────
      Only for signed-in pages, rolled out one page at a time — see
@@ -464,12 +448,17 @@ STYLE = """
     border: 1px solid var(--rule); border-radius: var(--radius-md); padding: var(--space-2); box-shadow: 0 4px 14px rgba(0,0,0,0.16);
     display: none; flex-direction: column; gap: var(--space-1); z-index: 20;
   }
+  /* account_widget()'s dropdown on a public page (top_nav()'s call
+     passes this) sits in a top bar, not a bottom-anchored sidebar
+     footer — opens downward from the account button instead of
+     upward, and isn't stretched to a sidebar-footer's own width. */
+  .app-account-menu.top-anchored { left: auto; right: 0; bottom: auto; top: 100%; margin-top: var(--space-2); min-width: 11rem; }
   .app-account-menu.show { display: flex; }
-  .app-account-menu button {
-    background: none; border: none; color: var(--ink); font: inherit; font-weight: 500; font-size: 0.82rem;
-    text-align: left; padding: var(--space-2) 0.5rem; border-radius: var(--radius-sm); cursor: pointer;
+  .app-account-menu button, .app-account-menu a {
+    display: block; background: none; border: none; color: var(--ink); font: inherit; font-weight: 500; font-size: 0.82rem;
+    text-align: left; padding: var(--space-2) 0.5rem; border-radius: var(--radius-sm); cursor: pointer; text-decoration: none;
   }
-  .app-account-menu button:hover { background: var(--accent-soft); }
+  .app-account-menu button:hover, .app-account-menu a:hover { background: var(--accent-soft); }
   /* Shown instead of the avatar/email button when /api/me says no one's
      signed in — /lookup and /lobbying are the two pages that render this
      shell without requiring a session (see the module docstring's "no
@@ -477,7 +466,21 @@ STYLE = """
      needs an honest logged-out state rather than a blank avatar next to
      a "Sign out" button that wouldn't do anything. */
   .app-account-guest { display: none; gap: 0.5rem; }
-  .app-account-guest a { flex: 1; justify-content: center; text-align: center; padding: 0.5rem 0; font-size: 0.8rem; }
+  /* white-space: nowrap matters once this renders inside top_nav()'s
+     own width-capped wrapper (see .app-account-menu.top-anchored's own
+     comment) — without it, "Sign up" wrapped onto its own line inside
+     its own button instead of the two flex:1 buttons just sizing down
+     evenly, since nothing was forcing the browser to treat the label's
+     natural single-line width as this button's minimum. */
+  .app-account-guest a { flex: 1; justify-content: center; text-align: center; padding: 0.5rem 0; font-size: 0.8rem; white-space: nowrap; }
+  /* top_nav()'s call (account_widget(..., guest_plain=True)) — undoes
+     the sidebar's button-pair treatment above for two plain, unclassed
+     <a> tags instead, which already pick up .top-nav a's color/size/
+     underline-on-hover on their own. Matches how "Sign in"/"Sign up"
+     always looked on a public page before this shared component
+     existed — two solid pill buttons read as too heavy sitting next
+     to the rest of the top bar's plain text links. */
+  .app-account-guest.plain-links a { flex: none; padding: 0; font-size: 0.85rem; }
   .app-body { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   .app-topbar {
     height: 4rem; flex: none; display: flex; align-items: center; justify-content: space-between;
@@ -641,7 +644,7 @@ def nav_links(current):
     per-request, so this only ever runs a handful of times total).
     Flagged bills isn't listed here on purpose — it's personal and tied
     to login, so it lives in the account menu next to "View profile"
-    rather than in this always-visible row (see ACCOUNT_MENU_SCRIPT)."""
+    rather than in this always-visible row (see account_widget())."""
     pages = [("/lookup", "Lookup"), ("/discover", "Discover"), ("/lobbying", "Organization Search")]
     parts = []
     for href, label in pages:
@@ -654,41 +657,90 @@ def nav_links(current):
 # The account menu's login state is per-request (whoever's browser this
 # is), but every page constant below is a plain string built ONCE at
 # import time — so unlike nav_links() above, this can't be baked into
-# the static HTML. Instead each page ships an empty <span id="account-menu">
-# plus this same small script, which fetches /api/me itself and fills
-# the span in client-side — the same "server ships a shell, JS fetches
-# JSON and renders" pattern already used everywhere else in this app
-# (bill lookup, watch list, lobbying search), just applied to login state.
-ACCOUNT_MENU_SLOT = '<span id="account-menu" style="margin-left:auto"></span>'
-ACCOUNT_MENU_SCRIPT = """
+# the static HTML. account_widget() below ships both the guest state
+# and the signed-in state up front (each hidden via style="display:none"
+# until /api/me's own client-side fetch reveals whichever applies) —
+# the same "server ships a shell, JS fetches JSON and renders" pattern
+# already used everywhere else in this app, just applied to login state.
+def account_widget(extra_links="", menu_class="", guest_plain=False):
+    """The one "who's logged in" component — an avatar circle, an
+    email that truncates with an ellipsis instead of wrapping/
+    overflowing, and a click-to-toggle dropdown. Used by both
+    app_shell() (the sidebar footer) and top_nav() (every public page)
+    instead of two separately-implemented, differently-behaved ones:
+    the sidebar's original version already truncated a long email
+    correctly; top_nav()'s original version (a native <details>/
+    <summary>) didn't, and wrapped its own dropdown caret onto its own
+    line once the email got long. This is that one, not a third
+    implementation — call sites differ only in the three params below.
+
+    extra_links: top_nav()'s call passes the real navigation links
+    (Profile, Flagged bills, Clients, Disclosures) the dropdown needs
+    on public pages, which have no sidebar to put them in otherwise;
+    app_shell()'s call leaves this blank since sidebar pages already
+    show those as persistent nav items elsewhere on the page.
+
+    menu_class: positions the dropdown. Blank (app_shell()'s call)
+    keeps the base .app-account-menu rule in STYLE, which opens
+    upward from a bottom-anchored sidebar footer. top_nav()'s call
+    passes "top-anchored" (see that modifier in STYLE) since a public
+    page's account button sits in a top bar, not a sidebar footer, and
+    needs the dropdown to open downward instead.
+
+    guest_plain: the logged-out Sign in/Sign up pair. False (the
+    sidebar's call) renders them as the .secondary/.primary button
+    pair the sidebar footer's always shown — a real call-to-action
+    area with room for two boxed buttons. True (top_nav()'s call)
+    renders plain, unclassed <a> tags instead, which pick up the
+    existing .top-nav a rule in STYLE for free — matching how "Sign
+    in"/"Sign up" always looked on public pages before this component
+    existed, since two solid pill buttons read as too heavy sitting
+    next to the rest of the top bar's plain text links."""
+    if guest_plain:
+        guest_links = '<a href="/login">Sign in</a>\n  <a href="/signup">Sign up</a>'
+    else:
+        guest_links = '<a href="/login" class="secondary">Sign in</a>\n  <a href="/signup" class="primary">Sign up</a>'
+    return f"""
+<div class="app-account-guest{' plain-links' if guest_plain else ''}" id="shell-guest">
+  {guest_links}
+</div>
+<button type="button" class="app-account" id="shell-account-btn" style="display:none">
+  <span class="app-avatar" id="shell-avatar">&nbsp;</span>
+  <span class="app-account-email" id="shell-email">&nbsp;</span>
+  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--slate);flex:none">
+    <path d="M3 4.5L6 7.5L9 4.5" stroke-linecap="round"/>
+  </svg>
+</button>
+<div class="app-account-menu {menu_class}" id="shell-account-menu">
+  {extra_links}
+  <button type="button" id="shell-signout-btn">Sign out</button>
+</div>
 <script>
-(function() {
-  const el = document.getElementById('account-menu');
-  if (!el) return;
-  fetch('/api/me').then(r => r.json()).then(me => {
-    if (me.logged_in) {
-      el.innerHTML = `
-        <details class="account-menu">
-          <summary>${me.email} ▾</summary>
-          <div class="account-menu-content">
-            <div class="account-menu-email">Signed in as ${me.email}</div>
-            <a href="/profile">View profile</a>
-            <a href="/flagged">My flagged bills</a>
-            <a href="/clients">Clients</a>
-            <a href="/disclosures">Disclosure forms</a>
-            <button type="button" id="sign-out-btn">Sign out</button>
-          </div>
-        </details>
-      `;
-      document.getElementById('sign-out-btn').addEventListener('click', async () => {
-        await fetch('/api/logout', { method: 'POST' });
-        window.location.href = '/';
-      });
-    } else {
-      el.innerHTML = '<a href="/login">Sign in</a> &nbsp;<a href="/signup">Sign up</a>';
-    }
-  }).catch(() => {});
-})();
+(function() {{
+  fetch('/api/me').then(r => r.json()).then(me => {{
+    if (!me.logged_in) {{
+      document.getElementById('shell-guest').style.display = 'flex';
+      return;
+    }}
+    const email = me.email || '';
+    document.getElementById('shell-email').textContent = email;
+    document.getElementById('shell-avatar').textContent = email.slice(0, 2).toUpperCase();
+    document.getElementById('shell-account-btn').style.display = '';
+  }}).catch(() => {{
+    document.getElementById('shell-guest').style.display = 'flex';
+  }});
+
+  const acctBtn = document.getElementById('shell-account-btn');
+  const acctMenu = document.getElementById('shell-account-menu');
+  acctBtn.addEventListener('click', () => acctMenu.classList.toggle('show'));
+  document.addEventListener('click', (e) => {{
+    if (!acctBtn.contains(e.target) && !acctMenu.contains(e.target)) acctMenu.classList.remove('show');
+  }});
+  document.getElementById('shell-signout-btn').addEventListener('click', async () => {{
+    await fetch('/api/logout', {{ method: 'POST' }});
+    window.location.href = '/';
+  }});
+}})();
 </script>
 """
 
@@ -703,22 +755,46 @@ TOP_BRAND = """<a href="/" class="top-brand">
 </a>"""
 
 
+# The extra links account_widget()'s dropdown needs on a public page
+# (which has no sidebar to put them in otherwise) — see top_nav()
+# below and account_widget()'s own docstring for why the sidebar's
+# call doesn't pass these.
+TOP_NAV_ACCOUNT_LINKS = """
+  <a href="/profile">View profile</a>
+  <a href="/flagged">My flagged bills</a>
+  <a href="/clients">Clients</a>
+  <a href="/disclosures">Disclosure forms</a>
+"""
+
+
 def top_nav(current, left_extra="", show_account_menu=True):
     """The full top-nav bar: the brand mark, the 3-page links (or a
     custom left_extra, e.g. signup's "Skip for now"), plus the account
-    menu pushed to the right via the slot's own margin-left:auto. Meant
-    to sit directly in <body>, outside .wrap — it's a full-width bar,
-    not part of the centered content column.
+    widget (see account_widget()) pushed to the right via its own
+    wrapper's margin-left:auto. Meant to sit directly in <body>,
+    outside .wrap — it's a full-width bar, not part of the centered
+    content column.
 
-    show_account_menu=False drops the account-menu slot (and the script
-    that fills it) entirely — used by /login and /signup, whose own
-    left_extra already gives a logged-out visitor the one way to switch
-    between them ("Log in →" / "Sign up →"). Without this, those two
-    pages would show that link on the left AND a second, JS-filled
-    "Sign in · Sign up" pair on the right — including, on /login itself,
-    a "Sign in" link back to the page you're already on."""
+    show_account_menu=False drops the account widget entirely — used
+    by /login and /signup, whose own left_extra already gives a
+    logged-out visitor the one way to switch between them ("Log in →"
+    / "Sign up →"). Without this, those two pages would show that link
+    on the left AND a second, JS-filled "Sign in / Sign up" pair on
+    the right — including, on /login itself, a "Sign in" link back to
+    the page you're already on."""
     left = left_extra if left_extra else nav_links(current)
-    account = f"{ACCOUNT_MENU_SLOT}</div></div>{ACCOUNT_MENU_SCRIPT}" if show_account_menu else "</div></div>"
+    # max-width, not just margin-left:auto — .app-account's own
+    # width:100% (see STYLE) needs something bounded to be 100% OF;
+    # the sidebar gets that for free from its fixed-width aside, but
+    # a top-nav bar has no such constraint on its own, which is
+    # exactly why the email never actually truncated here before —
+    # it just kept growing and pushed the bar's layout instead.
+    account = (
+        f'<div style="margin-left:auto;position:relative;max-width:14rem">'
+        f'{account_widget(TOP_NAV_ACCOUNT_LINKS, "top-anchored", guest_plain=True)}</div>'
+        '</div></div>'
+        if show_account_menu else "</div></div>"
+    )
     return f'<div class="top-nav"><div class="top-nav-inner">{TOP_BRAND}{left}{account}'
 
 
@@ -828,20 +904,7 @@ def app_shell(current, body):
       </ul>
     </nav>
     <div class="app-sidebar-foot">
-      <div class="app-account-guest" id="shell-guest">
-        <a href="/login" class="secondary">Sign in</a>
-        <a href="/signup" class="primary">Sign up</a>
-      </div>
-      <button type="button" class="app-account" id="shell-account-btn" style="display:none">
-        <span class="app-avatar" id="shell-avatar">&nbsp;</span>
-        <span class="app-account-email" id="shell-email">&nbsp;</span>
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--slate);flex:none">
-          <path d="M3 4.5L6 7.5L9 4.5" stroke-linecap="round"/>
-        </svg>
-      </button>
-      <div class="app-account-menu" id="shell-account-menu">
-        <button type="button" id="shell-signout-btn">Sign out</button>
-      </div>
+      {account_widget()}
     </div>
   </aside>
   <div class="app-body">
@@ -871,29 +934,9 @@ def app_shell(current, body):
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   }});
 
-  fetch('/api/me').then(r => r.json()).then(me => {{
-    if (!me.logged_in) {{
-      document.getElementById('shell-guest').style.display = 'flex';
-      return;
-    }}
-    const email = me.email || '';
-    document.getElementById('shell-email').textContent = email;
-    document.getElementById('shell-avatar').textContent = email.slice(0, 2).toUpperCase();
-    document.getElementById('shell-account-btn').style.display = '';
-  }}).catch(() => {{
-    document.getElementById('shell-guest').style.display = 'flex';
-  }});
-
-  const acctBtn = document.getElementById('shell-account-btn');
-  const acctMenu = document.getElementById('shell-account-menu');
-  acctBtn.addEventListener('click', () => acctMenu.classList.toggle('show'));
-  document.addEventListener('click', (e) => {{
-    if (!acctBtn.contains(e.target) && !acctMenu.contains(e.target)) acctMenu.classList.remove('show');
-  }});
-  document.getElementById('shell-signout-btn').addEventListener('click', async () => {{
-    await fetch('/api/logout', {{ method: 'POST' }});
-    window.location.href = '/';
-  }});
+  // Sidebar footer's account button/menu (shell-guest/shell-account-btn/
+  // shell-account-menu/shell-signout-btn) are wired by account_widget()'s
+  // own <script>, not here — see the {{account_widget()}} call above.
 
   // The one baseline behavior every page's #shell-search shares: Enter
   // runs a real search on /discover (see DISCOVER_BODY). Not present
