@@ -193,8 +193,13 @@ STYLE = """
     --space-1: 4px; --space-2: 8px; --space-3: 12px;
     --space-4: 16px; --space-5: 24px; --space-6: 32px;
   }
+  /* :not([data-theme="light"]) so an explicit light choice (the
+     manual toggle below, see account_widget()) beats the OS
+     preference — without that guard, someone on a dark-mode OS who
+     explicitly picks "light" here would still get this block's
+     values, since a media query alone can't know about the toggle. */
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --ink: #f5f5f5; --paper: #0a0a0a; --content-bg: #171717; --surface: #0a0a0a;
       --slate: #a3a3a3; --rule: #262626; --accent: var(--slate);
       --accent-solid: #f5f5f5; --accent-solid-text: #171717;
@@ -204,6 +209,21 @@ STYLE = """
       --shadow-hover: 0 4px 14px rgba(0,0,0,0.5);
       --radius-sm: 6px; --radius-md: 8px; --radius-pill: 999px;
     }
+  }
+  /* The other half of the manual override: an explicit dark choice
+     wins regardless of OS preference. Same values as the media-query
+     block above, kept as its own always-applies rule (not folded into
+     it) since [data-theme="dark"] needs to win even on a light-mode
+     OS, where that media query never matches at all. */
+  :root[data-theme="dark"] {
+    --ink: #f5f5f5; --paper: #0a0a0a; --content-bg: #171717; --surface: #0a0a0a;
+    --slate: #a3a3a3; --rule: #262626; --accent: var(--slate);
+    --accent-solid: #f5f5f5; --accent-solid-text: #171717;
+    --accent-soft: #262626; --good: #4ade80; --good-soft: #0e2817;
+    --error: #f87171; --error-soft: #2f1313;
+    --shadow-rest: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
+    --shadow-hover: 0 4px 14px rgba(0,0,0,0.5);
+    --radius-sm: 6px; --radius-md: 8px; --radius-pill: 999px;
   }
   * { box-sizing: border-box; }
   body {
@@ -459,6 +479,25 @@ STYLE = """
     text-align: left; padding: var(--space-2) 0.5rem; border-radius: var(--radius-sm); cursor: pointer; text-decoration: none;
   }
   .app-account-menu button:hover, .app-account-menu a:hover { background: var(--accent-soft); }
+  /* The dark-mode toggle row inside account_widget()'s dropdown, right
+     above Sign out. .app-account-menu button already sets display:
+     block for a plain full-width label — this needs display:flex
+     instead to lay the "Dark mode" label and the switch out side by
+     side, hence the extra class in the selector for enough specificity
+     to actually win over that rule rather than just losing quietly. */
+  .app-account-menu button.theme-toggle-row {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); cursor: pointer;
+  }
+  .theme-toggle-track {
+    position: relative; width: 1.9rem; height: 1.05rem; border-radius: var(--radius-pill);
+    background: var(--rule); flex: none; transition: background .15s ease;
+  }
+  .theme-toggle-row[aria-checked="true"] .theme-toggle-track { background: var(--ink); }
+  .theme-toggle-thumb {
+    position: absolute; top: 0.1rem; left: 0.1rem; width: 0.85rem; height: 0.85rem;
+    border-radius: 50%; background: var(--surface); transition: transform .15s ease;
+  }
+  .theme-toggle-row[aria-checked="true"] .theme-toggle-thumb { transform: translateX(0.85rem); }
   /* Shown instead of the avatar/email button when /api/me says no one's
      signed in — /lookup and /lobbying are the two pages that render this
      shell without requiring a session (see the module docstring's "no
@@ -638,6 +677,26 @@ STYLE = """
 """
 
 
+# Sets data-theme from localStorage BEFORE first paint, so a page load
+# doesn't flash the OS-preference theme for a moment before JS gets
+# around to correcting it to whatever the user actually picked via the
+# toggle in account_widget(). Every page's <head> includes this, right
+# after <style> (see STYLE's own :not([data-theme="light"]) media
+# query and :root[data-theme="dark"] block, which is what this
+# attribute actually controls) — a page with no stored preference
+# leaves the attribute unset entirely, so the plain OS-preference
+# media query keeps working exactly as it always has for anyone who's
+# never touched the toggle.
+THEME_INIT_SCRIPT = """
+<script>
+(function() {
+  var t = localStorage.getItem('theme');
+  if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+})();
+</script>
+"""
+
+
 def nav_links(current):
     """Links to whichever OTHER content pages exist — computed once per
     page constant below (these are built at import time, not
@@ -665,13 +724,16 @@ def nav_links(current):
 def account_widget(extra_links="", menu_class="", guest_plain=False):
     """The one "who's logged in" component — an avatar circle, an
     email that truncates with an ellipsis instead of wrapping/
-    overflowing, and a click-to-toggle dropdown. Used by both
-    app_shell() (the sidebar footer) and top_nav() (every public page)
-    instead of two separately-implemented, differently-behaved ones:
-    the sidebar's original version already truncated a long email
-    correctly; top_nav()'s original version (a native <details>/
-    <summary>) didn't, and wrapped its own dropdown caret onto its own
-    line once the email got long. This is that one, not a third
+    overflowing, and a click-to-toggle dropdown (which also holds the
+    dark-mode switch, right above Sign out — see THEME_INIT_SCRIPT and
+    STYLE's :root[data-theme="dark"] for the other half of how that
+    actually changes anything). Used by both app_shell() (the sidebar
+    footer) and top_nav() (every public page) instead of two
+    separately-implemented, differently-behaved ones: the sidebar's
+    original version already truncated a long email correctly;
+    top_nav()'s original version (a native <details>/<summary>)
+    didn't, and wrapped its own dropdown caret onto its own line once
+    the email got long. This is that one, not a third
     implementation — call sites differ only in the three params below.
 
     extra_links: top_nav()'s call passes the real navigation links
@@ -713,6 +775,10 @@ def account_widget(extra_links="", menu_class="", guest_plain=False):
 </button>
 <div class="app-account-menu {menu_class}" id="shell-account-menu">
   {extra_links}
+  <button type="button" class="theme-toggle-row" id="theme-toggle-btn" role="switch" aria-checked="false">
+    <span>Dark mode</span>
+    <span class="theme-toggle-track"><span class="theme-toggle-thumb"></span></span>
+  </button>
   <button type="button" id="shell-signout-btn">Sign out</button>
 </div>
 <script>
@@ -739,6 +805,28 @@ def account_widget(extra_links="", menu_class="", guest_plain=False):
   document.getElementById('shell-signout-btn').addEventListener('click', async () => {{
     await fetch('/api/logout', {{ method: 'POST' }});
     window.location.href = '/';
+  }});
+
+  // Dark-mode toggle — data-theme on <html> is what STYLE's
+  // :root[data-theme="dark"] / :not([data-theme="light"]) rules
+  // actually key off; THEME_INIT_SCRIPT (in every page's own <head>)
+  // is what applies a stored choice on the NEXT page load, before
+  // this script (or anything else) even runs, so a click here only
+  // has to handle updating the CURRENT page plus saving the choice.
+  const themeToggle = document.getElementById('theme-toggle-btn');
+  const isDarkNow = () => {{
+    const explicit = document.documentElement.getAttribute('data-theme');
+    if (explicit === 'dark') return true;
+    if (explicit === 'light') return false;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }};
+  const syncThemeToggle = () => themeToggle.setAttribute('aria-checked', isDarkNow() ? 'true' : 'false');
+  syncThemeToggle();
+  themeToggle.addEventListener('click', () => {{
+    const next = isDarkNow() ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    syncThemeToggle();
   }});
 }})();
 </script>
@@ -977,6 +1065,7 @@ def page(title, path, body):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <style>{STYLE}</style>
+{THEME_INIT_SCRIPT}
 </head>
 <body>
 {app_shell(path, body)}
@@ -1122,6 +1211,7 @@ LANDING_PAGE = f"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rotunda</title>
 <style>{STYLE}{LANDING_STYLE}</style>
+{THEME_INIT_SCRIPT}
 </head>
 <body>
 {top_nav("/", left_extra='<a href="/lookup">Lookup</a><a href="/discover">Discover</a><a href="#features">Product</a><a href="#workflow">Workflow</a><a href="#trust">Compliance</a>')}
@@ -1960,6 +2050,7 @@ SIGNUP_PAGE = f"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign up — Rotunda</title>
 <style>{STYLE}</style>
+{THEME_INIT_SCRIPT}
 </head>
 <body>
 {top_nav("/signup", left_extra='<a href="/lookup">← Lookup</a><a href="/login">Log in →</a>', show_account_menu=False)}
@@ -2031,6 +2122,7 @@ LOGIN_PAGE = f"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Log in — Rotunda</title>
 <style>{STYLE}</style>
+{THEME_INIT_SCRIPT}
 </head>
 <body>
 {top_nav("/login", left_extra='<a href="/lookup">← Lookup</a><a href="/signup">Sign up →</a>', show_account_menu=False)}
@@ -2105,6 +2197,7 @@ PROFILE_PAGE = f"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Registration details — Rotunda</title>
 <style>{STYLE}</style>
+{THEME_INIT_SCRIPT}
 </head>
 <body>
 {top_nav("/signup/profile", left_extra='<a href="/flagged">Skip for now →</a>')}
