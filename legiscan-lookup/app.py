@@ -617,16 +617,13 @@ STYLE = """
   }
   .app-topbar-title { font-size: 0.95rem; font-weight: 600; }
   .app-topbar-sub { font-size: 0.78rem; color: var(--slate); margin-top: 0.1rem; }
-  .app-topbar-actions { display: flex; align-items: center; gap: 0.5rem; flex: none; }
-  /* Lives in the topbar (shared chrome). Its baseline behavior — Enter
-     runs a real /lookup search (wired in app_shell()'s own script
-     below) — is the same on every page it appears on. A page can ALSO
-     attach its own 'input' listener for its own live, local filtering
-     (e.g. FLAGGED_BODY filtering the flagged-bills table as you type)
-     without conflict, since that's a different event than the Enter
-     key this box's global behavior listens for. Hidden only on
-     /lookup itself, where it would just duplicate that page's own
-     search field. */
+  /* Was shared topbar chrome on every page (a global "search LegiScan"
+     box + a persistent "Flag a bill" shortcut) until both were removed
+     as redundant — /lookup (linked from the sidebar) already covers
+     both a real search and flagging. Now just FLAGGED_BODY's own local
+     filter-as-you-type box for the list already loaded on that page —
+     a different job (filtering, not searching LegiScan), which is why
+     it survived while the shared version didn't. */
   .search-box {
     display: flex; align-items: center; gap: 0.5rem; height: 2rem; width: 12.5rem; border-radius: var(--radius-md);
     background: var(--accent-soft); border: 1px solid var(--rule); padding: 0 var(--space-2); font-size: 0.8rem; color: var(--slate);
@@ -1067,25 +1064,6 @@ SHELL_NAV_ITEMS = [
 ]
 
 
-def _flag_a_bill_action(current):
-    """The topbar's persistent 'Flag a bill' shortcut, styled by how
-    relevant flagging actually is on the page it's sitting on: full
-    primary-button weight on the two pages where flagging/assigning a
-    bill's position is the direct task (Flagged Bills, and Clients —
-    which covers Client Detail too, since both render with
-    current="/clients"), a quieter secondary link everywhere else it's
-    still a legitimate shortcut, and hidden entirely on /lookup itself
-    — pointing there from there would just be a link back to the page
-    you're already on."""
-    if current == "/lookup":
-        return ""
-    style = "primary" if current in ("/flagged", "/clients") else "secondary"
-    return f'''<a href="/lookup" class="{style}">
-          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 2v10M2 7h10" stroke-linecap="round"/></svg>
-          Flag a bill
-        </a>'''
-
-
 def app_shell(current, body):
     """Sidebar + topbar chrome shared by every real page in the product.
     `body` is that page's own already-built inner HTML — its own
@@ -1145,14 +1123,6 @@ def app_shell(current, body):
         <div class="app-topbar-title">Overview</div>
         <div class="app-topbar-sub" id="shell-date"></div>
       </div>
-      <div class="app-topbar-actions">
-        {'' if current == "/lookup" else '''<div class="search-box">
-          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="5" r="3.5"/><path d="M8 8l2 2" stroke-linecap="round"/></svg>
-          <label for="shell-search" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Search bills</label>
-          <input id="shell-search" type="text" placeholder="Search bills...">
-        </div>'''}
-        {_flag_a_bill_action(current)}
-      </div>
     </header>
     <main class="app-main">{body}</main>
   </div>
@@ -1167,21 +1137,6 @@ def app_shell(current, body):
   // Sidebar footer's account button/menu (shell-guest/shell-account-btn/
   // shell-account-menu/shell-signout-btn) are wired by account_widget()'s
   // own <script>, not here — see the {{account_widget()}} call above.
-
-  // The one baseline behavior every page's #shell-search shares: Enter
-  // runs a real search on /lookup (see LOOKUP_BODY — merged with what
-  // used to be the separate /discover page). Not present on /lookup
-  // itself (see .search-box's own CSS comment for why — that page has
-  // its own, identical search field), so this guards for the element
-  // missing rather than assuming it's always there.
-  const shellSearch = document.getElementById('shell-search');
-  if (shellSearch) {{
-    shellSearch.addEventListener('keydown', (e) => {{
-      if (e.key !== 'Enter') return;
-      const q = shellSearch.value.trim();
-      if (q) window.location.href = '/lookup?q=' + encodeURIComponent(q);
-    }});
-  }}
 }})();
 </script>
 """
@@ -2677,15 +2632,22 @@ FLAGGED_BODY = f"""
 <div class="panel">
   <div class="panel-head">
     <div class="title">Flagged Bills</div>
-    <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.75rem;color:var(--slate)">
-      Sort by
-      <select id="sort-by" style="font-size:0.78rem;padding:0.3rem 0.5rem">
-        <option value="bill_number">Bill number</option>
-        <option value="title">Alphabetical</option>
-        <option value="client">Client</option>
-        <option value="activity">Most recent activity</option>
-      </select>
-    </label>
+    <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+      <div class="search-box">
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="5" r="3.5"/><path d="M8 8l2 2" stroke-linecap="round"/></svg>
+        <label for="flagged-search" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Filter your flagged bills</label>
+        <input id="flagged-search" type="text" placeholder="Filter your flagged bills...">
+      </div>
+      <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.75rem;color:var(--slate)">
+        Sort by
+        <select id="sort-by" style="font-size:0.78rem;padding:0.3rem 0.5rem">
+          <option value="bill_number">Bill number</option>
+          <option value="title">Alphabetical</option>
+          <option value="client">Client</option>
+          <option value="activity">Most recent activity</option>
+        </select>
+      </label>
+    </div>
   </div>
   <div id="loading" class="show" style="padding:1rem 1.15rem"><span class="spinner"></span>Loading…</div>
   <div id="list"></div>
@@ -2698,7 +2660,7 @@ const loadingEl = document.getElementById('loading');
 const errorEl = document.getElementById('error');
 const tabsEl = document.getElementById('tabs');
 const statsEl = document.getElementById('stats');
-const searchEl = document.getElementById('shell-search');
+const searchEl = document.getElementById('flagged-search');
 const sortSelectEl = document.getElementById('sort-by');
 let allClients = [];
 let currentRows = [];
