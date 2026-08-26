@@ -1871,6 +1871,62 @@ async function submitQuickAddClient(e) {
 """
 
 
+# Shared "are you sure?" dialog for destructive actions — styled with
+# the same .modal-backdrop/.modal-panel CLIENT_QUICKADD_JS's modal above
+# uses, rather than the browser's own native confirm() (which both
+# CLIENTS_BODY's and CLIENT_DETAIL_BODY's removeClient() called before
+# this existed). confirmDelete(title, message) returns a Promise<bool>,
+# so a caller just does `if (!await confirmDelete(...)) return;` in
+# place of the old `if (!confirm(...)) return;` line — same control
+# flow, just awaited. Built once and reused (not recreated per call)
+# the same way ensureQuickAddClientModal() above reuses its backdrop.
+CONFIRM_DELETE_JS = """
+function confirmDelete(title, message) {
+  return new Promise((resolve) => {
+    let backdrop = document.getElementById('confirm-delete-backdrop');
+    if (!backdrop) {
+      backdrop = document.createElement('div');
+      backdrop.id = 'confirm-delete-backdrop';
+      backdrop.className = 'modal-backdrop';
+      backdrop.innerHTML = `
+        <div class="modal-panel" role="alertdialog" aria-modal="true" aria-labelledby="cd-title" aria-describedby="cd-message">
+          <div class="modal-head">
+            <div>
+              <div class="title" id="cd-title"></div>
+              <div class="sub" id="cd-message"></div>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="danger" id="cd-confirm">Remove</button>
+            <button type="button" class="secondary" id="cd-cancel">Cancel</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(backdrop);
+    }
+    backdrop.querySelector('#cd-title').textContent = title;
+    backdrop.querySelector('#cd-message').textContent = message;
+    const confirmBtn = backdrop.querySelector('#cd-confirm');
+    const cancelBtn = backdrop.querySelector('#cd-cancel');
+    const finish = (result) => {
+      backdrop.classList.remove('show');
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      backdrop.removeEventListener('click', onBackdropClick);
+      resolve(result);
+    };
+    const onConfirm = () => finish(true);
+    const onCancel = () => finish(false);
+    const onBackdropClick = (e) => { if (e.target === backdrop) finish(false); };
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+    backdrop.addEventListener('click', onBackdropClick);
+    backdrop.classList.add('show');
+  });
+}
+"""
+
+
 # The body for /lookup, wrapped in app_shell() below rather than
 # top_nav()+.wrap — this is one of the two pages (with /lobbying) that
 # render the full signed-in shell without requiring a session, so it
@@ -3448,6 +3504,7 @@ CLIENTS_BODY = f"""
 </div>
 
 <script>
+{CONFIRM_DELETE_JS}
 const form = document.getElementById('f');
 const formCard = document.getElementById('form-card');
 const errorEl = document.getElementById('error');
@@ -3697,10 +3754,13 @@ form.addEventListener('submit', async (e) => {{
 async function removeClient(id) {{
   // Deleting a client also deletes every bill/position it's linked to
   // (see db.delete_client) — no undo exists, so this is worth a real
-  // confirmation naming what's about to be lost, not just a click.
+  // confirmation naming what's about to be lost, not just a click. Uses
+  // the shared styled dialog (see CONFIRM_DELETE_JS) rather than the
+  // browser's own confirm().
   const c = allClients.find(x => x.id === id);
   const name = c ? c.name : 'this client';
-  if (!confirm(`Remove ${{name}}? This also removes all of its bill and position assignments. This can't be undone.`)) return;
+  const ok = await confirmDelete('Remove client?', `Remove ${{name}}? This also removes all of its bill and position assignments. This can't be undone.`);
+  if (!ok) return;
   try {{
     const res = await fetch(`/api/clients?id=${{id}}`, {{ method: 'DELETE' }});
     if (!res.ok) {{
@@ -3835,6 +3895,7 @@ CLIENT_DETAIL_BODY = f"""
 </div>
 
 <script>
+{CONFIRM_DELETE_JS}
 const clientId = new URLSearchParams(window.location.search).get('id');
 const errorEl = document.getElementById('error');
 const clientEl = document.getElementById('client');
@@ -3853,10 +3914,17 @@ function renderClient(d) {{
         ${{[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), c.bus_phone].filter(Boolean).join(' · ') || 'No address on file'}}
       </div>
       ${{c.interests ? `<div class="bill-desc" style="margin-top:0.4rem">${{c.interests}}</div>` : ''}}
-      <div class="card-actions">
+      <div class="card-actions" style="align-items:center">
         <a class="secondary" href="/clients">Edit in Clients →</a>
         ${{d.entity_id ? `<a class="secondary" href="/lobbying/detail?id=${{d.entity_id}}">View CAL-ACCESS record →</a>` : ''}}
-        <button type="button" class="danger" onclick="removeClient()">Remove client</button>
+        <span class="row-menu" style="margin-left:auto">
+          <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'client-header')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-client-header">
+            <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
+          </button>
+          <div class="row-menu-dropdown" id="row-menu-client-header">
+            <button type="button" onclick="removeClient()">Remove client</button>
+          </div>
+        </span>
       </div>
     </div>
   `;
@@ -3864,12 +3932,17 @@ function renderClient(d) {{
 
 let currentClientName = 'this client';
 
-// Same cascade warning and confirm() as the Clients list's own
-// removeClient() (see CLIENTS_BODY) — deleting a client here deletes
-// every bill/position it's linked to too, so this needs the same real
-// confirmation naming what's about to be lost, not just a click.
+// Same cascade warning as the Clients list's own removeClient() (see
+// CLIENTS_BODY) — deleting a client here deletes every bill/position
+// it's linked to too, so this needs the same real confirmation naming
+// what's about to be lost, not just a click. Uses the shared styled
+// dialog (see CONFIRM_DELETE_JS) rather than the browser's own
+// confirm(), and — like the Clients list — tucks the trigger itself
+// into a kebab menu instead of sitting at equal weight next to "Edit
+// in Clients"/"View CAL-ACCESS record".
 async function removeClient() {{
-  if (!confirm(`Remove ${{currentClientName}}? This also removes all of its bill and position assignments. This can't be undone.`)) return;
+  const ok = await confirmDelete('Remove client?', `Remove ${{currentClientName}}? This also removes all of its bill and position assignments. This can't be undone.`);
+  if (!ok) return;
   try {{
     const res = await fetch(`/api/clients?id=${{clientId}}`, {{ method: 'DELETE' }});
     if (!res.ok) {{
