@@ -16,14 +16,34 @@
         <string>/Users/daezhongilbarg/Projects/noble law app project/legiscan-lookup/refresh.sh</string>
     </array>
 
-    <!-- Runs once a day at 7:00am. Change Hour/Minute below to reschedule. -->
+    <!-- Runs 3x/day — 6am, 1pm, 8pm local time. StartCalendarInterval takes
+         an array of dicts (each one an independent fire time) instead of a
+         single dict when there's more than one; local system time zone, so
+         no DST math needed here the way render.yaml's UTC cron entries do.
+         digest.py only emails when a refresh actually finds a change (see
+         its own comment), so running this 3x/day doesn't triple email
+         volume for bills that haven't moved. -->
     <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>7</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>6</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>13</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>20</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
 
     <key>StandardOutPath</key>
     <string>/Users/daezhongilbarg/Projects/noble law app project/legiscan-lookup/logs/launchd.out.log</string>

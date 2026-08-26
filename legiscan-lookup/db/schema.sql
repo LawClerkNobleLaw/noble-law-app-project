@@ -31,7 +31,13 @@ CREATE TABLE IF NOT EXISTS bills (
   status_date     TEXT,
   url             TEXT,
   change_hash     TEXT,
-  last_synced_at  TEXT
+  last_synced_at  TEXT,
+  -- "When does this need to be amended by?" — checked LegiScan's raw
+  -- getBill payload directly (every top-level key it returns) and it has
+  -- no procedural-deadline field of any kind, so this is manually entered
+  -- by a user on /report rather than synced from anywhere. Nullable —
+  -- most bills won't have one set.
+  amend_by_date   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS bill_status_history (

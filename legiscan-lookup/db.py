@@ -91,6 +91,10 @@ def _migrate(conn):
         if col not in client_cols:
             conn.execute(f"ALTER TABLE clients ADD COLUMN {col} TEXT")
 
+    bill_cols = {row["name"] for row in conn.execute("PRAGMA table_info(bills)")}
+    if "amend_by_date" not in bill_cols:
+        conn.execute("ALTER TABLE bills ADD COLUMN amend_by_date TEXT")
+
     filing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(prepared_filings)")}
     for col in ("pdf_field_data_hash", "client_row_ids"):
         if col not in filing_cols:
@@ -601,7 +605,7 @@ def clients_for_bills(conn, user_id, bill_ids):
 def get_bill_report(conn, user_id, bill_id):
     bill = conn.execute(
         """SELECT id AS bill_id, state, bill_number, session_label, title,
-                  description, status_label, status_date, url
+                  description, status_label, status_date, url, amend_by_date
            FROM bills WHERE id = ?""",
         (bill_id,),
     ).fetchone()
@@ -649,6 +653,20 @@ def get_bill_report(conn, user_id, bill_id):
         "SELECT 1 FROM flagged_bills WHERE user_id = ? AND bill_id = ?", (user_id, bill_id)
     ).fetchone())
     return result
+
+
+def set_bill_amend_by_date(conn, bill_id, amend_by_date):
+    """Manually-entered "amend by" deadline on a bill — see the column
+    comment on bills.amend_by_date in schema.sql for why this isn't
+    synced from LegiScan. amend_by_date=None (or "") clears it, same as
+    every other optional-field setter in this file. Not user-scoped —
+    the deadline belongs to the bill itself, same as status_label, not
+    to any one user's view of it, so every user tracking this bill sees
+    the same date."""
+    conn.execute(
+        "UPDATE bills SET amend_by_date = ? WHERE id = ?",
+        (amend_by_date or None, bill_id),
+    )
 
 
 # ── "Prepare my disclosure form" — see pdf_forms.py for how field_data
