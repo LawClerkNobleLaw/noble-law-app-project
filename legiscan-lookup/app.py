@@ -3844,6 +3844,7 @@ const POSITIONS = [['watch', 'Watch'], ['support', 'Support'], ['oppose', 'Oppos
 
 function renderClient(d) {{
   const c = d.client;
+  currentClientName = c.name;
   clientEl.innerHTML = `
     <div class="card">
       <div class="bill-title">${{c.name}}</div>
@@ -3854,9 +3855,31 @@ function renderClient(d) {{
       <div class="card-actions">
         <a class="secondary" href="/clients">Edit in Clients →</a>
         ${{d.entity_id ? `<a class="secondary" href="/lobbying/detail?id=${{d.entity_id}}">View CAL-ACCESS record →</a>` : ''}}
+        <button type="button" class="danger" onclick="removeClient()">Remove client</button>
       </div>
     </div>
   `;
+}}
+
+let currentClientName = 'this client';
+
+// Same cascade warning and confirm() as the Clients list's own
+// removeClient() (see CLIENTS_BODY) — deleting a client here deletes
+// every bill/position it's linked to too, so this needs the same real
+// confirmation naming what's about to be lost, not just a click.
+async function removeClient() {{
+  if (!confirm(`Remove ${{currentClientName}}? This also removes all of its bill and position assignments. This can't be undone.`)) return;
+  try {{
+    const res = await fetch(`/api/clients?id=${{clientId}}`, {{ method: 'DELETE' }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not remove client');
+    }}
+    window.location.href = '/clients';
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
 }}
 
 function positionSelect(billId, position) {{
