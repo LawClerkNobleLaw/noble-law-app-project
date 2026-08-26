@@ -798,6 +798,12 @@ STYLE = """
     box-shadow: 0 4px 14px rgba(0,0,0,0.16); z-index: 20; display: none; flex-direction: column; gap: var(--space-1);
   }
   .row-menu-dropdown.show { display: flex; }
+  /* Opens upward instead of down — set by toggleRowMenu() when the table's
+     own overflow-x:auto wrapper (which clips overflow-y too, per the CSS
+     spec, once overflow-x is anything but visible) would otherwise cut
+     the menu off. Hits the last row in the table hardest, since there's
+     no more table content below it to grow the wrapper's height for. */
+  .row-menu-dropdown.open-up { top: auto; bottom: calc(100% + 0.25rem); }
   .row-menu-dropdown button {
     background: none; border: none; color: var(--error); font: inherit; font-weight: 500; font-size: 0.82rem;
     text-align: left; padding: var(--space-2) var(--space-2); border-radius: var(--radius-sm); cursor: pointer;
@@ -3069,7 +3075,7 @@ function fmtDateTime(iso) {{
 
 function closeRowMenus() {{
   document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {{
-    m.classList.remove('show');
+    m.classList.remove('show', 'open-up');
     const openBtn = document.querySelector(`[aria-controls="${{m.id}}"]`);
     if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
   }});
@@ -3082,6 +3088,13 @@ function toggleRowMenu(e, billId) {{
   if (!wasOpen) {{
     menu.classList.add('show');
     e.currentTarget.setAttribute('aria-expanded', 'true');
+    // See .row-menu-dropdown.open-up in STYLE — flip upward instead of
+    // down whenever opening downward would get clipped by the table's
+    // own overflow-x:auto wrapper, which the last row always would.
+    const table = e.currentTarget.closest('table');
+    if (table && menu.getBoundingClientRect().bottom > table.getBoundingClientRect().bottom) {{
+      menu.classList.add('open-up');
+    }}
   }}
 }}
 document.addEventListener('click', closeRowMenus);
@@ -3912,7 +3925,7 @@ function render(rows) {{
 
 function closeRowMenus() {{
   document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {{
-    m.classList.remove('show');
+    m.classList.remove('show', 'open-up');
     const openBtn = document.querySelector(`[aria-controls="${{m.id}}"]`);
     if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
   }});
@@ -3925,6 +3938,13 @@ function toggleRowMenu(e, key) {{
   if (!wasOpen) {{
     menu.classList.add('show');
     e.currentTarget.setAttribute('aria-expanded', 'true');
+    // See .row-menu-dropdown.open-up in STYLE — flip upward instead of
+    // down whenever opening downward would get clipped by the table's
+    // own overflow-x:auto wrapper, which the last row always would.
+    const table = e.currentTarget.closest('table');
+    if (table && menu.getBoundingClientRect().bottom > table.getBoundingClientRect().bottom) {{
+      menu.classList.add('open-up');
+    }}
   }}
 }}
 document.addEventListener('click', closeRowMenus);
@@ -4098,7 +4118,7 @@ function renderBills(bills) {{
 
 function closeRowMenus() {{
   document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {{
-    m.classList.remove('show');
+    m.classList.remove('show', 'open-up');
     const openBtn = document.querySelector(`[aria-controls="${{m.id}}"]`);
     if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
   }});
@@ -4111,6 +4131,13 @@ function toggleRowMenu(e, key) {{
   if (!wasOpen) {{
     menu.classList.add('show');
     e.currentTarget.setAttribute('aria-expanded', 'true');
+    // See .row-menu-dropdown.open-up in STYLE — flip upward instead of
+    // down whenever opening downward would get clipped by the table's
+    // own overflow-x:auto wrapper, which the last row always would.
+    const table = e.currentTarget.closest('table');
+    if (table && menu.getBoundingClientRect().bottom > table.getBoundingClientRect().bottom) {{
+      menu.classList.add('open-up');
+    }}
   }}
 }}
 document.addEventListener('click', closeRowMenus);
@@ -4826,7 +4853,7 @@ async function removeFiling(id) {{
 
 function closeRowMenus() {{
   document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {{
-    m.classList.remove('show');
+    m.classList.remove('show', 'open-up');
     const openBtn = document.querySelector(`[aria-controls="${{m.id}}"]`);
     if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
   }});
@@ -4839,6 +4866,13 @@ function toggleRowMenu(e, key) {{
   if (!wasOpen) {{
     menu.classList.add('show');
     e.currentTarget.setAttribute('aria-expanded', 'true');
+    // See .row-menu-dropdown.open-up in STYLE — flip upward instead of
+    // down whenever opening downward would get clipped by the table's
+    // own overflow-x:auto wrapper, which the last row always would.
+    const table = e.currentTarget.closest('table');
+    if (table && menu.getBoundingClientRect().bottom > table.getBoundingClientRect().bottom) {{
+      menu.classList.add('open-up');
+    }}
   }}
 }}
 document.addEventListener('click', closeRowMenus);
