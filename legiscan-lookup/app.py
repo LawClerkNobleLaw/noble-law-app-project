@@ -1115,8 +1115,14 @@ def app_shell(current, body):
     anything. Sidebar links to account-gated pages (Flagged bills,
     Clients, Profile, ...) still just 302 a logged-out visitor to
     /login if they click one — same as always."""
+    # data-nav carries the plain href per item (same value `current` gets
+    # compared against below) so a page like /report — whose real nav
+    # context depends on where the visitor came from, not on the fixed
+    # `current` this whole shell was built with at import time — can find
+    # and re-target the right <li> client-side instead of parsing link
+    # text. See REPORT_BODY's own script for the one place that happens.
     nav_html = "".join(
-        f'<li><a href="{href}" class="side-nav-item{" active" if href == current else ""}">{icon}{label}</a></li>'
+        f'<li><a href="{href}" data-nav="{href}" class="side-nav-item{" active" if href == current else ""}">{icon}{label}</a></li>'
         for href, label, icon in SHELL_NAV_ITEMS
     )
     profile_active = " active" if current == "/profile" else ""
@@ -1994,9 +2000,13 @@ function renderResults(data) {{
     resultsEl.innerHTML = '<p class="empty">No bills match that search. Try a broader term, check the spelling, or a different bill number.</p>';
     return;
   }}
+  // from_label/from_href tell /report where this click came from, so its
+  // back link and sidebar highlight can point back to Lookup instead of
+  // always assuming Flagged Bills (see REPORT_BODY's own script for the
+  // read side of this).
   const rowsHtml = rows.map(r => `
-    <tr class="row-link" onclick="window.location.href='/report?bill_id=${{r.bill_id}}'">
-      <td><a href="/report?bill_id=${{r.bill_id}}">${{r.bill_number}}</a></td>
+    <tr class="row-link" onclick="window.location.href='/report?bill_id=${{r.bill_id}}&from_label=Lookup&from_href=%2Flookup'">
+      <td><a href="/report?bill_id=${{r.bill_id}}&from_label=Lookup&from_href=%2Flookup">${{r.bill_number}}</a></td>
       <td>${{snippet(r.title)}}</td>
       <td><span class="status-badge">${{statusLabel(r.last_action)}}</span></td>
       <td class="date">${{r.last_action_date || ''}}</td>
@@ -3909,7 +3919,7 @@ function renderBills(bills) {{
           <td>${{b.status_label ? `<span class="status-badge">${{b.status_label}}</span>` : ''}}</td>
           <td>${{positionSelect(b.bill_id, b.position || 'watch')}}</td>
           <td class="row-menu">
-            <a class="secondary" href="/report?bill_id=${{b.bill_id}}" style="margin-right:0.4rem">Report</a>
+            <a class="secondary" href="/report?bill_id=${{b.bill_id}}&from_label=${{encodeURIComponent(currentClientName)}}&from_href=${{encodeURIComponent('/clients/detail?id=' + clientId)}}" style="margin-right:0.4rem">Report</a>
             <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'bill-${{b.bill_id}}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-bill-${{b.bill_id}}">
               <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
             </button>
@@ -4053,7 +4063,7 @@ CLIENT_DETAIL_PAGE = page("Client — Rotunda", "/clients", CLIENT_DETAIL_BODY)
 # ?bill_id=... — e.g. linked from a "Report" link on /flagged — rather
 # than being a page anyone navigates to on its own.
 REPORT_BODY = f"""
-<div class="page-head"><div><a href="/flagged" class="sub">← Flagged bills</a></div></div>
+<div class="page-head"><div><a href="/flagged" class="sub" id="back-link">← Flagged bills</a></div></div>
 <div id="error" role="alert" aria-live="assertive"></div>
 <div id="loading" class="show"><span class="spinner"></span>Loading…</div>
 <div id="report"></div>
@@ -4064,6 +4074,37 @@ REPORT_BODY = f"""
 const reportEl = document.getElementById('report');
 const errorEl = document.getElementById('error');
 const billId = new URLSearchParams(window.location.search).get('bill_id');
+
+// The back link and sidebar highlight above are baked at import time as
+// "Flagged bills" (see REPORT_PAGE below and app_shell()'s own
+// docstring on why every page constant here is built once, not
+// per-request) — a fine default, since Flagged Bills is this page's
+// most common entry point, but a search result from /lookup or a
+// client's own bill list land here too. When the link that brought us
+// here passed from_label/from_href (see LOOKUP_BODY's and
+// CLIENT_DETAIL_BODY's report links), swap both to match instead of
+// always claiming Flagged Bills. No params → today's baked default,
+// unchanged.
+(function() {{
+  const params = new URLSearchParams(window.location.search);
+  const fromLabel = params.get('from_label');
+  const fromHref = params.get('from_href');
+  if (!fromLabel || !fromHref) return;
+  const backLink = document.getElementById('back-link');
+  backLink.href = fromHref;
+  backLink.textContent = '← ' + fromLabel;
+  // First path segment match (e.g. /clients/detail?id=5 -> "clients"
+  // matches the sidebar's /clients item) rather than a strict equality
+  // check, since fromHref can point at a sub-page of a top-level section.
+  const fromSection = fromHref.split('?')[0].split('/')[1] || '';
+  const navItem = Array.from(document.querySelectorAll('.side-nav-item[data-nav]'))
+    .find(a => (a.dataset.nav.split('/')[1] || '') === fromSection);
+  if (navItem) {{
+    document.querySelectorAll('.side-nav-item.active').forEach(a => a.classList.remove('active'));
+    navItem.classList.add('active');
+  }}
+}})();
+
 const POSITION_LABELS = {{ support: 'Support', oppose: 'Oppose', watch: 'Watch' }};
 // Set by render() each time a report loads — the flag-confirmation
 // modal below reads this instead of re-fetching, same role `current`
