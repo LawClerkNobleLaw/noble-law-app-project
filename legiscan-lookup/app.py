@@ -639,8 +639,7 @@ STYLE = """
     height: 4rem; flex: none; display: flex; align-items: center; justify-content: space-between;
     padding: 0 1.5rem; border-bottom: 1px solid var(--rule); background: var(--paper); gap: 1rem;
   }
-  .app-topbar-title { font-size: 0.95rem; font-weight: 600; }
-  .app-topbar-sub { font-size: 0.78rem; color: var(--slate); margin-top: 0.1rem; }
+  .app-topbar-sub { font-size: 0.78rem; color: var(--slate); }
   /* Was shared topbar chrome on every page (a global "search LegiScan"
      box + a persistent "Flag a bill" shortcut) until both were removed
      as redundant — /lookup (linked from the sidebar) already covers
@@ -1096,12 +1095,14 @@ def app_shell(current, body):
     """Sidebar + topbar chrome shared by every real page in the product.
     `body` is that page's own already-built inner HTML — its own
     heading, controls, table, script, whatever it needs — just wrapped
-    in the shell. The topbar itself stays generic ("Overview" + today's
-    date) rather than per-page; the page's actual title/description
-    lives inside `body` as a .page-head, paired with that page's own
-    controls (see FLAGGED_BODY) — matching the source template's own
-    split between a small persistent header and each page's real
-    heading.
+    in the shell. The topbar itself shows only today's date — real,
+    page-agnostic content worth keeping — rather than a page title;
+    it used to also show a static "Overview" label above that date on
+    every single page regardless of what page it was, which just
+    duplicated (and, everywhere but the actual overview, contradicted)
+    the page's own real heading a few pixels below. The page's actual
+    title/description lives inside `body` as a .page-head, paired with
+    that page's own controls (see FLAGGED_BODY).
 
     Most pages that call this have already 302'd to /login server-side
     if there's no session, so for them the /api/me fetch below isn't an
@@ -1153,10 +1154,7 @@ def app_shell(current, body):
   </aside>
   <div class="app-body">
     <header class="app-topbar">
-      <div>
-        <div class="app-topbar-title">Overview</div>
-        <div class="app-topbar-sub" id="shell-date"></div>
-      </div>
+      <div class="app-topbar-sub" id="shell-date"></div>
     </header>
     <main class="app-main">{body}</main>
   </div>
