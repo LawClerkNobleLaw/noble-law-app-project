@@ -515,6 +515,28 @@ STYLE = """
   select.position-select.support { border-color: var(--good); color: var(--good); }
   select.position-select.oppose { border-color: var(--error); color: var(--error); }
   select.position-select.watch { border-color: var(--accent); color: var(--accent); }
+  /* clientCell()'s per-row assignment, grouped into one pill-shaped unit
+     (name + position-select + remove ×) instead of a loose flex row —
+     the container itself carries the pill styling so it visually reads
+     as "one client, assigned" the same way .tag/.position-badge already
+     read as one thing elsewhere, rather than three independent controls
+     sitting next to each other. */
+  .client-chip {
+    display: flex; align-items: center; gap: 0.4rem; background: var(--content-bg);
+    border-radius: var(--radius-pill); padding: 0.15rem 0.3rem 0.15rem 0.65rem; margin-bottom: 0.4rem; width: fit-content;
+  }
+  .client-chip select.position-select { border: none; background: none; padding: 0.1rem 1.2rem 0.1rem 0.1rem; }
+  /* The "add a new client to this bill" control below the chips above —
+     deliberately NOT styled like a position-select (those change an
+     *existing* assignment; this one adds a new one), so a dashed
+     outline + plain "+ Add client" wording reads as its own distinct
+     affordance rather than a second, competing way to do what the chips
+     above already do. */
+  .add-client-select {
+    font-size: 0.78rem; font-weight: 600; color: var(--slate); background: none;
+    border: 1px dashed var(--rule); border-radius: var(--radius-pill); padding: 0.25rem 0.6rem;
+  }
+  .add-client-select:hover { border-color: var(--accent); color: var(--accent); }
   /* Filter tabs above a flagged/client-position list — same All/Support/
      Oppose/Watch vocabulary as the position badges above, just as a
      filter instead of a per-row value. */
@@ -2799,16 +2821,6 @@ FLAGGED_BODY = f"""
 
 <div class="panel">
   <div class="panel-head">
-    <div>
-      <div class="title">Today's Digest</div>
-      <div class="sub">Not tracked yet — coming soon</div>
-    </div>
-    <button type="button" class="panel-link" disabled title="Not built yet">View digest</button>
-  </div>
-</div>
-
-<div class="panel">
-  <div class="panel-head">
     <div class="title">Flagged Bills</div>
     <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
       <div class="search-box">
@@ -3141,9 +3153,14 @@ function positionSelect(r, c) {{
   return `<select class="position-select ${{position}}" data-saved="${{position}}" onchange="setPosition(${{r.bill_id}}, ${{c.id}}, this)" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${{options}}</select>`;
 }}
 
+// Two different jobs live in this cell: the chips change an *existing*
+// assignment's position (or remove it); the select below them *adds a
+// new* client. They used to look like two competing ways to do the same
+// thing — see .client-chip/.add-client-select in STYLE for the visual
+// fix (behavior/handlers here are unchanged).
 function clientCell(r) {{
   const chips = (r.assigned_clients || []).map(c => `
-    <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem">
+    <div class="client-chip">
       <a href="/clients/detail?id=${{c.id}}">${{c.name}}</a>
       ${{positionSelect(r, c)}}
       <button type="button" class="icon-btn" onclick="unassignClient(${{r.bill_id}}, ${{c.id}}, this)" aria-label="Remove client from this bill" title="Remove client" style="height:1.5rem;width:1.5rem;color:var(--slate)">×</button>
@@ -3152,10 +3169,10 @@ function clientCell(r) {{
 
   const assignedIds = new Set((r.assigned_clients || []).map(c => c.id));
   const available = allClients.filter(c => !assignedIds.has(c.id));
-  const placeholder = allClients.length ? (available.length ? 'Assign to client…' : 'All clients assigned') : 'No clients yet…';
+  const placeholder = allClients.length ? (available.length ? '+ Add client' : 'All clients assigned') : 'No clients yet…';
   return `
     <div>${{chips}}</div>
-    <select onchange="handleClientCellSelect(${{r.bill_id}}, this)" style="margin-top:0.2rem;font-size:0.8rem;padding:0.3rem 0.4rem">
+    <select class="add-client-select" onchange="handleClientCellSelect(${{r.bill_id}}, this)" style="margin-top:0.2rem">
       <option value="">${{placeholder}}</option>
       ${{clientOptionsHtml(available)}}
     </select>
