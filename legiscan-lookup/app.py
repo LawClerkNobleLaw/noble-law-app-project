@@ -88,6 +88,7 @@ from urllib.parse import urlparse, parse_qs, quote
 import accounts
 import config
 import db
+import disclosure_fields
 import mailer
 import pdf_forms
 import refresh_watchlist
@@ -4611,29 +4612,117 @@ function fmtDateTime(iso) {{
   return d.toLocaleString('en-US', {{ month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }});
 }}
 
+function escapeHtml(s) {{
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({{
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }})[c]);
+}}
+
 const errorEl = document.getElementById('error');
 const contentEl = document.getElementById('content');
 const filingId = new URLSearchParams(window.location.search).get('id');
 const FORM_LABELS = {{ "601": "Form 601 — Lobbying Firm Registration Statement" }};
+const ROW_KEYS = ['employer', 'description', 'effective', 'period', 'agencies'];
+
+let filing = null;
+let allClients = [];
+
+function showError(message) {{
+  errorEl.textContent = message;
+  errorEl.className = 'show';
+}}
 
 async function load() {{
   if (!filingId) {{
-    errorEl.textContent = 'Missing filing id in the URL.';
-    errorEl.className = 'show';
+    showError('Missing filing id in the URL.');
     document.getElementById('loading').className = '';
     return;
   }}
   try {{
-    const res = await fetch(`/api/prepared-filings?id=${{filingId}}`);
-    if (res.status === 401) {{ window.location.href = '/login'; return; }}
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not load this filing');
-    render(data);
+    const [filingRes, clientsRes] = await Promise.all([
+      fetch(`/api/prepared-filings?id=${{filingId}}`),
+      fetch('/api/clients'),
+    ]);
+    if (filingRes.status === 401 || clientsRes.status === 401) {{ window.location.href = '/login'; return; }}
+    const filingData = await filingRes.json();
+    if (!filingRes.ok) throw new Error(filingData.error || 'Could not load this filing');
+    allClients = await clientsRes.json();
+    filing = filingData;
+    render();
   }} catch (err) {{
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
+    showError(err.message);
   }} finally {{
     document.getElementById('loading').className = '';
+  }}
+}}
+
+// Every mutation (a field autosave, a client-row selection, generating
+// the PDF, signing off) gets the full updated filing back from the
+// server and just re-renders from it — one source of truth for whether
+// the PDF preview is stale, rather than the frontend trying to track
+// that itself. See docs/disclosure-html-editor-plan.md's "Staleness
+// guard": pdf_current is computed server-side, never assumed here.
+async function postJson(path, body) {{
+  const res = await fetch(path, {{
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify(body),
+  }});
+  const data = await res.json();
+  if (!res.ok) {{
+    const message = (data.field_errors && data.field_errors.length)
+      ? data.field_errors.join(' ')
+      : (data.error || 'Something went wrong.');
+    throw new Error(message);
+  }}
+  return data;
+}}
+
+async function saveField(inputEl) {{
+  const key = inputEl.dataset.fieldKey;
+  const value = inputEl.value;
+  if (value === inputEl.dataset.orig) return;  // dirty-check — nothing actually changed, skip the round trip
+  inputEl.disabled = true;
+  try {{
+    filing = await postJson('/api/prepared-filings/field', {{ id: Number(filingId), field_key: key, value }});
+    render();
+  }} catch (err) {{
+    showError(err.message);
+    inputEl.disabled = false;
+    inputEl.focus();
+  }}
+}}
+
+async function applyClientRows() {{
+  const picks = Array.from(document.querySelectorAll('#client-picker select'))
+    .map(sel => ({{ id: Number(sel.dataset.clientId), row: sel.value ? Number(sel.value) : null }}))
+    .filter(p => p.row !== null);
+  const rowNumbers = picks.map(p => p.row);
+  if (new Set(rowNumbers).size !== rowNumbers.length) {{
+    showError('Two clients can\\'t share the same row — pick a different row for each.');
+    return;
+  }}
+  picks.sort((a, b) => a.row - b.row);
+  try {{
+    filing = await postJson('/api/prepared-filings/select-clients', {{
+      id: Number(filingId), client_ids: picks.map(p => p.id),
+    }});
+    render();
+  }} catch (err) {{
+    showError(err.message);
+  }}
+}}
+
+async function generatePdf() {{
+  const btn = document.getElementById('generate-btn');
+  btn.disabled = true;
+  try {{
+    filing = await postJson('/api/prepared-filings/generate-pdf', {{ id: Number(filingId) }});
+    render();
+  }} catch (err) {{
+    showError(err.message);
+  }} finally {{
+    btn.disabled = false;
   }}
 }}
 
@@ -4644,35 +4733,104 @@ async function signOff(e) {{
   const btn = document.getElementById('sign-btn');
   btn.disabled = true;
   try {{
-    const res = await fetch('/api/prepared-filings/sign', {{
-      method: 'POST',
-      headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ id: Number(filingId), signed_name: signedName, confirmed_accurate: confirmed }}),
+    filing = await postJson('/api/prepared-filings/sign', {{
+      id: Number(filingId), signed_name: signedName, confirmed_accurate: confirmed,
     }});
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not record sign-off');
-    render(data);
+    render();
   }} catch (err) {{
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
+    showError(err.message);
     btn.disabled = false;
   }}
 }}
 
-function render(r) {{
-  const pdfUrl = `/api/prepared-filings/pdf?id=${{r.id}}`;
-  const ready = r.status === 'ready_to_file';
-  const statusBadge = ready
-    ? '<span class="status-badge good">Ready to file</span>'
-    : '<span class="status-badge">Draft — not yet signed off</span>';
+function fieldInputHtml(field, value) {{
+  const type = field.kind === 'email' ? 'email' : 'text';
+  const mark = field.required ? ' <span style="color:var(--bad,#c0392b)">*</span>' : '';
+  return `
+    <label style="display:block;margin-bottom:0.8rem">
+      <div class="sub" style="margin:0 0 0.3rem">${{escapeHtml(field.label)}}${{mark}}</div>
+      <input type="${{type}}" data-field-key="${{escapeHtml(field.key)}}" data-orig="${{escapeHtml(value)}}"
+             value="${{escapeHtml(value)}}" style="width:100%" onblur="saveField(this)">
+    </label>`;
+}}
 
-  const signOffSection = ready ? `
-    <div class="card">
-      <div class="bill-title" style="margin-bottom:0.4rem">Signed off</div>
-      <div class="bill-desc">Confirmed accurate by <strong>${{r.signed_name}}</strong> on ${{fmtDateTime(r.signed_at)}}.</div>
-      <div class="sub" style="margin:0.6rem 0 0">This app has not filed anything. Download the PDF above and file it yourself with the FPPC / Secretary of State.</div>
+function clientsSectionHtml() {{
+  const maxRows = filing.max_client_rows;
+  const rowFields = filing.client_row_fields;
+  const rowIds = filing.client_row_ids || [];
+  const rowLabels = filing.field_schema.find(s => s.key === 'clients').row_field_labels;
+
+  let pickerHtml = '';
+  if (allClients.length > maxRows) {{
+    pickerHtml = `
+      <div class="card" style="margin-bottom:1rem">
+        <div class="bill-title" style="margin-bottom:0.4rem">Choose which ${{maxRows}} clients appear on this form</div>
+        <div class="bill-desc" style="margin-bottom:0.8rem">
+          You have ${{allClients.length}} clients — this form only has ${{maxRows}} rows. Give the ones that
+          should appear a row number; leave the rest blank.
+        </div>
+        <div id="client-picker">
+          ${{allClients.map(c => {{
+            const idx = rowIds.indexOf(c.id);
+            const selected = idx === -1 ? '' : String(idx + 1);
+            const options = ['<option value="">—</option>'].concat(
+              Array.from({{ length: maxRows }}, (_, i) => {{
+                const n = String(i + 1);
+                return `<option value="${{n}}" ${{n === selected ? 'selected' : ''}}>${{n}}</option>`;
+              }})
+            ).join('');
+            return `<div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.4rem">
+              <select data-client-id="${{c.id}}" style="width:5rem">${{options}}</select>
+              <span>${{escapeHtml(c.name)}}</span>
+            </div>`;
+          }}).join('')}}
+        </div>
+        <button type="button" class="secondary" style="margin-top:0.6rem" onclick="applyClientRows()">Apply row assignment</button>
+      </div>`;
+  }}
+
+  const rowsHtml = rowFields.map((rf, i) => {{
+    const clientId = rowIds[i];
+    const client = allClients.find(c => c.id === clientId);
+    const heading = client ? escapeHtml(client.name) : `Row ${{i + 1}} — empty`;
+    const fieldsHtml = ROW_KEYS.map(k => fieldInputHtml(
+      {{ key: rf[k], label: rowLabels[k], required: false, kind: 'text' }},
+      filing.field_data[rf[k]] || '',
+    )).join('');
+    return `<div class="card" style="margin-bottom:0.8rem"><div class="bill-title" style="margin-bottom:0.6rem">${{heading}}</div>${{fieldsHtml}}</div>`;
+  }}).join('');
+
+  return pickerHtml + rowsHtml;
+}}
+
+function render() {{
+  const pdfUrl = `/api/prepared-filings/pdf?id=${{filing.id}}`;
+  const signed = filing.status === 'ready_to_file';
+  const statusBadge = signed
+    ? '<span class="status-badge good">Signed off</span>'
+    : (filing.pdf_current ? '<span class="status-badge">Draft — PDF up to date</span>' : '<span class="status-badge">Draft — editing</span>');
+
+  const businessSection = filing.field_schema.find(s => s.key === 'business');
+  const businessFieldsHtml = businessSection.fields.map(f => fieldInputHtml(f, filing.field_data[f.key] || '')).join('');
+
+  const pdfSection = filing.pdf_current ? `
+    <div class="card" style="padding:0;overflow:hidden">
+      <iframe src="${{pdfUrl}}" style="width:100%;height:70vh;border:none" title="Filled ${{filing.form_type}} preview"></iframe>
+    </div>
+    <div class="card-actions" style="margin:-0.5rem 0 1.5rem">
+      <a class="secondary" href="${{pdfUrl}}" target="_blank" rel="noopener">Open PDF in a new tab →</a>
     </div>
   ` : `
+    <div class="sub" style="margin:0 0 1.5rem">Generate the PDF to preview it before signing off.</div>
+  `;
+
+  const signOffSection = signed ? `
+    <div class="card">
+      <div class="bill-title" style="margin-bottom:0.4rem">Signed off</div>
+      <div class="bill-desc">Confirmed accurate by <strong>${{escapeHtml(filing.signed_name)}}</strong> on ${{fmtDateTime(filing.signed_at)}}.</div>
+      <div class="sub" style="margin:0.6rem 0 0">This app has not filed anything. Download the PDF above and file it yourself with the FPPC / Secretary of State. Editing any field above reopens this filing for another round of sign-off.</div>
+    </div>
+  ` : (filing.pdf_current ? `
     <div class="card">
       <div class="bill-title" style="margin-bottom:0.4rem">Sign-off — required before this can be marked ready to file</div>
       <form id="sign-form" onsubmit="signOff(event)">
@@ -4688,31 +4846,38 @@ function render(r) {{
       </form>
       <div class="sub" style="margin-top:0.8rem">This only marks the draft reviewed on your end — it does not submit or send anything anywhere.</div>
     </div>
-  `;
+  ` : '');
 
   contentEl.innerHTML = `
-    <h1>${{FORM_LABELS[r.form_type] || ('Form ' + r.form_type)}}</h1>
-    <p class="sub">${{r.period_label ? 'Period: ' + r.period_label + ' — ' : ''}}Prepared ${{fmtDateTime(r.created_at)}}.</p>
+    <h1>${{FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type)}}</h1>
+    <p class="sub">${{filing.period_label ? 'Period: ' + filing.period_label + ' — ' : ''}}Prepared ${{fmtDateTime(filing.created_at)}}.</p>
     <div style="margin-bottom:1rem">${{statusBadge}}</div>
 
     <div class="card">
       <div class="bill-title" style="margin-bottom:0.4rem">Known gaps in this draft</div>
       <div class="bill-desc">
-        This app doesn't collect every field the real form asks for. Left blank on purpose, rather than guessed:
-        subcontracted-client information, and any individual lobbyists beyond your own name.
-        Fill those in by hand before filing if they apply to you. Per-client effective date, period of
-        contract, and agencies lobbied are pulled in automatically when set on the client — add them from
-        <a href="/clients">Clients</a> if a row below looks empty.
+        This app doesn't collect every field the real form asks for. Left blank on purpose, rather than
+        guessed: subcontracted-client information, and any individual lobbyists beyond your own name. Fill
+        those in by hand on the printed form if they apply to you.
       </div>
     </div>
 
-    <div class="card" style="padding:0;overflow:hidden">
-      <iframe src="${{pdfUrl}}" style="width:100%;height:70vh;border:none" title="Filled ${{r.form_type}} preview"></iframe>
-    </div>
-    <div class="card-actions" style="margin:-0.5rem 0 1.5rem">
-      <a class="secondary" href="${{pdfUrl}}" target="_blank" rel="noopener">Open PDF in a new tab →</a>
+    <div class="card">
+      <h2 class="section" style="margin-top:0">Business information</h2>
+      <div class="sub" style="margin:0 0 0.8rem">Edits save automatically as you leave each field.</div>
+      ${{businessFieldsHtml}}
     </div>
 
+    <div class="card">
+      <h2 class="section" style="margin-top:0">Clients</h2>
+      ${{clientsSectionHtml()}}
+    </div>
+
+    <div class="card-actions" style="margin:0 0 1rem">
+      <button type="button" id="generate-btn" onclick="generatePdf()">Generate PDF</button>
+    </div>
+
+    ${{pdfSection}}
     ${{signOffSection}}
   `;
 }}
@@ -4975,6 +5140,20 @@ def _trigger_refresh(job_name, target_fn):
 
     threading.Thread(target=run, daemon=True, name=f"refresh-{job_name}").start()
     return True
+
+
+def _with_disclosure_editor_meta(filing):
+    """Every /api/prepared-filings* response that hands back a filing
+    also needs to hand back what the disclosure editor renders it with:
+    the field schema (labels/kind/required), the real client-row
+    AcroForm field names (pdf_forms.CLIENT_ROW_FIELDS — the frontend
+    needs the exact field_data keys to bind row inputs to), and the row
+    count. One helper so the four call sites can't drift out of sync
+    with each other."""
+    filing["field_schema"] = disclosure_fields.sections_for_form_type(filing["form_type"])
+    filing["client_row_fields"] = pdf_forms.CLIENT_ROW_FIELDS
+    filing["max_client_rows"] = pdf_forms.max_client_rows()
+    return filing
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -5487,7 +5666,10 @@ class Handler(BaseHTTPRequestHandler):
                     if not filing:
                         self._send_json(404, {"error": "No prepared filing found with that id."})
                         return
-                    self._send_json(200, filing)
+                    # The editor needs to know what's editable and what's
+                    # required to render itself — sent alongside the
+                    # filing rather than a separate round trip.
+                    self._send_json(200, _with_disclosure_editor_meta(filing))
                 else:
                     self._send_json(200, db.list_prepared_filings(conn, user_id))
             finally:
@@ -5957,14 +6139,146 @@ class Handler(BaseHTTPRequestHandler):
                 user_row = conn.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()
                 clients = db.list_clients(conn, user_id)
 
+                client_row_ids = None
                 if form_type == "601":
                     field_data = pdf_forms.values_for_form_601(
                         profile, clients, user_row["email"], sign_off=None, today=datetime.date.today()
                     )
+                    client_row_ids = [c["id"] for c in clients[:pdf_forms.max_client_rows()]]
 
-                filing_id = db.create_prepared_filing(conn, user_id, form_type, body.get("period_label"), field_data)
+                filing_id = db.create_prepared_filing(
+                    conn, user_id, form_type, body.get("period_label"), field_data, client_row_ids=client_row_ids,
+                )
                 conn.commit()
-                self._send_json(200, db.get_prepared_filing(conn, user_id, filing_id))
+                self._send_json(200, _with_disclosure_editor_meta(db.get_prepared_filing(conn, user_id, filing_id)))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/prepared-filings/field":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            filing_id = body.get("id")
+            field_key = body.get("field_key")
+            value = body.get("value") or ""
+            if not filing_id or not field_key:
+                self._send_json(400, {"error": "Missing id or field_key."})
+                return
+
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to edit a disclosure filing.")
+                if not user_id:
+                    return
+                filing = db.get_prepared_filing(conn, user_id, filing_id)
+                if not filing:
+                    self._send_json(404, {"error": "No prepared filing found with that id."})
+                    return
+                if not disclosure_fields.is_editable_field_key(filing["form_type"], field_key):
+                    self._send_json(400, {"error": "That field isn't editable on this form."})
+                    return
+                problem = None
+                for f in disclosure_fields.sections_for_form_type(filing["form_type"]):
+                    match = next((x for x in f.get("fields", []) if x["key"] == field_key), None)
+                    if match:
+                        problem = disclosure_fields.validate_field(match["kind"], value.strip())
+                        break
+                if problem:
+                    self._send_json(400, {"error": f"Invalid value: {problem}."})
+                    return
+                try:
+                    filing = db.update_prepared_filing_field(conn, user_id, filing_id, field_key, value)
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                conn.commit()
+                self._send_json(200, _with_disclosure_editor_meta(filing))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/prepared-filings/select-clients":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            filing_id = body.get("id")
+            client_ids = body.get("client_ids")
+            if not filing_id or not isinstance(client_ids, list):
+                self._send_json(400, {"error": "Missing id or client_ids."})
+                return
+            if len(client_ids) > pdf_forms.max_client_rows():
+                self._send_json(400, {"error": f"This form only has {pdf_forms.max_client_rows()} client rows."})
+                return
+            try:
+                client_ids = [int(cid) for cid in client_ids]
+            except (ValueError, TypeError):
+                self._send_json(400, {"error": "client_ids must all be numbers."})
+                return
+
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to edit a disclosure filing.")
+                if not user_id:
+                    return
+                filing = db.get_prepared_filing(conn, user_id, filing_id)
+                if not filing:
+                    self._send_json(404, {"error": "No prepared filing found with that id."})
+                    return
+                clients = []
+                for cid in client_ids:
+                    client = db.get_client(conn, user_id, cid)
+                    if not client:
+                        self._send_json(400, {"error": f"No client found with id {cid}."})
+                        return
+                    clients.append(client)
+                row_values = pdf_forms.client_row_values(clients)
+                try:
+                    filing = db.set_prepared_filing_client_rows(conn, user_id, filing_id, client_ids, row_values)
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                conn.commit()
+                self._send_json(200, _with_disclosure_editor_meta(filing))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/prepared-filings/generate-pdf":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            filing_id = body.get("id")
+            if not filing_id:
+                self._send_json(400, {"error": "Missing id."})
+                return
+
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to generate a disclosure PDF.")
+                if not user_id:
+                    return
+                filing = db.get_prepared_filing(conn, user_id, filing_id)
+                if not filing:
+                    self._send_json(404, {"error": "No prepared filing found with that id."})
+                    return
+                errors = disclosure_fields.validate_field_data(filing["form_type"], filing["field_data"])
+                if errors:
+                    self._send_json(400, {"error": "Fix these before generating a PDF.", "field_errors": errors})
+                    return
+                try:
+                    filing = db.mark_prepared_filing_pdf_generated(conn, user_id, filing_id)
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                conn.commit()
+                self._send_json(200, _with_disclosure_editor_meta(filing))
             finally:
                 conn.close()
             return

@@ -289,5 +289,10 @@ CREATE TABLE IF NOT EXISTS prepared_filings (
   signed_name        TEXT,
   confirmed_accurate INTEGER NOT NULL DEFAULT 0,      -- 0/1
   signed_at          TEXT,
+  -- Both added for the in-place HTML editor (see
+  -- docs/disclosure-html-editor-plan.md) — neither existed when this
+  -- filing model was PDF-preview-only.
+  pdf_field_data_hash TEXT,                    -- sha256 of field_data as of the last "generate PDF" click; NULL or mismatched vs the CURRENT field_data means the PDF on hand is stale and sign-off is blocked (see db.sign_off_prepared_filing / db._hash_field_data)
+  client_row_ids     TEXT,                     -- JSON array of client ids, in order, currently filling the (up to 9) client rows — lets the editor show/reorder them when a firm has more than 9 clients
   created_at         TEXT
 );
