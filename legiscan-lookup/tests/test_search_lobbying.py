@@ -139,17 +139,25 @@ def test_cluster_never_merges_two_independently_registered_entities(conn):
     # Even if both happen to normalize to the same key, two distinct
     # registered entities must never collapse into one row — that
     # would misrepresent one organization's real filings as the
-    # other's, not just look tidier. (Contrived same-name-normalizing
+    # other's, not just look tidier. Since _group_duplicate_entities()
+    # started visually grouping same-key registered entities, that
+    # takes the shape of one `entity_group` row wrapping both real
+    # entities rather than two flat rows — still not a merge: each
+    # entity's own id/name stays fully intact and individually
+    # addressable inside `entities`. (Contrived same-name-normalizing
     # pair, since real CAL-ACCESS data wouldn't usually produce this,
     # but the safety property must hold regardless.)
-    insert_entity(conn, "Chevron Corp")
-    insert_entity(conn, "Chevron Corporation")
+    id_a = insert_entity(conn, "Chevron Corp")
+    id_b = insert_entity(conn, "Chevron Corporation")
 
     results = app.search_lobbying(conn, "chevron")
 
-    assert len(results) == 2
-    assert all(r["kind"] == "entity" for r in results)
-    assert all(not r.get("variants") for r in results)
+    assert len(results) == 1
+    group = results[0]
+    assert group["kind"] == "entity_group"
+    assert {e["id"] for e in group["entities"]} == {id_a, id_b}
+    assert {e["name"] for e in group["entities"]} == {"Chevron Corp", "Chevron Corporation"}
+    assert all(e["kind"] == "entity" for e in group["entities"])
 
 
 def test_cluster_attaches_client_mention_to_its_matching_registered_entity(conn):
