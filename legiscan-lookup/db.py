@@ -707,6 +707,14 @@ def list_prepared_filings(conn, user_id):
     return [_row_to_prepared_filing(r) for r in rows]
 
 
+def delete_prepared_filing(conn, user_id, filing_id):
+    """Scoped to user_id, same reasoning as delete_client/unflag_bill —
+    never trust a client-supplied ID alone for a per-user record. No
+    cascade needed (unlike delete_client): nothing else references a
+    prepared_filings row."""
+    conn.execute("DELETE FROM prepared_filings WHERE id = ? AND user_id = ?", (filing_id, user_id))
+
+
 def _edit_prepared_filing_field_data(conn, user_id, filing_id, new_field_data, client_row_ids=None):
     """Shared write path for every kind of in-place edit (a single
     field, or a whole client-row selection) — see update_prepared_

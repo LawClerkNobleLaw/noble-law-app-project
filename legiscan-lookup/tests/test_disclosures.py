@@ -119,6 +119,28 @@ def test_editing_after_sign_off_reopens_the_filing(conn):
     assert filing["field_data"]["EMAIL"] == "changed@example.com"
 
 
+def test_delete_prepared_filing_removes_it(conn):
+    user_id = insert_user(conn)
+    filing_id = _make_filing(conn, user_id)
+
+    db.delete_prepared_filing(conn, user_id, filing_id)
+    conn.commit()
+
+    assert db.get_prepared_filing(conn, user_id, filing_id) is None
+    assert db.list_prepared_filings(conn, user_id) == []
+
+
+def test_delete_prepared_filing_is_scoped_to_owner(conn):
+    owner_id = insert_user(conn, email="owner@example.com")
+    other_id = insert_user(conn, email="other@example.com")
+    filing_id = _make_filing(conn, owner_id)
+
+    db.delete_prepared_filing(conn, other_id, filing_id)  # no error — just deletes nothing
+    conn.commit()
+
+    assert db.get_prepared_filing(conn, owner_id, filing_id) is not None
+
+
 def test_field_edit_on_unknown_filing_raises(conn):
     user_id = insert_user(conn)
     with pytest.raises(ValueError):
