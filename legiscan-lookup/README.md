@@ -105,15 +105,22 @@ Things that live in this app:
 - **Prepare my disclosure form** — `/disclosures` lets a signed-in user
   generate a real FPPC form (starting with Form 601 — Lobbying Firm
   Registration Statement), pre-filled from their own profile and
-  clients (`pdf_forms.py`). The filled PDF is always shown for review
-  first; nothing is final until an explicit sign-off (a typed legal
-  name + a confirmation checkbox — `db.sign_off_prepared_filing`) marks
-  it "ready to file." **This app never files anything with the FPPC or
-  Secretary of State** — it only prepares the document for the user to
-  file themselves. Known gap: subcontracted clients and any individual
-  lobbyists beyond the account holder aren't collected anywhere in this
-  app's data model, so those stay blank rather than guessed — the
-  review page says so explicitly.
+  clients (`pdf_forms.py`). `/disclosures/review` is an in-place HTML
+  editor over that draft (`disclosure_fields.py` — editable discrete
+  fields, autosaving as you go, not the PDF itself) rather than a
+  read-only PDF preview; the real PDF is only (re)generated on demand
+  and is always what gets reviewed and signed off on — see
+  `docs/disclosure-html-editor-plan.md` for the full design, including
+  the server-enforced guarantee that sign-off can't happen against a
+  PDF that no longer matches the edited data. Nothing is final until an
+  explicit sign-off (a typed legal name + a confirmation checkbox —
+  `db.sign_off_prepared_filing`) marks it "ready to file"; editing any
+  field afterward reopens it for another round. **This app never files
+  anything with the FPPC or Secretary of State** — it only prepares the
+  document for the user to file themselves. Known gap: subcontracted
+  clients and any individual lobbyists beyond the account holder aren't
+  collected anywhere in this app's data model, so those stay blank
+  rather than guessed — the review page says so explicitly.
 
 `app.py` itself has no dependencies beyond the Python standard library
 — the one exception is `pypdf` (see `requirements.txt`), used only by

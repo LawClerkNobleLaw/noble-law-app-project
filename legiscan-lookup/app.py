@@ -88,6 +88,7 @@ from urllib.parse import urlparse, parse_qs, quote
 import accounts
 import config
 import db
+import disclosure_fields
 import mailer
 import pdf_forms
 import refresh_watchlist
@@ -514,6 +515,28 @@ STYLE = """
   select.position-select.support { border-color: var(--good); color: var(--good); }
   select.position-select.oppose { border-color: var(--error); color: var(--error); }
   select.position-select.watch { border-color: var(--accent); color: var(--accent); }
+  /* clientCell()'s per-row assignment, grouped into one pill-shaped unit
+     (name + position-select + remove ×) instead of a loose flex row —
+     the container itself carries the pill styling so it visually reads
+     as "one client, assigned" the same way .tag/.position-badge already
+     read as one thing elsewhere, rather than three independent controls
+     sitting next to each other. */
+  .client-chip {
+    display: flex; align-items: center; gap: 0.4rem; background: var(--content-bg);
+    border-radius: var(--radius-pill); padding: 0.15rem 0.3rem 0.15rem 0.65rem; margin-bottom: 0.4rem; width: fit-content;
+  }
+  .client-chip select.position-select { border: none; background: none; padding: 0.1rem 1.2rem 0.1rem 0.1rem; }
+  /* The "add a new client to this bill" control below the chips above —
+     deliberately NOT styled like a position-select (those change an
+     *existing* assignment; this one adds a new one), so a dashed
+     outline + plain "+ Add client" wording reads as its own distinct
+     affordance rather than a second, competing way to do what the chips
+     above already do. */
+  .add-client-select {
+    font-size: 0.78rem; font-weight: 600; color: var(--slate); background: none;
+    border: 1px dashed var(--rule); border-radius: var(--radius-pill); padding: 0.25rem 0.6rem;
+  }
+  .add-client-select:hover { border-color: var(--accent); color: var(--accent); }
   /* Filter tabs above a flagged/client-position list — same All/Support/
      Oppose/Watch vocabulary as the position badges above, just as a
      filter instead of a per-row value. */
@@ -638,8 +661,7 @@ STYLE = """
     height: 4rem; flex: none; display: flex; align-items: center; justify-content: space-between;
     padding: 0 1.5rem; border-bottom: 1px solid var(--rule); background: var(--paper); gap: 1rem;
   }
-  .app-topbar-title { font-size: 0.95rem; font-weight: 600; }
-  .app-topbar-sub { font-size: 0.78rem; color: var(--slate); margin-top: 0.1rem; }
+  .app-topbar-sub { font-size: 0.78rem; color: var(--slate); }
   /* Was shared topbar chrome on every page (a global "search LegiScan"
      box + a persistent "Flag a bill" shortcut) until both were removed
      as redundant — /lookup (linked from the sidebar) already covers
@@ -797,6 +819,11 @@ STYLE = """
     text-align: left; padding: var(--space-2); border-radius: var(--radius-sm); cursor: pointer;
   }
   .autofill-dropdown button:hover { background: var(--accent-soft); }
+  /* Firms/coalitions still show up when a typed name matches one (still
+     useful to see), but visually recede behind employer matches — an
+     employer is what this app means by "client", so it's the one match
+     type that should look like the obvious pick. */
+  .autofill-dropdown button.non-employer-match { opacity: 0.6; }
   th {
     background: var(--content-bg); font-size: 0.68rem; font-weight: 600; color: var(--slate);
     text-transform: uppercase; letter-spacing: 0.04em;
@@ -1090,12 +1117,14 @@ def app_shell(current, body):
     """Sidebar + topbar chrome shared by every real page in the product.
     `body` is that page's own already-built inner HTML — its own
     heading, controls, table, script, whatever it needs — just wrapped
-    in the shell. The topbar itself stays generic ("Overview" + today's
-    date) rather than per-page; the page's actual title/description
-    lives inside `body` as a .page-head, paired with that page's own
-    controls (see FLAGGED_BODY) — matching the source template's own
-    split between a small persistent header and each page's real
-    heading.
+    in the shell. The topbar itself shows only today's date — real,
+    page-agnostic content worth keeping — rather than a page title;
+    it used to also show a static "Overview" label above that date on
+    every single page regardless of what page it was, which just
+    duplicated (and, everywhere but the actual overview, contradicted)
+    the page's own real heading a few pixels below. The page's actual
+    title/description lives inside `body` as a .page-head, paired with
+    that page's own controls (see FLAGGED_BODY).
 
     Most pages that call this have already 302'd to /login server-side
     if there's no session, so for them the /api/me fetch below isn't an
@@ -1109,8 +1138,14 @@ def app_shell(current, body):
     anything. Sidebar links to account-gated pages (Flagged bills,
     Clients, Profile, ...) still just 302 a logged-out visitor to
     /login if they click one — same as always."""
+    # data-nav carries the plain href per item (same value `current` gets
+    # compared against below) so a page like /report — whose real nav
+    # context depends on where the visitor came from, not on the fixed
+    # `current` this whole shell was built with at import time — can find
+    # and re-target the right <li> client-side instead of parsing link
+    # text. See REPORT_BODY's own script for the one place that happens.
     nav_html = "".join(
-        f'<li><a href="{href}" class="side-nav-item{" active" if href == current else ""}">{icon}{label}</a></li>'
+        f'<li><a href="{href}" data-nav="{href}" class="side-nav-item{" active" if href == current else ""}">{icon}{label}</a></li>'
         for href, label, icon in SHELL_NAV_ITEMS
     )
     profile_active = " active" if current == "/profile" else ""
@@ -1141,10 +1176,7 @@ def app_shell(current, body):
   </aside>
   <div class="app-body">
     <header class="app-topbar">
-      <div>
-        <div class="app-topbar-title">Overview</div>
-        <div class="app-topbar-sub" id="shell-date"></div>
-      </div>
+      <div class="app-topbar-sub" id="shell-date"></div>
     </header>
     <main class="app-main">{body}</main>
   </div>
@@ -1673,10 +1705,12 @@ function ensureQuickAddClientModal() {
         <button type="button" class="icon-btn" id="qac-close" aria-label="Close">×</button>
       </div>
       <form id="qac-form">
-        <label>
+        <label style="position:relative">
           <div class="sub" style="margin:0 0 0.3rem">Client / employer name</div>
-          <input id="qac-name" required>
+          <input id="qac-name" required autocomplete="off">
+          <div id="qac-name-autofill-dropdown" class="autofill-dropdown" style="top:100%;left:0;right:0;width:auto"></div>
         </label>
+        <p class="sub" id="qac-name-autofill-note" style="margin:0.2rem 0 0;display:none">Prefilled from CAL-ACCESS — edit anything below if it looks wrong.</p>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
           <input id="qac-bus_addr1" placeholder="Street address" style="flex:1 1 100%">
           <input id="qac-bus_city" placeholder="City" style="flex:2">
@@ -1704,6 +1738,88 @@ function ensureQuickAddClientModal() {
   document.getElementById('qac-close').addEventListener('click', cancelQuickAddClient);
   document.getElementById('qac-cancel').addEventListener('click', cancelQuickAddClient);
   document.getElementById('qac-form').addEventListener('submit', submitQuickAddClient);
+  wireQuickAddNameAutofill();
+}
+
+// Same live CAL-ACCESS name autofill as the full /clients form (see that
+// page's runNameAutofillSearch/applyEntityAutofill) — duplicated here
+// rather than shared because this modal's JS ships as its own constant,
+// included verbatim into other pages' <script> blocks that never load
+// the /clients page's script at all. Employer matches sort first and
+// firm/coalition matches render de-emphasized, same reasoning as there:
+// a "client" means an employer, but a de-emphasized match beats hiding
+// a name the user might actually have meant.
+let qacAutofillTimer = null;
+
+function wireQuickAddNameAutofill() {
+  const nameInput = document.getElementById('qac-name');
+  const dropdown = document.getElementById('qac-name-autofill-dropdown');
+  const note = document.getElementById('qac-name-autofill-note');
+
+  function closeDropdown() {
+    dropdown.classList.remove('show');
+    dropdown.innerHTML = '';
+  }
+
+  async function search(q) {
+    try {
+      const res = await fetch(`/api/lobbying/search?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      if (!res.ok) return;
+      if (nameInput.value.trim() !== q) return;
+      const matches = (data.results || []).filter(r => r.kind === 'entity').slice(0, 6);
+      if (!matches.length) { closeDropdown(); return; }
+      const sorted = [...matches].sort((a, b) =>
+        (a.entity_type === 'employer' ? 0 : 1) - (b.entity_type === 'employer' ? 0 : 1));
+      dropdown.innerHTML = sorted.map(r => `
+        <button type="button" class="${r.entity_type === 'employer' ? '' : 'non-employer-match'}" data-id="${r.id}">
+          ${r.name}
+          ${r.entity_type && r.entity_type !== 'employer' ? ` <span class="tag">${r.entity_type}</span>` : ''}
+          ${r.city || r.state ? ` <span class="sub" style="margin:0">— ${[r.city, r.state].filter(Boolean).join(', ')}</span>` : ''}
+        </button>
+      `).join('');
+      dropdown.classList.add('show');
+    } catch (err) {
+      // A failed suggestion lookup shouldn't block typing a name by
+      // hand — just don't offer any suggestions this time.
+    }
+  }
+
+  dropdown.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-id]');
+    if (!btn) return;
+    closeDropdown();
+    try {
+      const res = await fetch(`/api/lobbying/detail?id=${encodeURIComponent(btn.dataset.id)}`);
+      const data = await res.json();
+      if (!res.ok || !data.entity) return;
+      const entity = data.entity;
+      nameInput.value = entity.name || nameInput.value;
+      document.getElementById('qac-bus_addr1').value = entity.address || '';
+      document.getElementById('qac-bus_city').value = entity.city || '';
+      document.getElementById('qac-bus_st').value = entity.state || '';
+      document.getElementById('qac-bus_zip4').value = entity.zip || '';
+      if (entity.filer_id) document.getElementById('qac-existing_filer_id').value = entity.filer_id;
+      note.style.display = '';
+    } catch (err) {
+      // Same reasoning as search()'s catch — leave the name as typed
+      // rather than blocking on this.
+    }
+  });
+
+  nameInput.addEventListener('input', () => {
+    note.style.display = 'none';
+    clearTimeout(qacAutofillTimer);
+    const q = nameInput.value.trim();
+    if (q.length < 2) { closeDropdown(); return; }
+    qacAutofillTimer = setTimeout(() => search(q), 300);
+  });
+  document.addEventListener('click', (e) => {
+    if (!dropdown.contains(e.target) && e.target !== nameInput) closeDropdown();
+  });
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeDropdown();
+  });
 }
 
 function openQuickAddClient(existingClients, onCreated, onCancel) {
@@ -1711,6 +1827,8 @@ function openQuickAddClient(existingClients, onCreated, onCancel) {
   quickAddClientState = { existingClients: existingClients || [], onCreated, onCancel };
   document.getElementById('qac-form').reset();
   document.getElementById('qac-error').className = '';
+  document.getElementById('qac-name-autofill-note').style.display = 'none';
+  document.getElementById('qac-name-autofill-dropdown').classList.remove('show');
   document.getElementById('quick-add-client-backdrop').classList.add('show');
   document.getElementById('qac-name').focus();
 }
@@ -1775,6 +1893,62 @@ async function submitQuickAddClient(e) {
   } finally {
     submitBtn.disabled = false;
   }
+}
+"""
+
+
+# Shared "are you sure?" dialog for destructive actions — styled with
+# the same .modal-backdrop/.modal-panel CLIENT_QUICKADD_JS's modal above
+# uses, rather than the browser's own native confirm() (which both
+# CLIENTS_BODY's and CLIENT_DETAIL_BODY's removeClient() called before
+# this existed). confirmDelete(title, message) returns a Promise<bool>,
+# so a caller just does `if (!await confirmDelete(...)) return;` in
+# place of the old `if (!confirm(...)) return;` line — same control
+# flow, just awaited. Built once and reused (not recreated per call)
+# the same way ensureQuickAddClientModal() above reuses its backdrop.
+CONFIRM_DELETE_JS = """
+function confirmDelete(title, message) {
+  return new Promise((resolve) => {
+    let backdrop = document.getElementById('confirm-delete-backdrop');
+    if (!backdrop) {
+      backdrop = document.createElement('div');
+      backdrop.id = 'confirm-delete-backdrop';
+      backdrop.className = 'modal-backdrop';
+      backdrop.innerHTML = `
+        <div class="modal-panel" role="alertdialog" aria-modal="true" aria-labelledby="cd-title" aria-describedby="cd-message">
+          <div class="modal-head">
+            <div>
+              <div class="title" id="cd-title"></div>
+              <div class="sub" id="cd-message"></div>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="danger" id="cd-confirm">Remove</button>
+            <button type="button" class="secondary" id="cd-cancel">Cancel</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(backdrop);
+    }
+    backdrop.querySelector('#cd-title').textContent = title;
+    backdrop.querySelector('#cd-message').textContent = message;
+    const confirmBtn = backdrop.querySelector('#cd-confirm');
+    const cancelBtn = backdrop.querySelector('#cd-cancel');
+    const finish = (result) => {
+      backdrop.classList.remove('show');
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      backdrop.removeEventListener('click', onBackdropClick);
+      resolve(result);
+    };
+    const onConfirm = () => finish(true);
+    const onCancel = () => finish(false);
+    const onBackdropClick = (e) => { if (e.target === backdrop) finish(false); };
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+    backdrop.addEventListener('click', onBackdropClick);
+    backdrop.classList.add('show');
+  });
 }
 """
 
@@ -1902,9 +2076,13 @@ function renderResults(data) {{
     resultsEl.innerHTML = '<p class="empty">No bills match that search. Try a broader term, check the spelling, or a different bill number.</p>';
     return;
   }}
+  // from_label/from_href tell /report where this click came from, so its
+  // back link and sidebar highlight can point back to Lookup instead of
+  // always assuming Flagged Bills (see REPORT_BODY's own script for the
+  // read side of this).
   const rowsHtml = rows.map(r => `
-    <tr class="row-link" onclick="window.location.href='/report?bill_id=${{r.bill_id}}'">
-      <td><a href="/report?bill_id=${{r.bill_id}}">${{r.bill_number}}</a></td>
+    <tr class="row-link" onclick="window.location.href='/report?bill_id=${{r.bill_id}}&from_label=Lookup&from_href=%2Flookup'">
+      <td><a href="/report?bill_id=${{r.bill_id}}&from_label=Lookup&from_href=%2Flookup">${{r.bill_number}}</a></td>
       <td>${{snippet(r.title)}}</td>
       <td><span class="status-badge">${{statusLabel(r.last_action)}}</span></td>
       <td class="date">${{r.last_action_date || ''}}</td>
@@ -2040,6 +2218,34 @@ function variantsRow(r) {{
   `;
 }}
 
+// r.entities is a group of separately CAL-ACCESS-registered entities
+// whose names normalize to the same thing (see app.py's
+// _group_duplicate_entities) — e.g. three real "Chevron ... and its
+// subsidiaries" registrations. Unlike variantsRow() above, these are
+// never one organization's alternate spellings; each keeps its own
+// real record, so this only ever collapses them visually, one click
+// away underneath, exactly like variantsRow does for name variants.
+function entityGroupRow(r) {{
+  if (r.kind !== 'entity_group') return '';
+  const items = r.entities.map(e => `
+    <div class="variant-row">
+      <a href="${{detailUrl(e)}}">${{e.name}}</a>
+      <span class="sub" style="margin:0">${{[locationOrContext(e), e.registration_status].filter(Boolean).join(' · ')}}</span>
+    </div>
+  `).join('');
+  return `
+    <tr class="variants-row">
+      <td colspan="5">
+        <details>
+          <summary>${{r.entities.length}} separately registered entities named ${{r.name}}</summary>
+          <p class="sub" style="margin:0 0 0.5rem">Each is its own real CAL-ACCESS registration, grouped here by name only — nothing has been merged.</p>
+          ${{items}}
+        </details>
+      </td>
+    </tr>
+  `;
+}}
+
 function renderResults(rows, truncated) {{
   if (!rows.length) {{
     resultsEl.innerHTML = '<p class="empty">No firms, employers, or named clients match that. Try a broader term or check the spelling.</p>';
@@ -2050,7 +2256,16 @@ function renderResults(rows, truncated) {{
       <table>
         <thead><tr><th>Name</th><th>Type</th><th>Location</th><th>Status</th><th></th></tr></thead>
         <tbody>
-        ${{rows.map(r => `
+        ${{rows.map(r => r.kind === 'entity_group' ? `
+          <tr>
+            <td>${{r.name}}</td>
+            <td><span class="tag">${{r.entities.length}} registered entities</span></td>
+            <td></td>
+            <td></td>
+            <td></td>
+          </tr>
+          ${{entityGroupRow(r)}}
+        ` : `
           <tr>
             <td><a href="${{detailUrl(r)}}">${{r.name}}</a></td>
             <td>${{r.entity_type ? `<span class="tag">${{r.entity_type}}</span>` : `<span class="tag">named as client only</span>`}}</td>
@@ -2571,6 +2786,18 @@ function row(label, value) {{
   </div>`;
 }}
 
+// bus_phone is stored exactly as typed, with no format enforced on
+// entry — this only reformats a clean 10-digit US number for display,
+// e.g. "5082157570" -> "(508) 215-7570". Anything else (an extension,
+// a non-US number, a partial digit string) passes through unchanged
+// rather than being mangled by a formatter that assumed too much.
+function formatPhone(raw) {{
+  if (!raw) return raw;
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length !== 10) return raw;
+  return `(${{digits.slice(0, 3)}}) ${{digits.slice(3, 6)}}-${{digits.slice(6)}}`;
+}}
+
 async function load() {{
   try {{
     const [meRes, profileRes] = await Promise.all([fetch('/api/me'), fetch('/api/profile')]);
@@ -2603,7 +2830,7 @@ async function load() {{
         <div style="padding:0 1.15rem">
           ${{row('Business address', [profile.bus_addr1, profile.bus_city, profile.bus_st, profile.bus_zip4].filter(Boolean).join(', '))}}
           ${{row('Mailing address', mailing)}}
-          ${{row('Phone', profile.bus_phone)}}
+          ${{row('Phone', formatPhone(profile.bus_phone))}}
           ${{row('CA SOS filer ID', profile.existing_filer_id)}}
         </div>
         <div class="card-actions" style="padding:1rem 1.15rem">
@@ -2640,16 +2867,6 @@ FLAGGED_BODY = f"""
 </div>
 <div id="error" role="alert" aria-live="assertive"></div>
 <div class="stat-grid" id="stats"></div>
-
-<div class="panel">
-  <div class="panel-head">
-    <div>
-      <div class="title">Today's Digest</div>
-      <div class="sub">Not tracked yet — coming soon</div>
-    </div>
-    <button type="button" class="panel-link" disabled title="Not built yet">View digest</button>
-  </div>
-</div>
 
 <div class="panel">
   <div class="panel-head">
@@ -2985,9 +3202,14 @@ function positionSelect(r, c) {{
   return `<select class="position-select ${{position}}" data-saved="${{position}}" onchange="setPosition(${{r.bill_id}}, ${{c.id}}, this)" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${{options}}</select>`;
 }}
 
+// Two different jobs live in this cell: the chips change an *existing*
+// assignment's position (or remove it); the select below them *adds a
+// new* client. They used to look like two competing ways to do the same
+// thing — see .client-chip/.add-client-select in STYLE for the visual
+// fix (behavior/handlers here are unchanged).
 function clientCell(r) {{
   const chips = (r.assigned_clients || []).map(c => `
-    <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem">
+    <div class="client-chip">
       <a href="/clients/detail?id=${{c.id}}">${{c.name}}</a>
       ${{positionSelect(r, c)}}
       <button type="button" class="icon-btn" onclick="unassignClient(${{r.bill_id}}, ${{c.id}}, this)" aria-label="Remove client from this bill" title="Remove client" style="height:1.5rem;width:1.5rem;color:var(--slate)">×</button>
@@ -2996,10 +3218,10 @@ function clientCell(r) {{
 
   const assignedIds = new Set((r.assigned_clients || []).map(c => c.id));
   const available = allClients.filter(c => !assignedIds.has(c.id));
-  const placeholder = allClients.length ? (available.length ? 'Assign to client…' : 'All clients assigned') : 'No clients yet…';
+  const placeholder = allClients.length ? (available.length ? '+ Add client' : 'All clients assigned') : 'No clients yet…';
   return `
     <div>${{chips}}</div>
-    <select onchange="handleClientCellSelect(${{r.bill_id}}, this)" style="margin-top:0.2rem;font-size:0.8rem;padding:0.3rem 0.4rem">
+    <select class="add-client-select" onchange="handleClientCellSelect(${{r.bill_id}}, this)" style="margin-top:0.2rem">
       <option value="">${{placeholder}}</option>
       ${{clientOptionsHtml(available)}}
     </select>
@@ -3356,6 +3578,19 @@ CLIENTS_BODY = f"""
 </div>
 
 <script>
+{CONFIRM_DELETE_JS}
+// bus_phone is stored exactly as typed, with no format enforced on
+// entry — this only reformats a clean 10-digit US number for display,
+// e.g. "5082157570" -> "(508) 215-7570". Anything else (an extension,
+// a non-US number, a partial digit string) passes through unchanged
+// rather than being mangled by a formatter that assumed too much.
+function formatPhone(raw) {{
+  if (!raw) return raw;
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length !== 10) return raw;
+  return `(${{digits.slice(0, 3)}}) ${{digits.slice(3, 6)}}-${{digits.slice(6)}}`;
+}}
+
 const form = document.getElementById('f');
 const formCard = document.getElementById('form-card');
 const errorEl = document.getElementById('error');
@@ -3444,6 +3679,12 @@ async function applyPrefill() {{
 // none, so they're filtered out here rather than shown as a dead end.
 // Picking one calls /api/lobbying/detail for its full record and
 // applies it the same way applyPrefill() above does.
+//
+// A "client" here means an employer that hires the firm, not a
+// lobbying firm or coalition — but a typed name can still coincidentally
+// match one of those, so rather than hiding them outright (a dead end
+// if that's really who the user meant), employer matches sort first and
+// firm/coalition matches render de-emphasized (see .non-employer-match).
 const nameInput = document.getElementById('name');
 const nameDropdown = document.getElementById('name-autofill-dropdown');
 let nameAutofillTimer = null;
@@ -3451,6 +3692,19 @@ let nameAutofillTimer = null;
 function closeNameAutofillDropdown() {{
   nameDropdown.classList.remove('show');
   nameDropdown.innerHTML = '';
+}}
+
+function renderAutofillMatches(dropdownEl, matches, onSelect) {{
+  const sorted = [...matches].sort((a, b) =>
+    (a.entity_type === 'employer' ? 0 : 1) - (b.entity_type === 'employer' ? 0 : 1));
+  dropdownEl.innerHTML = sorted.map(r => `
+    <button type="button" class="${{r.entity_type === 'employer' ? '' : 'non-employer-match'}}" onclick="${{onSelect}}(${{r.id}})">
+      ${{r.name}}
+      ${{r.entity_type && r.entity_type !== 'employer' ? ` <span class="tag">${{r.entity_type}}</span>` : ''}}
+      ${{r.city || r.state ? ` <span class="sub" style="margin:0">— ${{[r.city, r.state].filter(Boolean).join(', ')}}</span>` : ''}}
+    </button>
+  `).join('');
+  dropdownEl.classList.add('show');
 }}
 
 async function runNameAutofillSearch(q) {{
@@ -3463,12 +3717,7 @@ async function runNameAutofillSearch(q) {{
     if (nameInput.value.trim() !== q) return;
     const matches = (data.results || []).filter(r => r.kind === 'entity').slice(0, 6);
     if (!matches.length) {{ closeNameAutofillDropdown(); return; }}
-    nameDropdown.innerHTML = matches.map(r => `
-      <button type="button" onclick="selectNameAutofillMatch(${{r.id}})">
-        ${{r.name}}${{r.city || r.state ? ` <span class="sub" style="margin:0">— ${{[r.city, r.state].filter(Boolean).join(', ')}}</span>` : ''}}
-      </button>
-    `).join('');
-    nameDropdown.classList.add('show');
+    renderAutofillMatches(nameDropdown, matches, 'selectNameAutofillMatch');
   }} catch (err) {{
     // A failed suggestion lookup shouldn't block typing a name by
     // hand — just don't offer any suggestions this time.
@@ -3591,10 +3840,13 @@ form.addEventListener('submit', async (e) => {{
 async function removeClient(id) {{
   // Deleting a client also deletes every bill/position it's linked to
   // (see db.delete_client) — no undo exists, so this is worth a real
-  // confirmation naming what's about to be lost, not just a click.
+  // confirmation naming what's about to be lost, not just a click. Uses
+  // the shared styled dialog (see CONFIRM_DELETE_JS) rather than the
+  // browser's own confirm().
   const c = allClients.find(x => x.id === id);
   const name = c ? c.name : 'this client';
-  if (!confirm(`Remove ${{name}}? This also removes all of its bill and position assignments. This can't be undone.`)) return;
+  const ok = await confirmDelete('Remove client?', `Remove ${{name}}? This also removes all of its bill and position assignments. This can't be undone.`);
+  if (!ok) return;
   try {{
     const res = await fetch(`/api/clients?id=${{id}}`, {{ method: 'DELETE' }});
     if (!res.ok) {{
@@ -3638,7 +3890,7 @@ function render(rows) {{
       ${{rows.map(c => `
         <tr>
           <td><a href="/clients/detail?id=${{c.id}}">${{c.name}}</a></td>
-          <td>${{[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), c.bus_phone].filter(Boolean).join(' · ')}}</td>
+          <td>${{[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), formatPhone(c.bus_phone)].filter(Boolean).join(' · ')}}</td>
           <td>${{c.interests || ''}}</td>
           <td>${{c.existing_filer_id || ''}}</td>
           <td class="row-menu">
@@ -3729,6 +3981,19 @@ CLIENT_DETAIL_BODY = f"""
 </div>
 
 <script>
+{CONFIRM_DELETE_JS}
+// bus_phone is stored exactly as typed, with no format enforced on
+// entry — this only reformats a clean 10-digit US number for display,
+// e.g. "5082157570" -> "(508) 215-7570". Anything else (an extension,
+// a non-US number, a partial digit string) passes through unchanged
+// rather than being mangled by a formatter that assumed too much.
+function formatPhone(raw) {{
+  if (!raw) return raw;
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length !== 10) return raw;
+  return `(${{digits.slice(0, 3)}}) ${{digits.slice(3, 6)}}-${{digits.slice(6)}}`;
+}}
+
 const clientId = new URLSearchParams(window.location.search).get('id');
 const errorEl = document.getElementById('error');
 const clientEl = document.getElementById('client');
@@ -3739,19 +4004,54 @@ const POSITIONS = [['watch', 'Watch'], ['support', 'Support'], ['oppose', 'Oppos
 
 function renderClient(d) {{
   const c = d.client;
+  currentClientName = c.name;
   clientEl.innerHTML = `
     <div class="card">
       <div class="bill-title">${{c.name}}</div>
       <div class="bill-desc" style="margin-top:0.4rem">
-        ${{[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), c.bus_phone].filter(Boolean).join(' · ') || 'No address on file'}}
+        ${{[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), formatPhone(c.bus_phone)].filter(Boolean).join(' · ') || 'No address on file'}}
       </div>
       ${{c.interests ? `<div class="bill-desc" style="margin-top:0.4rem">${{c.interests}}</div>` : ''}}
-      <div class="card-actions">
+      <div class="card-actions" style="align-items:center">
         <a class="secondary" href="/clients">Edit in Clients →</a>
         ${{d.entity_id ? `<a class="secondary" href="/lobbying/detail?id=${{d.entity_id}}">View CAL-ACCESS record →</a>` : ''}}
+        <span class="row-menu" style="margin-left:auto">
+          <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'client-header')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-client-header">
+            <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
+          </button>
+          <div class="row-menu-dropdown" id="row-menu-client-header">
+            <button type="button" onclick="removeClient()">Remove client</button>
+          </div>
+        </span>
       </div>
     </div>
   `;
+}}
+
+let currentClientName = 'this client';
+
+// Same cascade warning as the Clients list's own removeClient() (see
+// CLIENTS_BODY) — deleting a client here deletes every bill/position
+// it's linked to too, so this needs the same real confirmation naming
+// what's about to be lost, not just a click. Uses the shared styled
+// dialog (see CONFIRM_DELETE_JS) rather than the browser's own
+// confirm(), and — like the Clients list — tucks the trigger itself
+// into a kebab menu instead of sitting at equal weight next to "Edit
+// in Clients"/"View CAL-ACCESS record".
+async function removeClient() {{
+  const ok = await confirmDelete('Remove client?', `Remove ${{currentClientName}}? This also removes all of its bill and position assignments. This can't be undone.`);
+  if (!ok) return;
+  try {{
+    const res = await fetch(`/api/clients?id=${{clientId}}`, {{ method: 'DELETE' }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not remove client');
+    }}
+    window.location.href = '/clients';
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
 }}
 
 function positionSelect(billId, position) {{
@@ -3780,7 +4080,7 @@ function renderBills(bills) {{
           <td>${{b.status_label ? `<span class="status-badge">${{b.status_label}}</span>` : ''}}</td>
           <td>${{positionSelect(b.bill_id, b.position || 'watch')}}</td>
           <td class="row-menu">
-            <a class="secondary" href="/report?bill_id=${{b.bill_id}}" style="margin-right:0.4rem">Report</a>
+            <a class="secondary" href="/report?bill_id=${{b.bill_id}}&from_label=${{encodeURIComponent(currentClientName)}}&from_href=${{encodeURIComponent('/clients/detail?id=' + clientId)}}" style="margin-right:0.4rem">Report</a>
             <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'bill-${{b.bill_id}}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-bill-${{b.bill_id}}">
               <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
             </button>
@@ -3924,7 +4224,7 @@ CLIENT_DETAIL_PAGE = page("Client — Rotunda", "/clients", CLIENT_DETAIL_BODY)
 # ?bill_id=... — e.g. linked from a "Report" link on /flagged — rather
 # than being a page anyone navigates to on its own.
 REPORT_BODY = f"""
-<div class="page-head"><div><a href="/flagged" class="sub">← Flagged bills</a></div></div>
+<div class="page-head"><div><a href="/flagged" class="sub" id="back-link">← Flagged bills</a></div></div>
 <div id="error" role="alert" aria-live="assertive"></div>
 <div id="loading" class="show"><span class="spinner"></span>Loading…</div>
 <div id="report"></div>
@@ -3935,6 +4235,37 @@ REPORT_BODY = f"""
 const reportEl = document.getElementById('report');
 const errorEl = document.getElementById('error');
 const billId = new URLSearchParams(window.location.search).get('bill_id');
+
+// The back link and sidebar highlight above are baked at import time as
+// "Flagged bills" (see REPORT_PAGE below and app_shell()'s own
+// docstring on why every page constant here is built once, not
+// per-request) — a fine default, since Flagged Bills is this page's
+// most common entry point, but a search result from /lookup or a
+// client's own bill list land here too. When the link that brought us
+// here passed from_label/from_href (see LOOKUP_BODY's and
+// CLIENT_DETAIL_BODY's report links), swap both to match instead of
+// always claiming Flagged Bills. No params → today's baked default,
+// unchanged.
+(function() {{
+  const params = new URLSearchParams(window.location.search);
+  const fromLabel = params.get('from_label');
+  const fromHref = params.get('from_href');
+  if (!fromLabel || !fromHref) return;
+  const backLink = document.getElementById('back-link');
+  backLink.href = fromHref;
+  backLink.textContent = '← ' + fromLabel;
+  // First path segment match (e.g. /clients/detail?id=5 -> "clients"
+  // matches the sidebar's /clients item) rather than a strict equality
+  // check, since fromHref can point at a sub-page of a top-level section.
+  const fromSection = fromHref.split('?')[0].split('/')[1] || '';
+  const navItem = Array.from(document.querySelectorAll('.side-nav-item[data-nav]'))
+    .find(a => (a.dataset.nav.split('/')[1] || '') === fromSection);
+  if (navItem) {{
+    document.querySelectorAll('.side-nav-item.active').forEach(a => a.classList.remove('active'));
+    navItem.classList.add('active');
+  }}
+}})();
+
 const POSITION_LABELS = {{ support: 'Support', oppose: 'Oppose', watch: 'Watch' }};
 // Set by render() each time a report loads — the flag-confirmation
 // modal below reads this instead of re-fetching, same role `current`
@@ -4352,6 +4683,7 @@ const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
 const listEl = document.getElementById('list');
 const statsEl = document.getElementById('stats');
+let lastRows = [];  // so removeFiling()'s confirm() can name the form type without a second fetch
 
 const ICON_DISCLOSURE = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="1.5" width="8" height="11" rx="1"/><path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const ICON_ALERT = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M7 4.5v3" stroke-linecap="round"/><circle cx="7" cy="9.8" r="0.6" fill="currentColor" stroke="none"/></svg>';
@@ -4432,6 +4764,7 @@ async function load() {{
 }}
 
 function render(rows) {{
+  lastRows = rows;
   if (!rows.length) {{
     listEl.innerHTML = '<p class="empty">Nothing prepared yet — use the form above.</p>';
     return;
@@ -4451,7 +4784,15 @@ function render(rows) {{
             <td>${{r.period_label || '—'}}</td>
             <td>${{statusBadge}}</td>
             <td class="date">${{fmtDateTime(r.created_at)}}</td>
-            <td><a class="secondary" href="/disclosures/review?id=${{r.id}}">Review</a></td>
+            <td class="row-menu">
+              <a class="secondary" href="/disclosures/review?id=${{r.id}}" style="margin-right:0.4rem">Review</a>
+              <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'filing-${{r.id}}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-filing-${{r.id}}">
+                <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
+              </button>
+              <div class="row-menu-dropdown" id="row-menu-filing-${{r.id}}">
+                <button type="button" onclick="removeFiling(${{r.id}})">Delete draft</button>
+              </div>
+            </td>
           </tr>
         `;
       }}).join('')}}
@@ -4459,6 +4800,56 @@ function render(rows) {{
     </table>
   `;
 }}
+
+// Same deletion pattern as CLIENTS_BODY's removeClient() — a real
+// confirm() naming what's about to be lost (no undo), then a DELETE
+// call, then reload from the server rather than guessing the new list
+// locally.
+async function removeFiling(id) {{
+  const r = lastRows.find(x => x.id === id);
+  const meta = r && FORM_META[r.form_type];
+  const label = (meta && meta.label) || (r ? ('Form ' + r.form_type) : 'this filing');
+  const signedNote = r && r.status === 'ready_to_file' ? ' This filing was already signed off — deleting it removes that record too.' : '';
+  if (!confirm(`Delete this ${{label}} draft?${{signedNote}} This can't be undone.`)) return;
+  try {{
+    const res = await fetch(`/api/prepared-filings?id=${{id}}`, {{ method: 'DELETE' }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not delete this filing');
+    }}
+    load();
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+function closeRowMenus() {{
+  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {{
+    m.classList.remove('show');
+    const openBtn = document.querySelector(`[aria-controls="${{m.id}}"]`);
+    if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
+  }});
+}}
+function toggleRowMenu(e, key) {{
+  e.stopPropagation();
+  const menu = document.getElementById(`row-menu-${{key}}`);
+  const wasOpen = menu.classList.contains('show');
+  closeRowMenus();
+  if (!wasOpen) {{
+    menu.classList.add('show');
+    e.currentTarget.setAttribute('aria-expanded', 'true');
+  }}
+}}
+document.addEventListener('click', closeRowMenus);
+document.addEventListener('keydown', (e) => {{
+  if (e.key !== 'Escape') return;
+  const openMenu = document.querySelector('.row-menu-dropdown.show');
+  if (!openMenu) return;
+  const openBtn = document.querySelector(`[aria-controls="${{openMenu.id}}"]`);
+  closeRowMenus();
+  if (openBtn) openBtn.focus();
+}});
 
 load();
 </script>
@@ -4483,29 +4874,117 @@ function fmtDateTime(iso) {{
   return d.toLocaleString('en-US', {{ month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }});
 }}
 
+function escapeHtml(s) {{
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({{
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }})[c]);
+}}
+
 const errorEl = document.getElementById('error');
 const contentEl = document.getElementById('content');
 const filingId = new URLSearchParams(window.location.search).get('id');
 const FORM_LABELS = {{ "601": "Form 601 — Lobbying Firm Registration Statement" }};
+const ROW_KEYS = ['employer', 'description', 'effective', 'period', 'agencies'];
+
+let filing = null;
+let allClients = [];
+
+function showError(message) {{
+  errorEl.textContent = message;
+  errorEl.className = 'show';
+}}
 
 async function load() {{
   if (!filingId) {{
-    errorEl.textContent = 'Missing filing id in the URL.';
-    errorEl.className = 'show';
+    showError('Missing filing id in the URL.');
     document.getElementById('loading').className = '';
     return;
   }}
   try {{
-    const res = await fetch(`/api/prepared-filings?id=${{filingId}}`);
-    if (res.status === 401) {{ window.location.href = '/login'; return; }}
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not load this filing');
-    render(data);
+    const [filingRes, clientsRes] = await Promise.all([
+      fetch(`/api/prepared-filings?id=${{filingId}}`),
+      fetch('/api/clients'),
+    ]);
+    if (filingRes.status === 401 || clientsRes.status === 401) {{ window.location.href = '/login'; return; }}
+    const filingData = await filingRes.json();
+    if (!filingRes.ok) throw new Error(filingData.error || 'Could not load this filing');
+    allClients = await clientsRes.json();
+    filing = filingData;
+    render();
   }} catch (err) {{
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
+    showError(err.message);
   }} finally {{
     document.getElementById('loading').className = '';
+  }}
+}}
+
+// Every mutation (a field autosave, a client-row selection, generating
+// the PDF, signing off) gets the full updated filing back from the
+// server and just re-renders from it — one source of truth for whether
+// the PDF preview is stale, rather than the frontend trying to track
+// that itself. See docs/disclosure-html-editor-plan.md's "Staleness
+// guard": pdf_current is computed server-side, never assumed here.
+async function postJson(path, body) {{
+  const res = await fetch(path, {{
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify(body),
+  }});
+  const data = await res.json();
+  if (!res.ok) {{
+    const message = (data.field_errors && data.field_errors.length)
+      ? data.field_errors.join(' ')
+      : (data.error || 'Something went wrong.');
+    throw new Error(message);
+  }}
+  return data;
+}}
+
+async function saveField(inputEl) {{
+  const key = inputEl.dataset.fieldKey;
+  const value = inputEl.value;
+  if (value === inputEl.dataset.orig) return;  // dirty-check — nothing actually changed, skip the round trip
+  inputEl.disabled = true;
+  try {{
+    filing = await postJson('/api/prepared-filings/field', {{ id: Number(filingId), field_key: key, value }});
+    render();
+  }} catch (err) {{
+    showError(err.message);
+    inputEl.disabled = false;
+    inputEl.focus();
+  }}
+}}
+
+async function applyClientRows() {{
+  const picks = Array.from(document.querySelectorAll('#client-picker select'))
+    .map(sel => ({{ id: Number(sel.dataset.clientId), row: sel.value ? Number(sel.value) : null }}))
+    .filter(p => p.row !== null);
+  const rowNumbers = picks.map(p => p.row);
+  if (new Set(rowNumbers).size !== rowNumbers.length) {{
+    showError('Two clients can\\'t share the same row — pick a different row for each.');
+    return;
+  }}
+  picks.sort((a, b) => a.row - b.row);
+  try {{
+    filing = await postJson('/api/prepared-filings/select-clients', {{
+      id: Number(filingId), client_ids: picks.map(p => p.id),
+    }});
+    render();
+  }} catch (err) {{
+    showError(err.message);
+  }}
+}}
+
+async function generatePdf() {{
+  const btn = document.getElementById('generate-btn');
+  btn.disabled = true;
+  try {{
+    filing = await postJson('/api/prepared-filings/generate-pdf', {{ id: Number(filingId) }});
+    render();
+  }} catch (err) {{
+    showError(err.message);
+  }} finally {{
+    btn.disabled = false;
   }}
 }}
 
@@ -4516,35 +4995,124 @@ async function signOff(e) {{
   const btn = document.getElementById('sign-btn');
   btn.disabled = true;
   try {{
-    const res = await fetch('/api/prepared-filings/sign', {{
-      method: 'POST',
-      headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ id: Number(filingId), signed_name: signedName, confirmed_accurate: confirmed }}),
+    filing = await postJson('/api/prepared-filings/sign', {{
+      id: Number(filingId), signed_name: signedName, confirmed_accurate: confirmed,
     }});
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not record sign-off');
-    render(data);
+    render();
   }} catch (err) {{
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
+    showError(err.message);
     btn.disabled = false;
   }}
 }}
 
-function render(r) {{
-  const pdfUrl = `/api/prepared-filings/pdf?id=${{r.id}}`;
-  const ready = r.status === 'ready_to_file';
-  const statusBadge = ready
-    ? '<span class="status-badge good">Ready to file</span>'
-    : '<span class="status-badge">Draft — not yet signed off</span>';
+// Same deletion pattern as the Clients section's removeClient() (see
+// CLIENTS_BODY / CLIENT_DETAIL_BODY) — a real confirm() naming what's
+// about to be lost (no undo), then a DELETE call, then leave this page
+// since there's nothing left here to show.
+async function removeFiling() {{
+  const label = FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type);
+  const signedNote = filing.status === 'ready_to_file' ? ' This filing was already signed off — deleting it removes that record too.' : '';
+  if (!confirm(`Delete this ${{label}} draft?${{signedNote}} This can't be undone.`)) return;
+  try {{
+    const res = await fetch(`/api/prepared-filings?id=${{filingId}}`, {{ method: 'DELETE' }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not delete this filing');
+    }}
+    window.location.href = '/disclosures';
+  }} catch (err) {{
+    showError(err.message);
+  }}
+}}
 
-  const signOffSection = ready ? `
-    <div class="card">
-      <div class="bill-title" style="margin-bottom:0.4rem">Signed off</div>
-      <div class="bill-desc">Confirmed accurate by <strong>${{r.signed_name}}</strong> on ${{fmtDateTime(r.signed_at)}}.</div>
-      <div class="sub" style="margin:0.6rem 0 0">This app has not filed anything. Download the PDF above and file it yourself with the FPPC / Secretary of State.</div>
+function fieldInputHtml(field, value) {{
+  const type = field.kind === 'email' ? 'email' : 'text';
+  const mark = field.required ? ' <span style="color:var(--bad,#c0392b)">*</span>' : '';
+  return `
+    <label style="display:block;margin-bottom:0.8rem">
+      <div class="sub" style="margin:0 0 0.3rem">${{escapeHtml(field.label)}}${{mark}}</div>
+      <input type="${{type}}" data-field-key="${{escapeHtml(field.key)}}" data-orig="${{escapeHtml(value)}}"
+             value="${{escapeHtml(value)}}" style="width:100%" onblur="saveField(this)">
+    </label>`;
+}}
+
+function clientsSectionHtml() {{
+  const maxRows = filing.max_client_rows;
+  const rowFields = filing.client_row_fields;
+  const rowIds = filing.client_row_ids || [];
+  const rowLabels = filing.field_schema.find(s => s.key === 'clients').row_field_labels;
+
+  let pickerHtml = '';
+  if (allClients.length > maxRows) {{
+    pickerHtml = `
+      <div class="card" style="margin-bottom:1rem">
+        <div class="bill-title" style="margin-bottom:0.4rem">Choose which ${{maxRows}} clients appear on this form</div>
+        <div class="bill-desc" style="margin-bottom:0.8rem">
+          You have ${{allClients.length}} clients — this form only has ${{maxRows}} rows. Give the ones that
+          should appear a row number; leave the rest blank.
+        </div>
+        <div id="client-picker">
+          ${{allClients.map(c => {{
+            const idx = rowIds.indexOf(c.id);
+            const selected = idx === -1 ? '' : String(idx + 1);
+            const options = ['<option value="">—</option>'].concat(
+              Array.from({{ length: maxRows }}, (_, i) => {{
+                const n = String(i + 1);
+                return `<option value="${{n}}" ${{n === selected ? 'selected' : ''}}>${{n}}</option>`;
+              }})
+            ).join('');
+            return `<div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.4rem">
+              <select data-client-id="${{c.id}}" style="width:5rem">${{options}}</select>
+              <span>${{escapeHtml(c.name)}}</span>
+            </div>`;
+          }}).join('')}}
+        </div>
+        <button type="button" class="secondary" style="margin-top:0.6rem" onclick="applyClientRows()">Apply row assignment</button>
+      </div>`;
+  }}
+
+  const rowsHtml = rowFields.map((rf, i) => {{
+    const clientId = rowIds[i];
+    const client = allClients.find(c => c.id === clientId);
+    const heading = client ? escapeHtml(client.name) : `Row ${{i + 1}} — empty`;
+    const fieldsHtml = ROW_KEYS.map(k => fieldInputHtml(
+      {{ key: rf[k], label: rowLabels[k], required: false, kind: 'text' }},
+      filing.field_data[rf[k]] || '',
+    )).join('');
+    return `<div class="card" style="margin-bottom:0.8rem"><div class="bill-title" style="margin-bottom:0.6rem">${{heading}}</div>${{fieldsHtml}}</div>`;
+  }}).join('');
+
+  return pickerHtml + rowsHtml;
+}}
+
+function render() {{
+  const pdfUrl = `/api/prepared-filings/pdf?id=${{filing.id}}`;
+  const signed = filing.status === 'ready_to_file';
+  const statusBadge = signed
+    ? '<span class="status-badge good">Signed off</span>'
+    : (filing.pdf_current ? '<span class="status-badge">Draft — PDF up to date</span>' : '<span class="status-badge">Draft — editing</span>');
+
+  const businessSection = filing.field_schema.find(s => s.key === 'business');
+  const businessFieldsHtml = businessSection.fields.map(f => fieldInputHtml(f, filing.field_data[f.key] || '')).join('');
+
+  const pdfSection = filing.pdf_current ? `
+    <div class="card" style="padding:0;overflow:hidden">
+      <iframe src="${{pdfUrl}}" style="width:100%;height:70vh;border:none" title="Filled ${{filing.form_type}} preview"></iframe>
+    </div>
+    <div class="card-actions" style="margin:-0.5rem 0 1.5rem">
+      <a class="secondary" href="${{pdfUrl}}" target="_blank" rel="noopener">Open PDF in a new tab →</a>
     </div>
   ` : `
+    <div class="sub" style="margin:0 0 1.5rem">Generate the PDF to preview it before signing off.</div>
+  `;
+
+  const signOffSection = signed ? `
+    <div class="card">
+      <div class="bill-title" style="margin-bottom:0.4rem">Signed off</div>
+      <div class="bill-desc">Confirmed accurate by <strong>${{escapeHtml(filing.signed_name)}}</strong> on ${{fmtDateTime(filing.signed_at)}}.</div>
+      <div class="sub" style="margin:0.6rem 0 0">This app has not filed anything. Download the PDF above and file it yourself with the FPPC / Secretary of State. Editing any field above reopens this filing for another round of sign-off.</div>
+    </div>
+  ` : (filing.pdf_current ? `
     <div class="card">
       <div class="bill-title" style="margin-bottom:0.4rem">Sign-off — required before this can be marked ready to file</div>
       <form id="sign-form" onsubmit="signOff(event)">
@@ -4560,31 +5128,43 @@ function render(r) {{
       </form>
       <div class="sub" style="margin-top:0.8rem">This only marks the draft reviewed on your end — it does not submit or send anything anywhere.</div>
     </div>
-  `;
+  ` : '');
 
   contentEl.innerHTML = `
-    <h1>${{FORM_LABELS[r.form_type] || ('Form ' + r.form_type)}}</h1>
-    <p class="sub">${{r.period_label ? 'Period: ' + r.period_label + ' — ' : ''}}Prepared ${{fmtDateTime(r.created_at)}}.</p>
-    <div style="margin-bottom:1rem">${{statusBadge}}</div>
+    <div class="page-head">
+      <div>
+        <h1>${{FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type)}}</h1>
+        <p class="sub">${{filing.period_label ? 'Period: ' + filing.period_label + ' — ' : ''}}Prepared ${{fmtDateTime(filing.created_at)}}.</p>
+        <div style="margin-top:0.6rem">${{statusBadge}}</div>
+      </div>
+      <button type="button" class="danger" onclick="removeFiling()">Delete draft</button>
+    </div>
 
     <div class="card">
       <div class="bill-title" style="margin-bottom:0.4rem">Known gaps in this draft</div>
       <div class="bill-desc">
-        This app doesn't collect every field the real form asks for. Left blank on purpose, rather than guessed:
-        subcontracted-client information, and any individual lobbyists beyond your own name.
-        Fill those in by hand before filing if they apply to you. Per-client effective date, period of
-        contract, and agencies lobbied are pulled in automatically when set on the client — add them from
-        <a href="/clients">Clients</a> if a row below looks empty.
+        This app doesn't collect every field the real form asks for. Left blank on purpose, rather than
+        guessed: subcontracted-client information, and any individual lobbyists beyond your own name. Fill
+        those in by hand on the printed form if they apply to you.
       </div>
     </div>
 
-    <div class="card" style="padding:0;overflow:hidden">
-      <iframe src="${{pdfUrl}}" style="width:100%;height:70vh;border:none" title="Filled ${{r.form_type}} preview"></iframe>
-    </div>
-    <div class="card-actions" style="margin:-0.5rem 0 1.5rem">
-      <a class="secondary" href="${{pdfUrl}}" target="_blank" rel="noopener">Open PDF in a new tab →</a>
+    <div class="card">
+      <h2 class="section" style="margin-top:0">Business information</h2>
+      <div class="sub" style="margin:0 0 0.8rem">Edits save automatically as you leave each field.</div>
+      ${{businessFieldsHtml}}
     </div>
 
+    <div class="card">
+      <h2 class="section" style="margin-top:0">Clients</h2>
+      ${{clientsSectionHtml()}}
+    </div>
+
+    <div class="card-actions" style="margin:0 0 1rem">
+      <button type="button" id="generate-btn" onclick="generatePdf()">Generate PDF</button>
+    </div>
+
+    ${{pdfSection}}
     ${{signOffSection}}
   `;
 }}
@@ -4629,6 +5209,7 @@ def normalize_org_name(name):
         return ""
     key = name.lower().replace("’", "'")
     key = re.sub(r"\bit's\b", "its", key)  # possessive typo seen in real CAL-ACCESS free text
+    key = re.sub(r"\bsubsidaries\b", "subsidiaries", key)  # missing-"i" misspelling, same real CAL-ACCESS free text
     for phrase in _ORG_SUFFIX_PHRASES:
         key = key.replace(phrase, " ")
     key = re.sub(r"[^a-z0-9\s]", " ", key)
@@ -4651,7 +5232,9 @@ def search_lobbying(conn, q):
     each keeps its own, even if two of them happen to normalize to the
     same key — because collapsing two independently-registered
     organizations into one would misrepresent one's real filings as the
-    other's, not just look tidier."""
+    other's, not just look tidier. Same-key registered entities are
+    still visually grouped, just without merging — see
+    _group_duplicate_entities()."""
     like = f"%{q}%"
     entities = conn.execute(
         "SELECT id, name, entity_type, city, state, registration_status "
@@ -4706,6 +5289,7 @@ def search_lobbying(conn, q):
         })
 
     results = _cluster_client_mentions(results)
+    results = _group_duplicate_entities(results)
     results.sort(key=lambda r: (r["name"] or "").lower())
     return results[:50]
 
@@ -4747,6 +5331,46 @@ def _cluster_client_mentions(results):
             canonical = dict(original)
             canonical["variants"] = [r for r in group if r is not original]
             out.append(canonical)
+    return out
+
+
+def _group_duplicate_entities(results):
+    """A second, separate grouping pass from _cluster_client_mentions
+    above — that one only ever folds *unregistered* "named as client
+    only" mentions together. This one visually clusters *registered*
+    entities (each with its own real filer_id) whose names normalize to
+    the same thing — e.g. the "Chevron Corporation & its subsidaries" /
+    "Chevron Corporation and It's Subsidaries" / "CHEVRON CORPORATION
+    AND ITS SUBSIDIARIES" trio seen in testing: three real,
+    independently registered filers. Still never merged into one row
+    (see search_lobbying()'s own docstring on why collapsing two real
+    registrations would misrepresent one's filings as the other's) —
+    this only wraps them in a `kind: "entity_group"` row carrying the
+    real entities in `entities`, same "group, don't merge" shape
+    _cluster_client_mentions already uses for name variants. A lone
+    entity with no same-key sibling passes through unchanged."""
+    entity_groups = {}
+    passthrough = []
+    for r in results:
+        if r["kind"] == "entity":
+            entity_groups.setdefault(normalize_org_name(r["name"]), []).append(r)
+        else:
+            passthrough.append(r)
+
+    out = passthrough
+    for group in entity_groups.values():
+        if len(group) == 1:
+            out.append(group[0])
+            continue
+        # Alphabetically first stands in as the group row's own display
+        # name — arbitrary but stable, and it (like every other real
+        # name in the group) still shows up as its own entry underneath.
+        group = sorted(group, key=lambda r: (r["name"] or "").lower())
+        out.append({
+            "kind": "entity_group", "id": None, "name": group[0]["name"],
+            "entity_type": None, "city": None, "state": None,
+            "registration_status": None, "entities": group,
+        })
     return out
 
 
@@ -4847,6 +5471,20 @@ def _trigger_refresh(job_name, target_fn):
 
     threading.Thread(target=run, daemon=True, name=f"refresh-{job_name}").start()
     return True
+
+
+def _with_disclosure_editor_meta(filing):
+    """Every /api/prepared-filings* response that hands back a filing
+    also needs to hand back what the disclosure editor renders it with:
+    the field schema (labels/kind/required), the real client-row
+    AcroForm field names (pdf_forms.CLIENT_ROW_FIELDS — the frontend
+    needs the exact field_data keys to bind row inputs to), and the row
+    count. One helper so the four call sites can't drift out of sync
+    with each other."""
+    filing["field_schema"] = disclosure_fields.sections_for_form_type(filing["form_type"])
+    filing["client_row_fields"] = pdf_forms.CLIENT_ROW_FIELDS
+    filing["max_client_rows"] = pdf_forms.max_client_rows()
+    return filing
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -5359,7 +5997,10 @@ class Handler(BaseHTTPRequestHandler):
                     if not filing:
                         self._send_json(404, {"error": "No prepared filing found with that id."})
                         return
-                    self._send_json(200, filing)
+                    # The editor needs to know what's editable and what's
+                    # required to render itself — sent alongside the
+                    # filing rather than a separate round trip.
+                    self._send_json(200, _with_disclosure_editor_meta(filing))
                 else:
                     self._send_json(200, db.list_prepared_filings(conn, user_id))
             finally:
@@ -5829,14 +6470,146 @@ class Handler(BaseHTTPRequestHandler):
                 user_row = conn.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()
                 clients = db.list_clients(conn, user_id)
 
+                client_row_ids = None
                 if form_type == "601":
                     field_data = pdf_forms.values_for_form_601(
                         profile, clients, user_row["email"], sign_off=None, today=datetime.date.today()
                     )
+                    client_row_ids = [c["id"] for c in clients[:pdf_forms.max_client_rows()]]
 
-                filing_id = db.create_prepared_filing(conn, user_id, form_type, body.get("period_label"), field_data)
+                filing_id = db.create_prepared_filing(
+                    conn, user_id, form_type, body.get("period_label"), field_data, client_row_ids=client_row_ids,
+                )
                 conn.commit()
-                self._send_json(200, db.get_prepared_filing(conn, user_id, filing_id))
+                self._send_json(200, _with_disclosure_editor_meta(db.get_prepared_filing(conn, user_id, filing_id)))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/prepared-filings/field":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            filing_id = body.get("id")
+            field_key = body.get("field_key")
+            value = body.get("value") or ""
+            if not filing_id or not field_key:
+                self._send_json(400, {"error": "Missing id or field_key."})
+                return
+
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to edit a disclosure filing.")
+                if not user_id:
+                    return
+                filing = db.get_prepared_filing(conn, user_id, filing_id)
+                if not filing:
+                    self._send_json(404, {"error": "No prepared filing found with that id."})
+                    return
+                if not disclosure_fields.is_editable_field_key(filing["form_type"], field_key):
+                    self._send_json(400, {"error": "That field isn't editable on this form."})
+                    return
+                problem = None
+                for f in disclosure_fields.sections_for_form_type(filing["form_type"]):
+                    match = next((x for x in f.get("fields", []) if x["key"] == field_key), None)
+                    if match:
+                        problem = disclosure_fields.validate_field(match["kind"], value.strip())
+                        break
+                if problem:
+                    self._send_json(400, {"error": f"Invalid value: {problem}."})
+                    return
+                try:
+                    filing = db.update_prepared_filing_field(conn, user_id, filing_id, field_key, value)
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                conn.commit()
+                self._send_json(200, _with_disclosure_editor_meta(filing))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/prepared-filings/select-clients":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            filing_id = body.get("id")
+            client_ids = body.get("client_ids")
+            if not filing_id or not isinstance(client_ids, list):
+                self._send_json(400, {"error": "Missing id or client_ids."})
+                return
+            if len(client_ids) > pdf_forms.max_client_rows():
+                self._send_json(400, {"error": f"This form only has {pdf_forms.max_client_rows()} client rows."})
+                return
+            try:
+                client_ids = [int(cid) for cid in client_ids]
+            except (ValueError, TypeError):
+                self._send_json(400, {"error": "client_ids must all be numbers."})
+                return
+
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to edit a disclosure filing.")
+                if not user_id:
+                    return
+                filing = db.get_prepared_filing(conn, user_id, filing_id)
+                if not filing:
+                    self._send_json(404, {"error": "No prepared filing found with that id."})
+                    return
+                clients = []
+                for cid in client_ids:
+                    client = db.get_client(conn, user_id, cid)
+                    if not client:
+                        self._send_json(400, {"error": f"No client found with id {cid}."})
+                        return
+                    clients.append(client)
+                row_values = pdf_forms.client_row_values(clients)
+                try:
+                    filing = db.set_prepared_filing_client_rows(conn, user_id, filing_id, client_ids, row_values)
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                conn.commit()
+                self._send_json(200, _with_disclosure_editor_meta(filing))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/prepared-filings/generate-pdf":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            filing_id = body.get("id")
+            if not filing_id:
+                self._send_json(400, {"error": "Missing id."})
+                return
+
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to generate a disclosure PDF.")
+                if not user_id:
+                    return
+                filing = db.get_prepared_filing(conn, user_id, filing_id)
+                if not filing:
+                    self._send_json(404, {"error": "No prepared filing found with that id."})
+                    return
+                errors = disclosure_fields.validate_field_data(filing["form_type"], filing["field_data"])
+                if errors:
+                    self._send_json(400, {"error": "Fix these before generating a PDF.", "field_errors": errors})
+                    return
+                try:
+                    filing = db.mark_prepared_filing_pdf_generated(conn, user_id, filing_id)
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                conn.commit()
+                self._send_json(200, _with_disclosure_editor_meta(filing))
             finally:
                 conn.close()
             return
@@ -5921,6 +6694,28 @@ class Handler(BaseHTTPRequestHandler):
                 db.delete_client(conn, user_id, client_id)
                 conn.commit()
                 self._send_json(200, db.list_clients(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/prepared-filings":
+            filing_id = (qs.get("id") or [""])[0]
+            if not filing_id:
+                self._send_json(400, {"error": "Missing id parameter."})
+                return
+            try:
+                filing_id = int(filing_id)
+            except ValueError:
+                self._send_json(400, {"error": "id must be a number."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage disclosure filings.")
+                if not user_id:
+                    return
+                db.delete_prepared_filing(conn, user_id, filing_id)
+                conn.commit()
+                self._send_json(200, db.list_prepared_filings(conn, user_id))
             finally:
                 conn.close()
             return
