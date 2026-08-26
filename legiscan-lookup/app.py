@@ -4481,6 +4481,7 @@ const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
 const listEl = document.getElementById('list');
 const statsEl = document.getElementById('stats');
+let lastRows = [];  // so removeFiling()'s confirm() can name the form type without a second fetch
 
 const ICON_DISCLOSURE = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="1.5" width="8" height="11" rx="1"/><path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const ICON_ALERT = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M7 4.5v3" stroke-linecap="round"/><circle cx="7" cy="9.8" r="0.6" fill="currentColor" stroke="none"/></svg>';
@@ -4561,6 +4562,7 @@ async function load() {{
 }}
 
 function render(rows) {{
+  lastRows = rows;
   if (!rows.length) {{
     listEl.innerHTML = '<p class="empty">Nothing prepared yet — use the form above.</p>';
     return;
@@ -4580,7 +4582,15 @@ function render(rows) {{
             <td>${{r.period_label || '—'}}</td>
             <td>${{statusBadge}}</td>
             <td class="date">${{fmtDateTime(r.created_at)}}</td>
-            <td><a class="secondary" href="/disclosures/review?id=${{r.id}}">Review</a></td>
+            <td class="row-menu">
+              <a class="secondary" href="/disclosures/review?id=${{r.id}}" style="margin-right:0.4rem">Review</a>
+              <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'filing-${{r.id}}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-filing-${{r.id}}">
+                <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
+              </button>
+              <div class="row-menu-dropdown" id="row-menu-filing-${{r.id}}">
+                <button type="button" onclick="removeFiling(${{r.id}})">Delete draft</button>
+              </div>
+            </td>
           </tr>
         `;
       }}).join('')}}
@@ -4588,6 +4598,56 @@ function render(rows) {{
     </table>
   `;
 }}
+
+// Same deletion pattern as CLIENTS_BODY's removeClient() — a real
+// confirm() naming what's about to be lost (no undo), then a DELETE
+// call, then reload from the server rather than guessing the new list
+// locally.
+async function removeFiling(id) {{
+  const r = lastRows.find(x => x.id === id);
+  const meta = r && FORM_META[r.form_type];
+  const label = (meta && meta.label) || (r ? ('Form ' + r.form_type) : 'this filing');
+  const signedNote = r && r.status === 'ready_to_file' ? ' This filing was already signed off — deleting it removes that record too.' : '';
+  if (!confirm(`Delete this ${{label}} draft?${{signedNote}} This can't be undone.`)) return;
+  try {{
+    const res = await fetch(`/api/prepared-filings?id=${{id}}`, {{ method: 'DELETE' }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not delete this filing');
+    }}
+    load();
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+function closeRowMenus() {{
+  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {{
+    m.classList.remove('show');
+    const openBtn = document.querySelector(`[aria-controls="${{m.id}}"]`);
+    if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
+  }});
+}}
+function toggleRowMenu(e, key) {{
+  e.stopPropagation();
+  const menu = document.getElementById(`row-menu-${{key}}`);
+  const wasOpen = menu.classList.contains('show');
+  closeRowMenus();
+  if (!wasOpen) {{
+    menu.classList.add('show');
+    e.currentTarget.setAttribute('aria-expanded', 'true');
+  }}
+}}
+document.addEventListener('click', closeRowMenus);
+document.addEventListener('keydown', (e) => {{
+  if (e.key !== 'Escape') return;
+  const openMenu = document.querySelector('.row-menu-dropdown.show');
+  if (!openMenu) return;
+  const openBtn = document.querySelector(`[aria-controls="${{openMenu.id}}"]`);
+  closeRowMenus();
+  if (openBtn) openBtn.focus();
+}});
 
 load();
 </script>
@@ -4743,6 +4803,26 @@ async function signOff(e) {{
   }}
 }}
 
+// Same deletion pattern as the Clients section's removeClient() (see
+// CLIENTS_BODY / CLIENT_DETAIL_BODY) — a real confirm() naming what's
+// about to be lost (no undo), then a DELETE call, then leave this page
+// since there's nothing left here to show.
+async function removeFiling() {{
+  const label = FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type);
+  const signedNote = filing.status === 'ready_to_file' ? ' This filing was already signed off — deleting it removes that record too.' : '';
+  if (!confirm(`Delete this ${{label}} draft?${{signedNote}} This can't be undone.`)) return;
+  try {{
+    const res = await fetch(`/api/prepared-filings?id=${{filingId}}`, {{ method: 'DELETE' }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not delete this filing');
+    }}
+    window.location.href = '/disclosures';
+  }} catch (err) {{
+    showError(err.message);
+  }}
+}}
+
 function fieldInputHtml(field, value) {{
   const type = field.kind === 'email' ? 'email' : 'text';
   const mark = field.required ? ' <span style="color:var(--bad,#c0392b)">*</span>' : '';
@@ -4849,9 +4929,14 @@ function render() {{
   ` : '');
 
   contentEl.innerHTML = `
-    <h1>${{FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type)}}</h1>
-    <p class="sub">${{filing.period_label ? 'Period: ' + filing.period_label + ' — ' : ''}}Prepared ${{fmtDateTime(filing.created_at)}}.</p>
-    <div style="margin-bottom:1rem">${{statusBadge}}</div>
+    <div class="page-head">
+      <div>
+        <h1>${{FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type)}}</h1>
+        <p class="sub">${{filing.period_label ? 'Period: ' + filing.period_label + ' — ' : ''}}Prepared ${{fmtDateTime(filing.created_at)}}.</p>
+        <div style="margin-top:0.6rem">${{statusBadge}}</div>
+      </div>
+      <button type="button" class="danger" onclick="removeFiling()">Delete draft</button>
+    </div>
 
     <div class="card">
       <div class="bill-title" style="margin-bottom:0.4rem">Known gaps in this draft</div>
@@ -6363,6 +6448,28 @@ class Handler(BaseHTTPRequestHandler):
                 db.delete_client(conn, user_id, client_id)
                 conn.commit()
                 self._send_json(200, db.list_clients(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/prepared-filings":
+            filing_id = (qs.get("id") or [""])[0]
+            if not filing_id:
+                self._send_json(400, {"error": "Missing id parameter."})
+                return
+            try:
+                filing_id = int(filing_id)
+            except ValueError:
+                self._send_json(400, {"error": "id must be a number."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage disclosure filings.")
+                if not user_id:
+                    return
+                db.delete_prepared_filing(conn, user_id, filing_id)
+                conn.commit()
+                self._send_json(200, db.list_prepared_filings(conn, user_id))
             finally:
                 conn.close()
             return
