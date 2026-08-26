@@ -2132,6 +2132,34 @@ function variantsRow(r) {{
   `;
 }}
 
+// r.entities is a group of separately CAL-ACCESS-registered entities
+// whose names normalize to the same thing (see app.py's
+// _group_duplicate_entities) — e.g. three real "Chevron ... and its
+// subsidiaries" registrations. Unlike variantsRow() above, these are
+// never one organization's alternate spellings; each keeps its own
+// real record, so this only ever collapses them visually, one click
+// away underneath, exactly like variantsRow does for name variants.
+function entityGroupRow(r) {{
+  if (r.kind !== 'entity_group') return '';
+  const items = r.entities.map(e => `
+    <div class="variant-row">
+      <a href="${{detailUrl(e)}}">${{e.name}}</a>
+      <span class="sub" style="margin:0">${{[locationOrContext(e), e.registration_status].filter(Boolean).join(' · ')}}</span>
+    </div>
+  `).join('');
+  return `
+    <tr class="variants-row">
+      <td colspan="5">
+        <details>
+          <summary>${{r.entities.length}} separately registered entities named ${{r.name}}</summary>
+          <p class="sub" style="margin:0 0 0.5rem">Each is its own real CAL-ACCESS registration, grouped here by name only — nothing has been merged.</p>
+          ${{items}}
+        </details>
+      </td>
+    </tr>
+  `;
+}}
+
 function renderResults(rows, truncated) {{
   if (!rows.length) {{
     resultsEl.innerHTML = '<p class="empty">No firms, employers, or named clients match that. Try a broader term or check the spelling.</p>';
@@ -2142,7 +2170,16 @@ function renderResults(rows, truncated) {{
       <table>
         <thead><tr><th>Name</th><th>Type</th><th>Location</th><th>Status</th><th></th></tr></thead>
         <tbody>
-        ${{rows.map(r => `
+        ${{rows.map(r => r.kind === 'entity_group' ? `
+          <tr>
+            <td>${{r.name}}</td>
+            <td><span class="tag">${{r.entities.length}} registered entities</span></td>
+            <td></td>
+            <td></td>
+            <td></td>
+          </tr>
+          ${{entityGroupRow(r)}}
+        ` : `
           <tr>
             <td><a href="${{detailUrl(r)}}">${{r.name}}</a></td>
             <td>${{r.entity_type ? `<span class="tag">${{r.entity_type}}</span>` : `<span class="tag">named as client only</span>`}}</td>
@@ -2663,6 +2700,18 @@ function row(label, value) {{
   </div>`;
 }}
 
+// bus_phone is stored exactly as typed, with no format enforced on
+// entry — this only reformats a clean 10-digit US number for display,
+// e.g. "5082157570" -> "(508) 215-7570". Anything else (an extension,
+// a non-US number, a partial digit string) passes through unchanged
+// rather than being mangled by a formatter that assumed too much.
+function formatPhone(raw) {{
+  if (!raw) return raw;
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length !== 10) return raw;
+  return `(${{digits.slice(0, 3)}}) ${{digits.slice(3, 6)}}-${{digits.slice(6)}}`;
+}}
+
 async function load() {{
   try {{
     const [meRes, profileRes] = await Promise.all([fetch('/api/me'), fetch('/api/profile')]);
@@ -2695,7 +2744,7 @@ async function load() {{
         <div style="padding:0 1.15rem">
           ${{row('Business address', [profile.bus_addr1, profile.bus_city, profile.bus_st, profile.bus_zip4].filter(Boolean).join(', '))}}
           ${{row('Mailing address', mailing)}}
-          ${{row('Phone', profile.bus_phone)}}
+          ${{row('Phone', formatPhone(profile.bus_phone))}}
           ${{row('CA SOS filer ID', profile.existing_filer_id)}}
         </div>
         <div class="card-actions" style="padding:1rem 1.15rem">
@@ -3448,6 +3497,18 @@ CLIENTS_BODY = f"""
 </div>
 
 <script>
+// bus_phone is stored exactly as typed, with no format enforced on
+// entry — this only reformats a clean 10-digit US number for display,
+// e.g. "5082157570" -> "(508) 215-7570". Anything else (an extension,
+// a non-US number, a partial digit string) passes through unchanged
+// rather than being mangled by a formatter that assumed too much.
+function formatPhone(raw) {{
+  if (!raw) return raw;
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length !== 10) return raw;
+  return `(${{digits.slice(0, 3)}}) ${{digits.slice(3, 6)}}-${{digits.slice(6)}}`;
+}}
+
 const form = document.getElementById('f');
 const formCard = document.getElementById('form-card');
 const errorEl = document.getElementById('error');
@@ -3744,7 +3805,7 @@ function render(rows) {{
       ${{rows.map(c => `
         <tr>
           <td><a href="/clients/detail?id=${{c.id}}">${{c.name}}</a></td>
-          <td>${{[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), c.bus_phone].filter(Boolean).join(' · ')}}</td>
+          <td>${{[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), formatPhone(c.bus_phone)].filter(Boolean).join(' · ')}}</td>
           <td>${{c.interests || ''}}</td>
           <td>${{c.existing_filer_id || ''}}</td>
           <td class="row-menu">
@@ -3835,6 +3896,18 @@ CLIENT_DETAIL_BODY = f"""
 </div>
 
 <script>
+// bus_phone is stored exactly as typed, with no format enforced on
+// entry — this only reformats a clean 10-digit US number for display,
+// e.g. "5082157570" -> "(508) 215-7570". Anything else (an extension,
+// a non-US number, a partial digit string) passes through unchanged
+// rather than being mangled by a formatter that assumed too much.
+function formatPhone(raw) {{
+  if (!raw) return raw;
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length !== 10) return raw;
+  return `(${{digits.slice(0, 3)}}) ${{digits.slice(3, 6)}}-${{digits.slice(6)}}`;
+}}
+
 const clientId = new URLSearchParams(window.location.search).get('id');
 const errorEl = document.getElementById('error');
 const clientEl = document.getElementById('client');
@@ -3850,7 +3923,7 @@ function renderClient(d) {{
     <div class="card">
       <div class="bill-title">${{c.name}}</div>
       <div class="bill-desc" style="margin-top:0.4rem">
-        ${{[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), c.bus_phone].filter(Boolean).join(' · ') || 'No address on file'}}
+        ${{[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), formatPhone(c.bus_phone)].filter(Boolean).join(' · ') || 'No address on file'}}
       </div>
       ${{c.interests ? `<div class="bill-desc" style="margin-top:0.4rem">${{c.interests}}</div>` : ''}}
       <div class="card-actions">
@@ -4922,6 +4995,7 @@ def normalize_org_name(name):
         return ""
     key = name.lower().replace("’", "'")
     key = re.sub(r"\bit's\b", "its", key)  # possessive typo seen in real CAL-ACCESS free text
+    key = re.sub(r"\bsubsidaries\b", "subsidiaries", key)  # missing-"i" misspelling, same real CAL-ACCESS free text
     for phrase in _ORG_SUFFIX_PHRASES:
         key = key.replace(phrase, " ")
     key = re.sub(r"[^a-z0-9\s]", " ", key)
@@ -4944,7 +5018,9 @@ def search_lobbying(conn, q):
     each keeps its own, even if two of them happen to normalize to the
     same key — because collapsing two independently-registered
     organizations into one would misrepresent one's real filings as the
-    other's, not just look tidier."""
+    other's, not just look tidier. Same-key registered entities are
+    still visually grouped, just without merging — see
+    _group_duplicate_entities()."""
     like = f"%{q}%"
     entities = conn.execute(
         "SELECT id, name, entity_type, city, state, registration_status "
@@ -4999,6 +5075,7 @@ def search_lobbying(conn, q):
         })
 
     results = _cluster_client_mentions(results)
+    results = _group_duplicate_entities(results)
     results.sort(key=lambda r: (r["name"] or "").lower())
     return results[:50]
 
@@ -5040,6 +5117,46 @@ def _cluster_client_mentions(results):
             canonical = dict(original)
             canonical["variants"] = [r for r in group if r is not original]
             out.append(canonical)
+    return out
+
+
+def _group_duplicate_entities(results):
+    """A second, separate grouping pass from _cluster_client_mentions
+    above — that one only ever folds *unregistered* "named as client
+    only" mentions together. This one visually clusters *registered*
+    entities (each with its own real filer_id) whose names normalize to
+    the same thing — e.g. the "Chevron Corporation & its subsidaries" /
+    "Chevron Corporation and It's Subsidaries" / "CHEVRON CORPORATION
+    AND ITS SUBSIDIARIES" trio seen in testing: three real,
+    independently registered filers. Still never merged into one row
+    (see search_lobbying()'s own docstring on why collapsing two real
+    registrations would misrepresent one's filings as the other's) —
+    this only wraps them in a `kind: "entity_group"` row carrying the
+    real entities in `entities`, same "group, don't merge" shape
+    _cluster_client_mentions already uses for name variants. A lone
+    entity with no same-key sibling passes through unchanged."""
+    entity_groups = {}
+    passthrough = []
+    for r in results:
+        if r["kind"] == "entity":
+            entity_groups.setdefault(normalize_org_name(r["name"]), []).append(r)
+        else:
+            passthrough.append(r)
+
+    out = passthrough
+    for group in entity_groups.values():
+        if len(group) == 1:
+            out.append(group[0])
+            continue
+        # Alphabetically first stands in as the group row's own display
+        # name — arbitrary but stable, and it (like every other real
+        # name in the group) still shows up as its own entry underneath.
+        group = sorted(group, key=lambda r: (r["name"] or "").lower())
+        out.append({
+            "kind": "entity_group", "id": None, "name": group[0]["name"],
+            "entity_type": None, "city": None, "state": None,
+            "registration_status": None, "entities": group,
+        })
     return out
 
 
