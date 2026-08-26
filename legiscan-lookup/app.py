@@ -515,6 +515,28 @@ STYLE = """
   select.position-select.support { border-color: var(--good); color: var(--good); }
   select.position-select.oppose { border-color: var(--error); color: var(--error); }
   select.position-select.watch { border-color: var(--accent); color: var(--accent); }
+  /* clientCell()'s per-row assignment, grouped into one pill-shaped unit
+     (name + position-select + remove ×) instead of a loose flex row —
+     the container itself carries the pill styling so it visually reads
+     as "one client, assigned" the same way .tag/.position-badge already
+     read as one thing elsewhere, rather than three independent controls
+     sitting next to each other. */
+  .client-chip {
+    display: flex; align-items: center; gap: 0.4rem; background: var(--content-bg);
+    border-radius: var(--radius-pill); padding: 0.15rem 0.3rem 0.15rem 0.65rem; margin-bottom: 0.4rem; width: fit-content;
+  }
+  .client-chip select.position-select { border: none; background: none; padding: 0.1rem 1.2rem 0.1rem 0.1rem; }
+  /* The "add a new client to this bill" control below the chips above —
+     deliberately NOT styled like a position-select (those change an
+     *existing* assignment; this one adds a new one), so a dashed
+     outline + plain "+ Add client" wording reads as its own distinct
+     affordance rather than a second, competing way to do what the chips
+     above already do. */
+  .add-client-select {
+    font-size: 0.78rem; font-weight: 600; color: var(--slate); background: none;
+    border: 1px dashed var(--rule); border-radius: var(--radius-pill); padding: 0.25rem 0.6rem;
+  }
+  .add-client-select:hover { border-color: var(--accent); color: var(--accent); }
   /* Filter tabs above a flagged/client-position list — same All/Support/
      Oppose/Watch vocabulary as the position badges above, just as a
      filter instead of a per-row value. */
@@ -639,8 +661,7 @@ STYLE = """
     height: 4rem; flex: none; display: flex; align-items: center; justify-content: space-between;
     padding: 0 1.5rem; border-bottom: 1px solid var(--rule); background: var(--paper); gap: 1rem;
   }
-  .app-topbar-title { font-size: 0.95rem; font-weight: 600; }
-  .app-topbar-sub { font-size: 0.78rem; color: var(--slate); margin-top: 0.1rem; }
+  .app-topbar-sub { font-size: 0.78rem; color: var(--slate); }
   /* Was shared topbar chrome on every page (a global "search LegiScan"
      box + a persistent "Flag a bill" shortcut) until both were removed
      as redundant — /lookup (linked from the sidebar) already covers
@@ -1096,12 +1117,14 @@ def app_shell(current, body):
     """Sidebar + topbar chrome shared by every real page in the product.
     `body` is that page's own already-built inner HTML — its own
     heading, controls, table, script, whatever it needs — just wrapped
-    in the shell. The topbar itself stays generic ("Overview" + today's
-    date) rather than per-page; the page's actual title/description
-    lives inside `body` as a .page-head, paired with that page's own
-    controls (see FLAGGED_BODY) — matching the source template's own
-    split between a small persistent header and each page's real
-    heading.
+    in the shell. The topbar itself shows only today's date — real,
+    page-agnostic content worth keeping — rather than a page title;
+    it used to also show a static "Overview" label above that date on
+    every single page regardless of what page it was, which just
+    duplicated (and, everywhere but the actual overview, contradicted)
+    the page's own real heading a few pixels below. The page's actual
+    title/description lives inside `body` as a .page-head, paired with
+    that page's own controls (see FLAGGED_BODY).
 
     Most pages that call this have already 302'd to /login server-side
     if there's no session, so for them the /api/me fetch below isn't an
@@ -1115,8 +1138,14 @@ def app_shell(current, body):
     anything. Sidebar links to account-gated pages (Flagged bills,
     Clients, Profile, ...) still just 302 a logged-out visitor to
     /login if they click one — same as always."""
+    # data-nav carries the plain href per item (same value `current` gets
+    # compared against below) so a page like /report — whose real nav
+    # context depends on where the visitor came from, not on the fixed
+    # `current` this whole shell was built with at import time — can find
+    # and re-target the right <li> client-side instead of parsing link
+    # text. See REPORT_BODY's own script for the one place that happens.
     nav_html = "".join(
-        f'<li><a href="{href}" class="side-nav-item{" active" if href == current else ""}">{icon}{label}</a></li>'
+        f'<li><a href="{href}" data-nav="{href}" class="side-nav-item{" active" if href == current else ""}">{icon}{label}</a></li>'
         for href, label, icon in SHELL_NAV_ITEMS
     )
     profile_active = " active" if current == "/profile" else ""
@@ -1147,10 +1176,7 @@ def app_shell(current, body):
   </aside>
   <div class="app-body">
     <header class="app-topbar">
-      <div>
-        <div class="app-topbar-title">Overview</div>
-        <div class="app-topbar-sub" id="shell-date"></div>
-      </div>
+      <div class="app-topbar-sub" id="shell-date"></div>
     </header>
     <main class="app-main">{body}</main>
   </div>
@@ -1871,6 +1897,62 @@ async function submitQuickAddClient(e) {
 """
 
 
+# Shared "are you sure?" dialog for destructive actions — styled with
+# the same .modal-backdrop/.modal-panel CLIENT_QUICKADD_JS's modal above
+# uses, rather than the browser's own native confirm() (which both
+# CLIENTS_BODY's and CLIENT_DETAIL_BODY's removeClient() called before
+# this existed). confirmDelete(title, message) returns a Promise<bool>,
+# so a caller just does `if (!await confirmDelete(...)) return;` in
+# place of the old `if (!confirm(...)) return;` line — same control
+# flow, just awaited. Built once and reused (not recreated per call)
+# the same way ensureQuickAddClientModal() above reuses its backdrop.
+CONFIRM_DELETE_JS = """
+function confirmDelete(title, message) {
+  return new Promise((resolve) => {
+    let backdrop = document.getElementById('confirm-delete-backdrop');
+    if (!backdrop) {
+      backdrop = document.createElement('div');
+      backdrop.id = 'confirm-delete-backdrop';
+      backdrop.className = 'modal-backdrop';
+      backdrop.innerHTML = `
+        <div class="modal-panel" role="alertdialog" aria-modal="true" aria-labelledby="cd-title" aria-describedby="cd-message">
+          <div class="modal-head">
+            <div>
+              <div class="title" id="cd-title"></div>
+              <div class="sub" id="cd-message"></div>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="danger" id="cd-confirm">Remove</button>
+            <button type="button" class="secondary" id="cd-cancel">Cancel</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(backdrop);
+    }
+    backdrop.querySelector('#cd-title').textContent = title;
+    backdrop.querySelector('#cd-message').textContent = message;
+    const confirmBtn = backdrop.querySelector('#cd-confirm');
+    const cancelBtn = backdrop.querySelector('#cd-cancel');
+    const finish = (result) => {
+      backdrop.classList.remove('show');
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      backdrop.removeEventListener('click', onBackdropClick);
+      resolve(result);
+    };
+    const onConfirm = () => finish(true);
+    const onCancel = () => finish(false);
+    const onBackdropClick = (e) => { if (e.target === backdrop) finish(false); };
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+    backdrop.addEventListener('click', onBackdropClick);
+    backdrop.classList.add('show');
+  });
+}
+"""
+
+
 # The body for /lookup, wrapped in app_shell() below rather than
 # top_nav()+.wrap — this is one of the two pages (with /lobbying) that
 # render the full signed-in shell without requiring a session, so it
@@ -1994,9 +2076,13 @@ function renderResults(data) {{
     resultsEl.innerHTML = '<p class="empty">No bills match that search. Try a broader term, check the spelling, or a different bill number.</p>';
     return;
   }}
+  // from_label/from_href tell /report where this click came from, so its
+  // back link and sidebar highlight can point back to Lookup instead of
+  // always assuming Flagged Bills (see REPORT_BODY's own script for the
+  // read side of this).
   const rowsHtml = rows.map(r => `
-    <tr class="row-link" onclick="window.location.href='/report?bill_id=${{r.bill_id}}'">
-      <td><a href="/report?bill_id=${{r.bill_id}}">${{r.bill_number}}</a></td>
+    <tr class="row-link" onclick="window.location.href='/report?bill_id=${{r.bill_id}}&from_label=Lookup&from_href=%2Flookup'">
+      <td><a href="/report?bill_id=${{r.bill_id}}&from_label=Lookup&from_href=%2Flookup">${{r.bill_number}}</a></td>
       <td>${{snippet(r.title)}}</td>
       <td><span class="status-badge">${{statusLabel(r.last_action)}}</span></td>
       <td class="date">${{r.last_action_date || ''}}</td>
@@ -2784,16 +2870,6 @@ FLAGGED_BODY = f"""
 
 <div class="panel">
   <div class="panel-head">
-    <div>
-      <div class="title">Today's Digest</div>
-      <div class="sub">Not tracked yet — coming soon</div>
-    </div>
-    <button type="button" class="panel-link" disabled title="Not built yet">View digest</button>
-  </div>
-</div>
-
-<div class="panel">
-  <div class="panel-head">
     <div class="title">Flagged Bills</div>
     <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
       <div class="search-box">
@@ -3126,9 +3202,14 @@ function positionSelect(r, c) {{
   return `<select class="position-select ${{position}}" data-saved="${{position}}" onchange="setPosition(${{r.bill_id}}, ${{c.id}}, this)" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${{options}}</select>`;
 }}
 
+// Two different jobs live in this cell: the chips change an *existing*
+// assignment's position (or remove it); the select below them *adds a
+// new* client. They used to look like two competing ways to do the same
+// thing — see .client-chip/.add-client-select in STYLE for the visual
+// fix (behavior/handlers here are unchanged).
 function clientCell(r) {{
   const chips = (r.assigned_clients || []).map(c => `
-    <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem">
+    <div class="client-chip">
       <a href="/clients/detail?id=${{c.id}}">${{c.name}}</a>
       ${{positionSelect(r, c)}}
       <button type="button" class="icon-btn" onclick="unassignClient(${{r.bill_id}}, ${{c.id}}, this)" aria-label="Remove client from this bill" title="Remove client" style="height:1.5rem;width:1.5rem;color:var(--slate)">×</button>
@@ -3137,10 +3218,10 @@ function clientCell(r) {{
 
   const assignedIds = new Set((r.assigned_clients || []).map(c => c.id));
   const available = allClients.filter(c => !assignedIds.has(c.id));
-  const placeholder = allClients.length ? (available.length ? 'Assign to client…' : 'All clients assigned') : 'No clients yet…';
+  const placeholder = allClients.length ? (available.length ? '+ Add client' : 'All clients assigned') : 'No clients yet…';
   return `
     <div>${{chips}}</div>
-    <select onchange="handleClientCellSelect(${{r.bill_id}}, this)" style="margin-top:0.2rem;font-size:0.8rem;padding:0.3rem 0.4rem">
+    <select class="add-client-select" onchange="handleClientCellSelect(${{r.bill_id}}, this)" style="margin-top:0.2rem">
       <option value="">${{placeholder}}</option>
       ${{clientOptionsHtml(available)}}
     </select>
@@ -3497,6 +3578,7 @@ CLIENTS_BODY = f"""
 </div>
 
 <script>
+{CONFIRM_DELETE_JS}
 // bus_phone is stored exactly as typed, with no format enforced on
 // entry — this only reformats a clean 10-digit US number for display,
 // e.g. "5082157570" -> "(508) 215-7570". Anything else (an extension,
@@ -3758,10 +3840,13 @@ form.addEventListener('submit', async (e) => {{
 async function removeClient(id) {{
   // Deleting a client also deletes every bill/position it's linked to
   // (see db.delete_client) — no undo exists, so this is worth a real
-  // confirmation naming what's about to be lost, not just a click.
+  // confirmation naming what's about to be lost, not just a click. Uses
+  // the shared styled dialog (see CONFIRM_DELETE_JS) rather than the
+  // browser's own confirm().
   const c = allClients.find(x => x.id === id);
   const name = c ? c.name : 'this client';
-  if (!confirm(`Remove ${{name}}? This also removes all of its bill and position assignments. This can't be undone.`)) return;
+  const ok = await confirmDelete('Remove client?', `Remove ${{name}}? This also removes all of its bill and position assignments. This can't be undone.`);
+  if (!ok) return;
   try {{
     const res = await fetch(`/api/clients?id=${{id}}`, {{ method: 'DELETE' }});
     if (!res.ok) {{
@@ -3896,6 +3981,7 @@ CLIENT_DETAIL_BODY = f"""
 </div>
 
 <script>
+{CONFIRM_DELETE_JS}
 // bus_phone is stored exactly as typed, with no format enforced on
 // entry — this only reformats a clean 10-digit US number for display,
 // e.g. "5082157570" -> "(508) 215-7570". Anything else (an extension,
@@ -3926,10 +4012,17 @@ function renderClient(d) {{
         ${{[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), formatPhone(c.bus_phone)].filter(Boolean).join(' · ') || 'No address on file'}}
       </div>
       ${{c.interests ? `<div class="bill-desc" style="margin-top:0.4rem">${{c.interests}}</div>` : ''}}
-      <div class="card-actions">
+      <div class="card-actions" style="align-items:center">
         <a class="secondary" href="/clients">Edit in Clients →</a>
         ${{d.entity_id ? `<a class="secondary" href="/lobbying/detail?id=${{d.entity_id}}">View CAL-ACCESS record →</a>` : ''}}
-        <button type="button" class="danger" onclick="removeClient()">Remove client</button>
+        <span class="row-menu" style="margin-left:auto">
+          <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'client-header')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-client-header">
+            <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
+          </button>
+          <div class="row-menu-dropdown" id="row-menu-client-header">
+            <button type="button" onclick="removeClient()">Remove client</button>
+          </div>
+        </span>
       </div>
     </div>
   `;
@@ -3937,12 +4030,17 @@ function renderClient(d) {{
 
 let currentClientName = 'this client';
 
-// Same cascade warning and confirm() as the Clients list's own
-// removeClient() (see CLIENTS_BODY) — deleting a client here deletes
-// every bill/position it's linked to too, so this needs the same real
-// confirmation naming what's about to be lost, not just a click.
+// Same cascade warning as the Clients list's own removeClient() (see
+// CLIENTS_BODY) — deleting a client here deletes every bill/position
+// it's linked to too, so this needs the same real confirmation naming
+// what's about to be lost, not just a click. Uses the shared styled
+// dialog (see CONFIRM_DELETE_JS) rather than the browser's own
+// confirm(), and — like the Clients list — tucks the trigger itself
+// into a kebab menu instead of sitting at equal weight next to "Edit
+// in Clients"/"View CAL-ACCESS record".
 async function removeClient() {{
-  if (!confirm(`Remove ${{currentClientName}}? This also removes all of its bill and position assignments. This can't be undone.`)) return;
+  const ok = await confirmDelete('Remove client?', `Remove ${{currentClientName}}? This also removes all of its bill and position assignments. This can't be undone.`);
+  if (!ok) return;
   try {{
     const res = await fetch(`/api/clients?id=${{clientId}}`, {{ method: 'DELETE' }});
     if (!res.ok) {{
@@ -3982,7 +4080,7 @@ function renderBills(bills) {{
           <td>${{b.status_label ? `<span class="status-badge">${{b.status_label}}</span>` : ''}}</td>
           <td>${{positionSelect(b.bill_id, b.position || 'watch')}}</td>
           <td class="row-menu">
-            <a class="secondary" href="/report?bill_id=${{b.bill_id}}" style="margin-right:0.4rem">Report</a>
+            <a class="secondary" href="/report?bill_id=${{b.bill_id}}&from_label=${{encodeURIComponent(currentClientName)}}&from_href=${{encodeURIComponent('/clients/detail?id=' + clientId)}}" style="margin-right:0.4rem">Report</a>
             <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'bill-${{b.bill_id}}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-bill-${{b.bill_id}}">
               <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
             </button>
@@ -4126,7 +4224,7 @@ CLIENT_DETAIL_PAGE = page("Client — Rotunda", "/clients", CLIENT_DETAIL_BODY)
 # ?bill_id=... — e.g. linked from a "Report" link on /flagged — rather
 # than being a page anyone navigates to on its own.
 REPORT_BODY = f"""
-<div class="page-head"><div><a href="/flagged" class="sub">← Flagged bills</a></div></div>
+<div class="page-head"><div><a href="/flagged" class="sub" id="back-link">← Flagged bills</a></div></div>
 <div id="error" role="alert" aria-live="assertive"></div>
 <div id="loading" class="show"><span class="spinner"></span>Loading…</div>
 <div id="report"></div>
@@ -4137,6 +4235,37 @@ REPORT_BODY = f"""
 const reportEl = document.getElementById('report');
 const errorEl = document.getElementById('error');
 const billId = new URLSearchParams(window.location.search).get('bill_id');
+
+// The back link and sidebar highlight above are baked at import time as
+// "Flagged bills" (see REPORT_PAGE below and app_shell()'s own
+// docstring on why every page constant here is built once, not
+// per-request) — a fine default, since Flagged Bills is this page's
+// most common entry point, but a search result from /lookup or a
+// client's own bill list land here too. When the link that brought us
+// here passed from_label/from_href (see LOOKUP_BODY's and
+// CLIENT_DETAIL_BODY's report links), swap both to match instead of
+// always claiming Flagged Bills. No params → today's baked default,
+// unchanged.
+(function() {{
+  const params = new URLSearchParams(window.location.search);
+  const fromLabel = params.get('from_label');
+  const fromHref = params.get('from_href');
+  if (!fromLabel || !fromHref) return;
+  const backLink = document.getElementById('back-link');
+  backLink.href = fromHref;
+  backLink.textContent = '← ' + fromLabel;
+  // First path segment match (e.g. /clients/detail?id=5 -> "clients"
+  // matches the sidebar's /clients item) rather than a strict equality
+  // check, since fromHref can point at a sub-page of a top-level section.
+  const fromSection = fromHref.split('?')[0].split('/')[1] || '';
+  const navItem = Array.from(document.querySelectorAll('.side-nav-item[data-nav]'))
+    .find(a => (a.dataset.nav.split('/')[1] || '') === fromSection);
+  if (navItem) {{
+    document.querySelectorAll('.side-nav-item.active').forEach(a => a.classList.remove('active'));
+    navItem.classList.add('active');
+  }}
+}})();
+
 const POSITION_LABELS = {{ support: 'Support', oppose: 'Oppose', watch: 'Watch' }};
 // Set by render() each time a report loads — the flag-confirmation
 // modal below reads this instead of re-fetching, same role `current`
@@ -4554,6 +4683,7 @@ const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
 const listEl = document.getElementById('list');
 const statsEl = document.getElementById('stats');
+let lastRows = [];  // so removeFiling()'s confirm() can name the form type without a second fetch
 
 const ICON_DISCLOSURE = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="1.5" width="8" height="11" rx="1"/><path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const ICON_ALERT = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M7 4.5v3" stroke-linecap="round"/><circle cx="7" cy="9.8" r="0.6" fill="currentColor" stroke="none"/></svg>';
@@ -4634,6 +4764,7 @@ async function load() {{
 }}
 
 function render(rows) {{
+  lastRows = rows;
   if (!rows.length) {{
     listEl.innerHTML = '<p class="empty">Nothing prepared yet — use the form above.</p>';
     return;
@@ -4653,7 +4784,15 @@ function render(rows) {{
             <td>${{r.period_label || '—'}}</td>
             <td>${{statusBadge}}</td>
             <td class="date">${{fmtDateTime(r.created_at)}}</td>
-            <td><a class="secondary" href="/disclosures/review?id=${{r.id}}">Review</a></td>
+            <td class="row-menu">
+              <a class="secondary" href="/disclosures/review?id=${{r.id}}" style="margin-right:0.4rem">Review</a>
+              <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'filing-${{r.id}}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-filing-${{r.id}}">
+                <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
+              </button>
+              <div class="row-menu-dropdown" id="row-menu-filing-${{r.id}}">
+                <button type="button" onclick="removeFiling(${{r.id}})">Delete draft</button>
+              </div>
+            </td>
           </tr>
         `;
       }}).join('')}}
@@ -4661,6 +4800,56 @@ function render(rows) {{
     </table>
   `;
 }}
+
+// Same deletion pattern as CLIENTS_BODY's removeClient() — a real
+// confirm() naming what's about to be lost (no undo), then a DELETE
+// call, then reload from the server rather than guessing the new list
+// locally.
+async function removeFiling(id) {{
+  const r = lastRows.find(x => x.id === id);
+  const meta = r && FORM_META[r.form_type];
+  const label = (meta && meta.label) || (r ? ('Form ' + r.form_type) : 'this filing');
+  const signedNote = r && r.status === 'ready_to_file' ? ' This filing was already signed off — deleting it removes that record too.' : '';
+  if (!confirm(`Delete this ${{label}} draft?${{signedNote}} This can't be undone.`)) return;
+  try {{
+    const res = await fetch(`/api/prepared-filings?id=${{id}}`, {{ method: 'DELETE' }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not delete this filing');
+    }}
+    load();
+  }} catch (err) {{
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }}
+}}
+
+function closeRowMenus() {{
+  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {{
+    m.classList.remove('show');
+    const openBtn = document.querySelector(`[aria-controls="${{m.id}}"]`);
+    if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
+  }});
+}}
+function toggleRowMenu(e, key) {{
+  e.stopPropagation();
+  const menu = document.getElementById(`row-menu-${{key}}`);
+  const wasOpen = menu.classList.contains('show');
+  closeRowMenus();
+  if (!wasOpen) {{
+    menu.classList.add('show');
+    e.currentTarget.setAttribute('aria-expanded', 'true');
+  }}
+}}
+document.addEventListener('click', closeRowMenus);
+document.addEventListener('keydown', (e) => {{
+  if (e.key !== 'Escape') return;
+  const openMenu = document.querySelector('.row-menu-dropdown.show');
+  if (!openMenu) return;
+  const openBtn = document.querySelector(`[aria-controls="${{openMenu.id}}"]`);
+  closeRowMenus();
+  if (openBtn) openBtn.focus();
+}});
 
 load();
 </script>
@@ -4816,6 +5005,26 @@ async function signOff(e) {{
   }}
 }}
 
+// Same deletion pattern as the Clients section's removeClient() (see
+// CLIENTS_BODY / CLIENT_DETAIL_BODY) — a real confirm() naming what's
+// about to be lost (no undo), then a DELETE call, then leave this page
+// since there's nothing left here to show.
+async function removeFiling() {{
+  const label = FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type);
+  const signedNote = filing.status === 'ready_to_file' ? ' This filing was already signed off — deleting it removes that record too.' : '';
+  if (!confirm(`Delete this ${{label}} draft?${{signedNote}} This can't be undone.`)) return;
+  try {{
+    const res = await fetch(`/api/prepared-filings?id=${{filingId}}`, {{ method: 'DELETE' }});
+    if (!res.ok) {{
+      const data = await res.json();
+      throw new Error(data.error || 'Could not delete this filing');
+    }}
+    window.location.href = '/disclosures';
+  }} catch (err) {{
+    showError(err.message);
+  }}
+}}
+
 function fieldInputHtml(field, value) {{
   const type = field.kind === 'email' ? 'email' : 'text';
   const mark = field.required ? ' <span style="color:var(--bad,#c0392b)">*</span>' : '';
@@ -4922,9 +5131,14 @@ function render() {{
   ` : '');
 
   contentEl.innerHTML = `
-    <h1>${{FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type)}}</h1>
-    <p class="sub">${{filing.period_label ? 'Period: ' + filing.period_label + ' — ' : ''}}Prepared ${{fmtDateTime(filing.created_at)}}.</p>
-    <div style="margin-bottom:1rem">${{statusBadge}}</div>
+    <div class="page-head">
+      <div>
+        <h1>${{FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type)}}</h1>
+        <p class="sub">${{filing.period_label ? 'Period: ' + filing.period_label + ' — ' : ''}}Prepared ${{fmtDateTime(filing.created_at)}}.</p>
+        <div style="margin-top:0.6rem">${{statusBadge}}</div>
+      </div>
+      <button type="button" class="danger" onclick="removeFiling()">Delete draft</button>
+    </div>
 
     <div class="card">
       <div class="bill-title" style="margin-bottom:0.4rem">Known gaps in this draft</div>
@@ -6480,6 +6694,28 @@ class Handler(BaseHTTPRequestHandler):
                 db.delete_client(conn, user_id, client_id)
                 conn.commit()
                 self._send_json(200, db.list_clients(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/prepared-filings":
+            filing_id = (qs.get("id") or [""])[0]
+            if not filing_id:
+                self._send_json(400, {"error": "Missing id parameter."})
+                return
+            try:
+                filing_id = int(filing_id)
+            except ValueError:
+                self._send_json(400, {"error": "id must be a number."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage disclosure filings.")
+                if not user_id:
+                    return
+                db.delete_prepared_filing(conn, user_id, filing_id)
+                conn.commit()
+                self._send_json(200, db.list_prepared_filings(conn, user_id))
             finally:
                 conn.close()
             return
