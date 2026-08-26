@@ -97,7 +97,13 @@ def _client_block(client):
 # space before the row number, some an underscore) — copied verbatim
 # from inspecting the template, not reconstructed from a pattern, so a
 # typo here can't silently mismatch and leave a row unfilled.
-_CLIENT_ROW_FIELDS = [
+#
+# No leading underscore: disclosure_fields.py (the editable-field
+# schema for the in-place HTML editor — see
+# docs/disclosure-html-editor-plan.md) reads this to know which
+# field_data keys are the editable client-row inputs, so this needs to
+# be a real cross-module name, not a "private to this file" one.
+CLIENT_ROW_FIELDS = [
     {"employer": "Employers Name Address and Telephone Number", "effective": "Effective Date",
      "period": "Period of Contract", "description": "DESCRIPTION 1", "agencies": "AGENCIES 1"},
     {"employer": "Employers Name Address and Telephone Number_2", "effective": "Effective Date_2",
@@ -121,13 +127,41 @@ _CLIENT_ROW_FIELDS = [
 # Every page repeats the firm's name in its own header field, and has
 # its own "Page __ of __" pair — 5 real worksheet pages (the template's
 # 2 instruction/example pages aren't counted in its own numbering).
-_HEADER_FIELDS = [
+HEADER_FIELDS = [
     {"name": "NAME OF LOBBYING FIRM_2", "page": "Page", "of": "of_2", "n": "1"},
     {"name": "NAME OF LOBBYING FIRM_4", "page": "Page2", "of": "of_4", "n": "2"},
     {"name": "NAME OF LOBBYING FIRM_5", "page": "Page3", "of": "of_5", "n": "3"},
     {"name": "NAME OF LOBBYING FIRM_6", "page": "Page4", "of": "of_6", "n": "4"},
     {"name": "NAME OF LOBBYING FIRM_7", "page": "Page5", "of": "of", "n": "5"},
 ]
+
+
+def client_row_values(clients):
+    """Builds the flattened {field_name: value} dict for all 9 client
+    rows, given `clients` in the exact order they should fill rows
+    1..9 — the caller decides that order (values_for_form_601 uses
+    `list_clients`'s alphabetical order; the disclosure-editor's
+    client-row picker lets the lobbyist choose/reorder it instead, see
+    docs/disclosure-html-editor-plan.md).
+
+    Always writes all 9 rows, blanking any row past len(clients) —
+    important when this is called again after a *smaller* selection
+    than before (e.g. the picker going from 9 clients down to 5): rows
+    6-9 must be cleared, not left holding the previous selection's
+    stale data."""
+    values = {}
+    for i, row in enumerate(CLIENT_ROW_FIELDS):
+        client = clients[i] if i < len(clients) else None
+        values[row["employer"]] = _client_block(client) if client else ""
+        values[row["description"]] = (client.get("interests") or "") if client else ""
+        values[row["effective"]] = (client.get("effective_date") or "") if client else ""
+        values[row["period"]] = (client.get("contract_period") or "") if client else ""
+        values[row["agencies"]] = (client.get("agencies_lobbied") or "") if client else ""
+    return values
+
+
+def max_client_rows():
+    return len(CLIENT_ROW_FIELDS)
 
 
 def values_for_form_601(profile, clients, account_email, sign_off=None, today=None):
@@ -155,17 +189,12 @@ def values_for_form_601(profile, clients, account_email, sign_off=None, today=No
         "EMAIL": account_email or "",
         "INDIVIDUAL LOBBYISTS 1": profile.get("legal_name") or "",
     }
-    for h in _HEADER_FIELDS:
+    for h in HEADER_FIELDS:
         values[h["name"]] = profile.get("legal_name") or ""
         values[h["page"]] = h["n"]
         values[h["of"]] = "5"
 
-    for row, client in zip(_CLIENT_ROW_FIELDS, clients[:9]):
-        values[row["employer"]] = _client_block(client)
-        values[row["description"]] = client.get("interests") or ""
-        values[row["effective"]] = client.get("effective_date") or ""
-        values[row["period"]] = client.get("contract_period") or ""
-        values[row["agencies"]] = client.get("agencies_lobbied") or ""
+    values.update(client_row_values(clients[:9]))
 
     if sign_off:
         values["Name of responsible officer_1"] = sign_off["signed_name"]

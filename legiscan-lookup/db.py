@@ -15,6 +15,7 @@ itself always comes from the repo checkout either way — it's source, not
 data, and isn't on the persistent disk.
 """
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -89,6 +90,11 @@ def _migrate(conn):
     for col in ("effective_date", "contract_period", "agencies_lobbied", "bus_phone"):
         if col not in client_cols:
             conn.execute(f"ALTER TABLE clients ADD COLUMN {col} TEXT")
+
+    filing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(prepared_filings)")}
+    for col in ("pdf_field_data_hash", "client_row_ids"):
+        if col not in filing_cols:
+            conn.execute(f"ALTER TABLE prepared_filings ADD COLUMN {col} TEXT")
 
 
 # ── Change detection for the daily digest email — see digest.py. Both
@@ -649,18 +655,38 @@ def get_bill_report(conn, user_id, bill_id):
 # actually turns into a filled PDF. Everything here just stores/reads
 # that JSON snapshot and the sign-off state around it. ──
 
+def _hash_field_data(field_data):
+    """A fingerprint of exactly what values a filing's PDF would be
+    built from right now. Used to prove (or disprove) that a
+    previously-generated PDF still matches the current field_data — see
+    "Staleness guard" in docs/disclosure-html-editor-plan.md.
+    sort_keys=True so the same field_data always hashes the same way
+    regardless of dict insertion order."""
+    return hashlib.sha256(json.dumps(field_data, sort_keys=True).encode()).hexdigest()
+
+
 def _row_to_prepared_filing(row):
     d = dict(row)
     d["field_data"] = json.loads(d["field_data"])
     d["confirmed_accurate"] = bool(d["confirmed_accurate"])
+    d["client_row_ids"] = json.loads(d["client_row_ids"]) if d.get("client_row_ids") else []
+    # True only when a PDF has actually been generated (mark_prepared_
+    # filing_pdf_generated) since the last edit to field_data — the one
+    # thing sign-off is allowed to trust.
+    d["pdf_current"] = bool(d["pdf_field_data_hash"]) and d["pdf_field_data_hash"] == _hash_field_data(d["field_data"])
     return d
 
 
-def create_prepared_filing(conn, user_id, form_type, period_label, field_data):
+def create_prepared_filing(conn, user_id, form_type, period_label, field_data, client_row_ids=None):
+    """client_row_ids records which clients (in order) values_for_form_601
+    already placed into the client rows baked into `field_data` — without
+    this, a freshly-created draft's rows would look "empty" to the
+    editor (see disclosure_fields.py) even though they're already
+    pre-filled, until the lobbyist explicitly touches the row picker."""
     cur = conn.execute(
-        """INSERT INTO prepared_filings (user_id, form_type, period_label, field_data, created_at)
-           VALUES (?, ?, ?, ?, datetime('now'))""",
-        (user_id, form_type, period_label, json.dumps(field_data)),
+        """INSERT INTO prepared_filings (user_id, form_type, period_label, field_data, client_row_ids, created_at)
+           VALUES (?, ?, ?, ?, ?, datetime('now'))""",
+        (user_id, form_type, period_label, json.dumps(field_data), json.dumps(client_row_ids) if client_row_ids else None),
     )
     return cur.lastrowid
 
@@ -681,17 +707,107 @@ def list_prepared_filings(conn, user_id):
     return [_row_to_prepared_filing(r) for r in rows]
 
 
+def _edit_prepared_filing_field_data(conn, user_id, filing_id, new_field_data, client_row_ids=None):
+    """Shared write path for every kind of in-place edit (a single
+    field, or a whole client-row selection) — see update_prepared_
+    filing_field / set_prepared_filing_client_rows. Every edit does two
+    things atomically, in the same UPDATE:
+
+    1. Clears pdf_field_data_hash — whatever PDF was last generated no
+       longer provably matches this filing's data, so sign-off must be
+       blocked until it's regenerated (see _hash_field_data / the
+       "Staleness guard" doc).
+    2. Reopens a signed-off filing — if this filing was 'ready_to_file',
+       editing it now reverts status to 'draft' and clears the old
+       sign-off (signed_name/confirmed_accurate/signed_at). This is
+       intentionally unconditional rather than "only if it was signed":
+       resetting fields that are already blank/draft is a harmless
+       no-op, and it means there's exactly one code path to reason
+       about instead of two. No history of the prior sign-off is kept
+       (deliberately deferred — see the plan doc).
+
+    client_row_ids is only passed by set_prepared_filing_client_rows;
+    left as None (unchanged) for a plain single-field edit."""
+    filing = get_prepared_filing(conn, user_id, filing_id)
+    if not filing:
+        raise ValueError("No prepared filing found.")
+    if client_row_ids is None:
+        conn.execute(
+            """UPDATE prepared_filings
+               SET field_data = ?, pdf_field_data_hash = NULL,
+                   status = 'draft', signed_name = NULL, confirmed_accurate = 0, signed_at = NULL
+               WHERE id = ? AND user_id = ?""",
+            (json.dumps(new_field_data), filing_id, user_id),
+        )
+    else:
+        conn.execute(
+            """UPDATE prepared_filings
+               SET field_data = ?, client_row_ids = ?, pdf_field_data_hash = NULL,
+                   status = 'draft', signed_name = NULL, confirmed_accurate = 0, signed_at = NULL
+               WHERE id = ? AND user_id = ?""",
+            (json.dumps(new_field_data), json.dumps(client_row_ids), filing_id, user_id),
+        )
+    return get_prepared_filing(conn, user_id, filing_id)
+
+
+def update_prepared_filing_field(conn, user_id, filing_id, field_key, value):
+    """Autosaves one edited field (see app.py's /api/prepared-filings/
+    field — that route is responsible for checking field_key is a real,
+    editable field before calling this; this function just writes
+    whatever key it's given)."""
+    filing = get_prepared_filing(conn, user_id, filing_id)
+    if not filing:
+        raise ValueError("No prepared filing found.")
+    field_data = filing["field_data"]
+    field_data[field_key] = value
+    return _edit_prepared_filing_field_data(conn, user_id, filing_id, field_data)
+
+
+def set_prepared_filing_client_rows(conn, user_id, filing_id, client_ids, row_field_data):
+    """Applies a new client-row selection/order. `row_field_data` is the
+    already-built {field_name: value} dict for all 9 row slots (see
+    pdf_forms.client_row_values) — this function just merges it in and
+    remembers `client_ids` so the editor can show which client is in
+    which row next time it loads."""
+    filing = get_prepared_filing(conn, user_id, filing_id)
+    if not filing:
+        raise ValueError("No prepared filing found.")
+    field_data = filing["field_data"]
+    field_data.update(row_field_data)
+    return _edit_prepared_filing_field_data(conn, user_id, filing_id, field_data, client_row_ids=client_ids)
+
+
+def mark_prepared_filing_pdf_generated(conn, user_id, filing_id):
+    """Stamps the filing with proof a PDF matching its exact current
+    field_data now exists — call this right after actually generating
+    that PDF. Any edit after this point (update_prepared_filing_field /
+    set_prepared_filing_client_rows) clears the stamp again."""
+    filing = get_prepared_filing(conn, user_id, filing_id)
+    if not filing:
+        raise ValueError("No prepared filing found.")
+    conn.execute(
+        "UPDATE prepared_filings SET pdf_field_data_hash = ? WHERE id = ? AND user_id = ?",
+        (_hash_field_data(filing["field_data"]), filing_id, user_id),
+    )
+    return get_prepared_filing(conn, user_id, filing_id)
+
+
 def sign_off_prepared_filing(conn, user_id, filing_id, signed_name, confirmed_accurate):
     """The only path that can move a filing from 'draft' to
-    'ready_to_file' — both a non-empty typed name AND the checkbox have
-    to be true; either alone leaves it a draft. Raises ValueError (safe
-    to show the user) if the filing doesn't exist or isn't theirs."""
+    'ready_to_file' — a non-empty typed name AND the checkbox both have
+    to be true, AND the filing's current field_data has to match a PDF
+    that was actually generated (pdf_current — see _hash_field_data);
+    any one of the three missing leaves it a draft. Raises ValueError
+    (safe to show the user) for any of these, including a filing that
+    doesn't exist or isn't theirs."""
     filing = get_prepared_filing(conn, user_id, filing_id)
     if not filing:
         raise ValueError("No prepared filing found.")
     signed_name = (signed_name or "").strip()
     if not signed_name or not confirmed_accurate:
         raise ValueError("A typed legal name and the confirmation checkbox are both required.")
+    if not filing["pdf_current"]:
+        raise ValueError("This filing has changed since the PDF was generated — regenerate it before signing off.")
     conn.execute(
         """UPDATE prepared_filings
            SET status = 'ready_to_file', signed_name = ?, confirmed_accurate = 1,
