@@ -797,6 +797,11 @@ STYLE = """
     text-align: left; padding: var(--space-2); border-radius: var(--radius-sm); cursor: pointer;
   }
   .autofill-dropdown button:hover { background: var(--accent-soft); }
+  /* Firms/coalitions still show up when a typed name matches one (still
+     useful to see), but visually recede behind employer matches — an
+     employer is what this app means by "client", so it's the one match
+     type that should look like the obvious pick. */
+  .autofill-dropdown button.non-employer-match { opacity: 0.6; }
   th {
     background: var(--content-bg); font-size: 0.68rem; font-weight: 600; color: var(--slate);
     text-transform: uppercase; letter-spacing: 0.04em;
@@ -1673,10 +1678,12 @@ function ensureQuickAddClientModal() {
         <button type="button" class="icon-btn" id="qac-close" aria-label="Close">×</button>
       </div>
       <form id="qac-form">
-        <label>
+        <label style="position:relative">
           <div class="sub" style="margin:0 0 0.3rem">Client / employer name</div>
-          <input id="qac-name" required>
+          <input id="qac-name" required autocomplete="off">
+          <div id="qac-name-autofill-dropdown" class="autofill-dropdown" style="top:100%;left:0;right:0;width:auto"></div>
         </label>
+        <p class="sub" id="qac-name-autofill-note" style="margin:0.2rem 0 0;display:none">Prefilled from CAL-ACCESS — edit anything below if it looks wrong.</p>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
           <input id="qac-bus_addr1" placeholder="Street address" style="flex:1 1 100%">
           <input id="qac-bus_city" placeholder="City" style="flex:2">
@@ -1704,6 +1711,88 @@ function ensureQuickAddClientModal() {
   document.getElementById('qac-close').addEventListener('click', cancelQuickAddClient);
   document.getElementById('qac-cancel').addEventListener('click', cancelQuickAddClient);
   document.getElementById('qac-form').addEventListener('submit', submitQuickAddClient);
+  wireQuickAddNameAutofill();
+}
+
+// Same live CAL-ACCESS name autofill as the full /clients form (see that
+// page's runNameAutofillSearch/applyEntityAutofill) — duplicated here
+// rather than shared because this modal's JS ships as its own constant,
+// included verbatim into other pages' <script> blocks that never load
+// the /clients page's script at all. Employer matches sort first and
+// firm/coalition matches render de-emphasized, same reasoning as there:
+// a "client" means an employer, but a de-emphasized match beats hiding
+// a name the user might actually have meant.
+let qacAutofillTimer = null;
+
+function wireQuickAddNameAutofill() {
+  const nameInput = document.getElementById('qac-name');
+  const dropdown = document.getElementById('qac-name-autofill-dropdown');
+  const note = document.getElementById('qac-name-autofill-note');
+
+  function closeDropdown() {
+    dropdown.classList.remove('show');
+    dropdown.innerHTML = '';
+  }
+
+  async function search(q) {
+    try {
+      const res = await fetch(`/api/lobbying/search?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      if (!res.ok) return;
+      if (nameInput.value.trim() !== q) return;
+      const matches = (data.results || []).filter(r => r.kind === 'entity').slice(0, 6);
+      if (!matches.length) { closeDropdown(); return; }
+      const sorted = [...matches].sort((a, b) =>
+        (a.entity_type === 'employer' ? 0 : 1) - (b.entity_type === 'employer' ? 0 : 1));
+      dropdown.innerHTML = sorted.map(r => `
+        <button type="button" class="${r.entity_type === 'employer' ? '' : 'non-employer-match'}" data-id="${r.id}">
+          ${r.name}
+          ${r.entity_type && r.entity_type !== 'employer' ? ` <span class="tag">${r.entity_type}</span>` : ''}
+          ${r.city || r.state ? ` <span class="sub" style="margin:0">— ${[r.city, r.state].filter(Boolean).join(', ')}</span>` : ''}
+        </button>
+      `).join('');
+      dropdown.classList.add('show');
+    } catch (err) {
+      // A failed suggestion lookup shouldn't block typing a name by
+      // hand — just don't offer any suggestions this time.
+    }
+  }
+
+  dropdown.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-id]');
+    if (!btn) return;
+    closeDropdown();
+    try {
+      const res = await fetch(`/api/lobbying/detail?id=${encodeURIComponent(btn.dataset.id)}`);
+      const data = await res.json();
+      if (!res.ok || !data.entity) return;
+      const entity = data.entity;
+      nameInput.value = entity.name || nameInput.value;
+      document.getElementById('qac-bus_addr1').value = entity.address || '';
+      document.getElementById('qac-bus_city').value = entity.city || '';
+      document.getElementById('qac-bus_st').value = entity.state || '';
+      document.getElementById('qac-bus_zip4').value = entity.zip || '';
+      if (entity.filer_id) document.getElementById('qac-existing_filer_id').value = entity.filer_id;
+      note.style.display = '';
+    } catch (err) {
+      // Same reasoning as search()'s catch — leave the name as typed
+      // rather than blocking on this.
+    }
+  });
+
+  nameInput.addEventListener('input', () => {
+    note.style.display = 'none';
+    clearTimeout(qacAutofillTimer);
+    const q = nameInput.value.trim();
+    if (q.length < 2) { closeDropdown(); return; }
+    qacAutofillTimer = setTimeout(() => search(q), 300);
+  });
+  document.addEventListener('click', (e) => {
+    if (!dropdown.contains(e.target) && e.target !== nameInput) closeDropdown();
+  });
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeDropdown();
+  });
 }
 
 function openQuickAddClient(existingClients, onCreated, onCancel) {
@@ -1711,6 +1800,8 @@ function openQuickAddClient(existingClients, onCreated, onCancel) {
   quickAddClientState = { existingClients: existingClients || [], onCreated, onCancel };
   document.getElementById('qac-form').reset();
   document.getElementById('qac-error').className = '';
+  document.getElementById('qac-name-autofill-note').style.display = 'none';
+  document.getElementById('qac-name-autofill-dropdown').classList.remove('show');
   document.getElementById('quick-add-client-backdrop').classList.add('show');
   document.getElementById('qac-name').focus();
 }
@@ -3444,6 +3535,12 @@ async function applyPrefill() {{
 // none, so they're filtered out here rather than shown as a dead end.
 // Picking one calls /api/lobbying/detail for its full record and
 // applies it the same way applyPrefill() above does.
+//
+// A "client" here means an employer that hires the firm, not a
+// lobbying firm or coalition — but a typed name can still coincidentally
+// match one of those, so rather than hiding them outright (a dead end
+// if that's really who the user meant), employer matches sort first and
+// firm/coalition matches render de-emphasized (see .non-employer-match).
 const nameInput = document.getElementById('name');
 const nameDropdown = document.getElementById('name-autofill-dropdown');
 let nameAutofillTimer = null;
@@ -3451,6 +3548,19 @@ let nameAutofillTimer = null;
 function closeNameAutofillDropdown() {{
   nameDropdown.classList.remove('show');
   nameDropdown.innerHTML = '';
+}}
+
+function renderAutofillMatches(dropdownEl, matches, onSelect) {{
+  const sorted = [...matches].sort((a, b) =>
+    (a.entity_type === 'employer' ? 0 : 1) - (b.entity_type === 'employer' ? 0 : 1));
+  dropdownEl.innerHTML = sorted.map(r => `
+    <button type="button" class="${{r.entity_type === 'employer' ? '' : 'non-employer-match'}}" onclick="${{onSelect}}(${{r.id}})">
+      ${{r.name}}
+      ${{r.entity_type && r.entity_type !== 'employer' ? ` <span class="tag">${{r.entity_type}}</span>` : ''}}
+      ${{r.city || r.state ? ` <span class="sub" style="margin:0">— ${{[r.city, r.state].filter(Boolean).join(', ')}}</span>` : ''}}
+    </button>
+  `).join('');
+  dropdownEl.classList.add('show');
 }}
 
 async function runNameAutofillSearch(q) {{
@@ -3463,12 +3573,7 @@ async function runNameAutofillSearch(q) {{
     if (nameInput.value.trim() !== q) return;
     const matches = (data.results || []).filter(r => r.kind === 'entity').slice(0, 6);
     if (!matches.length) {{ closeNameAutofillDropdown(); return; }}
-    nameDropdown.innerHTML = matches.map(r => `
-      <button type="button" onclick="selectNameAutofillMatch(${{r.id}})">
-        ${{r.name}}${{r.city || r.state ? ` <span class="sub" style="margin:0">— ${{[r.city, r.state].filter(Boolean).join(', ')}}</span>` : ''}}
-      </button>
-    `).join('');
-    nameDropdown.classList.add('show');
+    renderAutofillMatches(nameDropdown, matches, 'selectNameAutofillMatch');
   }} catch (err) {{
     // A failed suggestion lookup shouldn't block typing a name by
     // hand — just don't offer any suggestions this time.
