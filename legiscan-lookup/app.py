@@ -392,6 +392,30 @@ STYLE = """
   tr.milestone-intro td:first-child { box-shadow: inset 3px 0 0 0 var(--slate); }
   tr.milestone-passed td:first-child { box-shadow: inset 3px 0 0 0 var(--good); }
   tr.milestone-amended td:first-child { box-shadow: inset 3px 0 0 0 var(--ink); }
+  /* /report's "Current Status" callout (see REPORT_BODY) — the single
+     most recent bill_status_history row, called out above the full
+     history table below it rather than making someone read down to
+     the last row to find "where things stand right now." A bold
+     border for standout weight (not a colored fill — same restraint
+     .status-badge's own comment explains: LegiScan's action text is
+     freeform, so this isn't the place to guess "good" vs "bad" news).
+     The left-edge accent reuses milestoneClass()'s own three
+     categories (same function that colors history rows below it) so
+     this card's accent means the same thing the table already
+     established, not a new color vocabulary. */
+  .current-status-card {
+    border: 2px solid var(--ink); border-radius: 18px; padding: 1.25rem var(--space-5);
+    margin-top: 1rem; background: var(--accent-soft);
+  }
+  .current-status-card.milestone-intro { border-left: 4px solid var(--slate); }
+  .current-status-card.milestone-passed { border-left: 4px solid var(--good); }
+  .current-status-card.milestone-amended { border-left: 4px solid var(--ink); }
+  .current-status-card .current-status-label {
+    font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--slate); margin-bottom: 0.4rem;
+  }
+  .current-status-card .current-status-action { font-size: 1.05rem; font-weight: 700; }
+  .current-status-card .current-status-meta { font-size: 0.82rem; color: var(--slate); margin-top: 0.35rem; }
   td.chamber {
     white-space: nowrap; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
     color: var(--accent);
@@ -3957,6 +3981,25 @@ async function load() {{
   }}
 }}
 
+// The highlighted "Current Status" callout above the full history
+// table — just the single most recent bill_status_history row (that
+// array already comes back newest-first, see db.get_bill_report()),
+// not a separate query. milestoneClass() is the same function that
+// colors the history table's own rows further down, reused here so
+// this card's left-edge accent means the same thing that table already
+// established (see the CSS comment on .current-status-card).
+function currentStatusCardHtml(history) {{
+  const latest = (history || [])[0];
+  if (!latest) return '';
+  return `
+    <div class="current-status-card ${{milestoneClass(latest.action)}}">
+      <div class="current-status-label">Current Status</div>
+      <div class="current-status-action">${{latest.action || 'Unknown'}}</div>
+      <div class="current-status-meta">${{[latest.date, latest.chamber].filter(Boolean).join(' · ')}}</div>
+    </div>
+  `;
+}}
+
 function render(r) {{
   currentReport = r;
   const historyRows = historyRowsHtml(r.history);
@@ -4000,6 +4043,8 @@ function render(r) {{
           : '<p class="empty">Flag this bill to assign it to a client.</p>'}}
       </div>
     </div>
+
+    ${{currentStatusCardHtml(r.history)}}
 
     <div class="panel" style="margin-top:1rem">
       <div class="panel-head"><div class="title">Status history</div></div>
