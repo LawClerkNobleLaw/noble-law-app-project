@@ -63,11 +63,18 @@ services:
     name: billwatch-refresh-watchlist
     runtime: python
     plan: starter
-    # 7am Pacific ≈ 14:00 UTC. Render evaluates schedules in UTC with no
-    # DST awareness, so this drifts an hour off "7am Pacific" whenever
-    # daylight saving time changes — adjust manually twice a year, or
-    # switch to a UTC time you don't mind being fixed year-round.
-    schedule: "0 14 * * *"
+    # 6am/1pm/8pm Pacific ≈ 13:00/20:00/03:00 UTC (cron's hour field takes
+    # a comma-separated list — one cron service firing three times a day,
+    # not three separate services). Render evaluates schedules in UTC with
+    # no DST awareness, so all three drift an hour off their stated Pacific
+    # time whenever daylight saving time changes — adjust manually twice a
+    # year, or switch to UTC times you don't mind being fixed year-round.
+    # digest.py only emails when a refresh actually finds a change (see its
+    # own comment), so firing 3x/day doesn't triple email volume for bills
+    # that haven't moved — it does triple LegiScan API call volume, though;
+    # confirm this account's API tier/rate limit is fine with that before
+    # relying on this in production.
+    schedule: "0 13,20,3 * * *"
     buildCommand: "true"
     startCommand: >
       curl -fsS -X POST -H "X-Refresh-Secret: $REFRESH_SECRET"
