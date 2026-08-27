@@ -486,7 +486,7 @@ def get_client_bills(conn, user_id, client_id):
     client detail page."""
     rows = conn.execute(
         """SELECT b.id AS bill_id, b.state, b.bill_number, b.title,
-                  b.status_label, b.status_date, l.position
+                  b.status_label, b.status_date, b.url, l.position
            FROM bill_client_links l
            JOIN bills b ON b.id = l.bill_id
            WHERE l.user_id = ? AND l.client_id = ?
