@@ -172,19 +172,23 @@ def _login_lockout_remaining_minutes(email):
 
 STYLE = """
   :root {
-    /* Monochrome — replaces the earlier indigo/Linear palette. No brand
-       accent hue anywhere; --accent is now just an alias for --slate
-       (kept as its own variable since several rules below reference it
-       by name for what used to be a colored "watch/neutral" role — a
-       plain "In committee" style tag reads better as neutral gray than
-       as a leftover colored one). --accent-solid/--accent-solid-text
-       are the button-fill pair, kept separate from --accent because in
-       dark mode the fill inverts (light pill, dark text) while --accent
-       stays a light-on-dark text color — one variable can't do both.
+    /* --accent is a real, distinct blue hue — not an alias for --slate.
+       It's the only "this is interactively colored, not neutral gray"
+       signal in the app (button.secondary/a.secondary/the watch select
+       all key off it with --accent-soft as their background), so it
+       has to read as a color, not as muted body text. #1d4ed8 (light)
+       / #60a5fa (dark) were chosen for WCAG 2.1 contrast against
+       --accent-soft specifically (#f5f5f5 / #262626): 6.15:1 and
+       5.95:1 respectively, both comfortably above the 4.5:1 text
+       minimum (see PR description for the full sRGB->linear->luminance
+       math). --accent-solid/--accent-solid-text are the button-fill
+       pair, kept separate from --accent because in dark mode the fill
+       inverts (light pill, dark text) while --accent stays a
+       light-on-dark text color — one variable can't do both.
        --content-bg is only used by the sidebar-shell pages (app_shell())
        for the slightly-off-white area behind the shell's cards. */
     --ink: #171717; --paper: #ffffff; --content-bg: #fafafa; --surface: #ffffff;
-    --slate: #6b6b6b; --rule: #e5e5e5; --accent: var(--slate);
+    --slate: #6b6b6b; --rule: #e5e5e5; --accent: #1d4ed8;
     --accent-solid: #171717; --accent-solid-text: #ffffff;
     --accent-soft: #f5f5f5; --good: #15803d; --good-soft: #dcfce7;
     --error: #b91c1c; --error-soft: #fee2e2;
@@ -230,7 +234,7 @@ STYLE = """
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --ink: #f5f5f5; --paper: #0a0a0a; --content-bg: #171717; --surface: #0a0a0a;
-      --slate: #a3a3a3; --rule: #262626; --accent: var(--slate);
+      --slate: #a3a3a3; --rule: #262626; --accent: #60a5fa;
       --accent-solid: #f5f5f5; --accent-solid-text: #171717;
       --accent-soft: #262626; --good: #4ade80; --good-soft: #0e2817;
       --error: #f87171; --error-soft: #2f1313;
@@ -246,7 +250,7 @@ STYLE = """
      OS, where that media query never matches at all. */
   :root[data-theme="dark"] {
     --ink: #f5f5f5; --paper: #0a0a0a; --content-bg: #171717; --surface: #0a0a0a;
-    --slate: #a3a3a3; --rule: #262626; --accent: var(--slate);
+    --slate: #a3a3a3; --rule: #262626; --accent: #60a5fa;
     --accent-solid: #f5f5f5; --accent-solid-text: #171717;
     --accent-soft: #262626; --good: #4ade80; --good-soft: #0e2817;
     --error: #f87171; --error-soft: #2f1313;
@@ -748,18 +752,6 @@ STYLE = """
      no longer fits next to Sort-by, same as any other wrapped flex
      item. */
   @media (max-width: 700px) { .search-box { width: 100%; } }
-  /* Touch targets under the ~44px guideline (Apple HIG / WCAG 2.5.5) —
-     fine with a mouse pointer's precision, but risky to tap accurately
-     with a finger, especially .row-menu-btn sitting right next to other
-     row content. Scoped to (pointer: coarse) rather than a width
-     breakpoint since the risk is about input precision, not viewport
-     size — a touch laptop at desktop width has the same problem, and a
-     mouse-driven narrow window doesn't. */
-  @media (pointer: coarse) {
-    .icon-btn, .row-menu-btn { height: 2.75rem; width: 2.75rem; }
-    .panel-link { height: 2.75rem; padding: 0 1rem; }
-    .side-nav-item { height: 2.75rem; }
-  }
   .app-main { flex: 1; overflow-y: auto; padding: 1.5rem; background: var(--content-bg); }
   /* The page's own big heading + description + right-aligned controls
      (e.g. filter tabs), living inside .app-main — distinct from the
@@ -858,6 +850,32 @@ STYLE = """
      CSS width set. Confirmed via getComputedStyle(): this "..." button
      was rendering the icon at 0px wide, an empty-looking button. */
   .row-menu-btn svg { width: 1rem; height: 1rem; flex: none; }
+  /* Touch targets under the ~44px guideline (Apple HIG / WCAG 2.5.5) —
+     fine with a mouse pointer's precision, but risky to tap accurately
+     with a finger, especially .row-menu-btn sitting right next to other
+     row content. Scoped to (pointer: coarse) rather than a width
+     breakpoint since the risk is about input precision, not viewport
+     size — a touch laptop at desktop width has the same problem, and a
+     mouse-driven narrow window doesn't.
+     Placed here, after .icon-btn/.panel-link/.row-menu-btn's own base
+     rules, on purpose — not just for proximity to .row-menu-btn. All
+     four selectors here tie with their unconditional base rule on
+     specificity (one class each), so the later rule in source order
+     wins regardless of whether this media query matches. .icon-btn
+     (defined above, ~line 728) and .side-nav-item (~line 620) happen to
+     sit before their base rule either way, but .panel-link (~line 797)
+     and .row-menu-btn (directly above) don't — this block used to sit
+     above both of those, silently losing the cascade and leaving those
+     two buttons stuck at their small desktop size under a coarse
+     pointer. Same tie-breaking issue .icon-btn.app-topbar-menu-btn's
+     own comment (see STYLE, app-topbar section) works around with an
+     extra class instead; source-order suffices here since every base
+     rule this needs to beat is already above this point. */
+  @media (pointer: coarse) {
+    .icon-btn, .row-menu-btn { height: 2.75rem; width: 2.75rem; }
+    .panel-link { height: 2.75rem; padding: 0 1rem; }
+    .side-nav-item { height: 2.75rem; }
+  }
   .row-menu-dropdown {
     position: absolute; right: 0; top: calc(100% + 0.25rem); background: var(--surface);
     border: 1px solid var(--rule); border-radius: var(--radius-md); padding: var(--space-1); min-width: 9rem;
@@ -2196,6 +2214,69 @@ function titleCaseName(name) {
 """
 
 
+# Shared "⋮" row-menu behavior (open/close/Escape/click-outside) for
+# every row-menu-dropdown in the app (Flagged Bills, Clients, Client
+# detail, Disclosures — each has a table of rows plus, on Client
+# detail, one menu that isn't in a table at all). Used to be pasted
+# four times, byte-for-byte identical, one copy per page body — the
+# same "same shared page-chrome behavior, one definition" reasoning
+# CONFIRM_DELETE_JS above and account_widget()/app_shell() already
+# follow, just not applied here until now.
+#
+# A tempting-looking "fix" was tried and deliberately reverted here: on
+# a very short table (as few as one row), flipping .open-up can push
+# the menu above the table's own top edge, floating it over the
+# panel-head — misplaced-looking, but still fully visible/clickable
+# (confirmed: .panel's overflow:hidden never actually clips it, it just
+# renders above the header row instead of below it). Adding a check to
+# fall back to opening downward instead, whenever upward would do that,
+# seemed like the fix — but downward is exactly what triggered the
+# upward flip in the first place, so falling back to it doesn't avoid a
+# problem, it un-avoids the ORIGINAL one: the table's overflow-x:auto
+# wrapper clips overflow-y too (see .row-menu-dropdown.open-up in
+# STYLE), and reverting to "down" on a table too short to clear either
+# direction lands the menu fully outside the wrapper's clipped box —
+# invisible and unusable, confirmed by screenshot. Misplaced-but-usable
+# beats invisible, so the flip stays unconditional on bottom-overflow.
+ROW_MENU_JS = """
+function closeRowMenus() {
+  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {
+    m.classList.remove('show', 'open-up');
+    const openBtn = document.querySelector(`[aria-controls="${m.id}"]`);
+    if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
+  });
+}
+function toggleRowMenu(e, key) {
+  e.stopPropagation();
+  const menu = document.getElementById(`row-menu-${key}`);
+  const wasOpen = menu.classList.contains('show');
+  closeRowMenus();
+  if (!wasOpen) {
+    menu.classList.add('show');
+    e.currentTarget.setAttribute('aria-expanded', 'true');
+    // See .row-menu-dropdown.open-up in STYLE — flip upward instead of
+    // down whenever opening downward would get clipped by the table's
+    // own overflow-x:auto wrapper, which the last row always would.
+    const table = e.currentTarget.closest('table');
+    if (table && menu.getBoundingClientRect().bottom > table.getBoundingClientRect().bottom) {
+      menu.classList.add('open-up');
+    }
+  }
+}
+document.addEventListener('click', closeRowMenus);
+// Escape closes whichever row menu is open and returns focus to its
+// trigger, matching the standard disclosure-menu keyboard pattern.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const openMenu = document.querySelector('.row-menu-dropdown.show');
+  if (!openMenu) return;
+  const openBtn = document.querySelector(`[aria-controls="${openMenu.id}"]`);
+  closeRowMenus();
+  if (openBtn) openBtn.focus();
+});
+"""
+
+
 # The body for /lookup, wrapped in app_shell() below rather than
 # top_nav()+.wrap — this is one of the two pages (with /lobbying) that
 # render the full signed-in shell without requiring a session, so it
@@ -2214,6 +2295,29 @@ function titleCaseName(name) {
 # now also carries the flag-confirmation modal this page used to have,
 # since /report is the one place bill detail — and now flagging too —
 # actually lives). /discover itself now just redirects here.
+#
+# Deliberately no .stat-grid/.stat-card row here, unlike FLAGGED_BODY/
+# CLIENTS_BODY/DISCLOSURES_BODY. Every existing stat-card pulls
+# per-account numbers (flagged bill count, client count, drafts
+# awaiting sign-off) from session-gated /api/... endpoints that 401 a
+# logged-out caller. /lookup is one of exactly two pages in the app
+# that render without a session at all (see the comment above and
+# app_shell()'s own docstring) — it's the "free to look up any bill,
+# no account needed" front door, not just a page a logged-in user
+# happens to also use. A stats row here would either 401-redirect a
+# guest straight to /login the moment its JS ran (breaking that
+# promise) or have to hide itself for guests, which is the majority of
+# this page's actual traffic — a tile row that's invisible for the
+# primary audience isn't a real feature, it's dead weight for everyone
+# else. There's also no honest per-account number to show a guest in
+# the first place: "bills flagged" is meaningless before they have an
+# account, and a client-side "bills looked up this session" counter
+# would be fake, unpersisted state, not a real server-backed metric.
+# The one number this page actually surfaces — how many bills matched
+# a given search — is already shown inline in renderResults() below
+# ("N bills match — showing page X of Y"); a real "bills tracked"
+# total belongs to /flagged, where it's already one of that page's
+# stat-cards.
 LOOKUP_BODY = f"""
 <div class="page-head">
   <div>
@@ -2354,6 +2458,22 @@ PAGE = page("Look up a bill — Rotunda", "/lookup", LOOKUP_BODY)
 
 # Same reasoning as LOOKUP_BODY above — /lobbying is the other page that
 # renders the shell without a session.
+#
+# Same reasoning as LOOKUP_BODY above for the missing .stat-grid too,
+# plus one more reason specific to this page: the natural-seeming
+# metric a stat row would want here — "your clients cross-referenced
+# against CAL-ACCESS" — is per-account (it means *your firm's* client
+# roster matched against entities), fetched via /api/clients, which is
+# just as session-gated as /api/flagged and just as unavailable to the
+# guests this public search is built for. That number also isn't
+# genuinely homeless without this page: it's the client roster
+# CLIENTS_BODY already owns and displays, so restating it here would
+# be either a broken tile for guests or a redundant one for logged-in
+# users looking at a page whose actual job is anonymous org lookup,
+# not account state. The result-count messaging renderResults() below
+# already prints (including the truncated-at-50 note) is this page's
+# honest equivalent of a "total" — there's no second, more meaningful
+# number sitting unused behind it.
 LOBBYING_BODY = f"""
 <div class="page-head">
   <div>
@@ -3318,39 +3438,7 @@ function fmtDateTime(iso) {{
   return d.toLocaleString('en-US', {{ month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }});
 }}
 
-function closeRowMenus() {{
-  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {{
-    m.classList.remove('show', 'open-up');
-    const openBtn = document.querySelector(`[aria-controls="${{m.id}}"]`);
-    if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
-  }});
-}}
-function toggleRowMenu(e, billId) {{
-  e.stopPropagation();
-  const menu = document.getElementById(`row-menu-${{billId}}`);
-  const wasOpen = menu.classList.contains('show');
-  closeRowMenus();
-  if (!wasOpen) {{
-    menu.classList.add('show');
-    e.currentTarget.setAttribute('aria-expanded', 'true');
-    // See .row-menu-dropdown.open-up in STYLE — flip upward instead of
-    // down whenever opening downward would get clipped by the table's
-    // own overflow-x:auto wrapper, which the last row always would.
-    const table = e.currentTarget.closest('table');
-    if (table && menu.getBoundingClientRect().bottom > table.getBoundingClientRect().bottom) {{
-      menu.classList.add('open-up');
-    }}
-  }}
-}}
-document.addEventListener('click', closeRowMenus);
-document.addEventListener('keydown', (e) => {{
-  if (e.key !== 'Escape') return;
-  const openMenu = document.querySelector('.row-menu-dropdown.show');
-  if (!openMenu) return;
-  const openBtn = document.querySelector(`[aria-controls="${{openMenu.id}}"]`);
-  closeRowMenus();
-  if (openBtn) openBtn.focus();
-}});
+{ROW_MENU_JS}
 
 async function unflag(billId) {{
   // Unflagging drops the bill's tracked position/client context with no
@@ -4171,41 +4259,7 @@ function render(rows) {{
   `;
 }}
 
-function closeRowMenus() {{
-  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {{
-    m.classList.remove('show', 'open-up');
-    const openBtn = document.querySelector(`[aria-controls="${{m.id}}"]`);
-    if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
-  }});
-}}
-function toggleRowMenu(e, key) {{
-  e.stopPropagation();
-  const menu = document.getElementById(`row-menu-${{key}}`);
-  const wasOpen = menu.classList.contains('show');
-  closeRowMenus();
-  if (!wasOpen) {{
-    menu.classList.add('show');
-    e.currentTarget.setAttribute('aria-expanded', 'true');
-    // See .row-menu-dropdown.open-up in STYLE — flip upward instead of
-    // down whenever opening downward would get clipped by the table's
-    // own overflow-x:auto wrapper, which the last row always would.
-    const table = e.currentTarget.closest('table');
-    if (table && menu.getBoundingClientRect().bottom > table.getBoundingClientRect().bottom) {{
-      menu.classList.add('open-up');
-    }}
-  }}
-}}
-document.addEventListener('click', closeRowMenus);
-// Escape closes whichever row menu is open and returns focus to its
-// trigger, matching the standard disclosure-menu keyboard pattern.
-document.addEventListener('keydown', (e) => {{
-  if (e.key !== 'Escape') return;
-  const openMenu = document.querySelector('.row-menu-dropdown.show');
-  if (!openMenu) return;
-  const openBtn = document.querySelector(`[aria-controls="${{openMenu.id}}"]`);
-  closeRowMenus();
-  if (openBtn) openBtn.focus();
-}});
+{ROW_MENU_JS}
 
 load();
 applyPrefill();
@@ -4349,6 +4403,7 @@ function renderBills(bills) {{
           <td>${{b.status_label ? `<span class="status-badge">${{b.status_label}}</span>` : ''}}</td>
           <td>${{positionSelect(b.bill_id, b.position || 'watch')}}</td>
           <td class="row-menu">
+            ${{b.url ? `<a class="secondary" href="${{b.url}}" target="_blank" rel="noopener" style="margin-right:0.4rem">View</a>` : ''}}
             <a class="secondary" href="/report?bill_id=${{b.bill_id}}&from_label=${{encodeURIComponent(currentClientName)}}&from_href=${{encodeURIComponent('/clients/detail?id=' + clientId)}}" style="margin-right:0.4rem">Report</a>
             <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'bill-${{b.bill_id}}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-bill-${{b.bill_id}}">
               <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
@@ -4365,39 +4420,7 @@ function renderBills(bills) {{
   `;
 }}
 
-function closeRowMenus() {{
-  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {{
-    m.classList.remove('show', 'open-up');
-    const openBtn = document.querySelector(`[aria-controls="${{m.id}}"]`);
-    if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
-  }});
-}}
-function toggleRowMenu(e, key) {{
-  e.stopPropagation();
-  const menu = document.getElementById(`row-menu-${{key}}`);
-  const wasOpen = menu.classList.contains('show');
-  closeRowMenus();
-  if (!wasOpen) {{
-    menu.classList.add('show');
-    e.currentTarget.setAttribute('aria-expanded', 'true');
-    // See .row-menu-dropdown.open-up in STYLE — flip upward instead of
-    // down whenever opening downward would get clipped by the table's
-    // own overflow-x:auto wrapper, which the last row always would.
-    const table = e.currentTarget.closest('table');
-    if (table && menu.getBoundingClientRect().bottom > table.getBoundingClientRect().bottom) {{
-      menu.classList.add('open-up');
-    }}
-  }}
-}}
-document.addEventListener('click', closeRowMenus);
-document.addEventListener('keydown', (e) => {{
-  if (e.key !== 'Escape') return;
-  const openMenu = document.querySelector('.row-menu-dropdown.show');
-  if (!openMenu) return;
-  const openBtn = document.querySelector(`[aria-controls="${{openMenu.id}}"]`);
-  closeRowMenus();
-  if (openBtn) openBtn.focus();
-}});
+{ROW_MENU_JS}
 
 async function load() {{
   try {{
@@ -5107,39 +5130,7 @@ async function removeFiling(id) {{
   }}
 }}
 
-function closeRowMenus() {{
-  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {{
-    m.classList.remove('show', 'open-up');
-    const openBtn = document.querySelector(`[aria-controls="${{m.id}}"]`);
-    if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
-  }});
-}}
-function toggleRowMenu(e, key) {{
-  e.stopPropagation();
-  const menu = document.getElementById(`row-menu-${{key}}`);
-  const wasOpen = menu.classList.contains('show');
-  closeRowMenus();
-  if (!wasOpen) {{
-    menu.classList.add('show');
-    e.currentTarget.setAttribute('aria-expanded', 'true');
-    // See .row-menu-dropdown.open-up in STYLE — flip upward instead of
-    // down whenever opening downward would get clipped by the table's
-    // own overflow-x:auto wrapper, which the last row always would.
-    const table = e.currentTarget.closest('table');
-    if (table && menu.getBoundingClientRect().bottom > table.getBoundingClientRect().bottom) {{
-      menu.classList.add('open-up');
-    }}
-  }}
-}}
-document.addEventListener('click', closeRowMenus);
-document.addEventListener('keydown', (e) => {{
-  if (e.key !== 'Escape') return;
-  const openMenu = document.querySelector('.row-menu-dropdown.show');
-  if (!openMenu) return;
-  const openBtn = document.querySelector(`[aria-controls="${{openMenu.id}}"]`);
-  closeRowMenus();
-  if (openBtn) openBtn.focus();
-}});
+{ROW_MENU_JS}
 
 load();
 </script>

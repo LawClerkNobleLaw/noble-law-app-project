@@ -262,6 +262,25 @@ def test_link_bill_to_client_then_change_position(conn):
     assert bills[0]["position"] == "oppose"
 
 
+def test_get_client_bills_includes_url(conn):
+    # Regression test: get_client_bills previously omitted bills.url
+    # entirely, even though it's a plain column already selected by
+    # list_flagged_bills for the /flagged page's own "View" link. That
+    # silently starved the client detail page's bill rows of anywhere
+    # to send a "View on LegiScan" link, even when the bill row itself
+    # had a url on file.
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn, url="https://legiscan.com/CA/bill/SB1/2026")
+    db.flag_bill(conn, user_id, bill_id)
+    client_id = db.create_client(conn, user_id, {"name": "Acme Corp"})
+    conn.commit()
+
+    db.link_bill_to_client(conn, user_id, bill_id, client_id, "watch")
+    conn.commit()
+    bills = db.get_client_bills(conn, user_id, client_id)
+    assert bills[0]["url"] == "https://legiscan.com/CA/bill/SB1/2026"
+
+
 def test_unlink_bill_from_client(conn):
     user_id = insert_user(conn)
     bill_id = insert_bill(conn)

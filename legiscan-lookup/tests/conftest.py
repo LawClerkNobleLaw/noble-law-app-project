@@ -43,11 +43,11 @@ def insert_user(conn, email="lawclerk@example.com", password_hash="not-a-real-ha
     return cur.lastrowid
 
 
-def insert_bill(conn, bill_id=1, bill_number="SB1", state="CA", title="A test bill."):
+def insert_bill(conn, bill_id=1, bill_number="SB1", state="CA", title="A test bill.", url=None):
     conn.execute(
-        """INSERT INTO bills (id, state, bill_number, title, status_label)
-           VALUES (?, ?, ?, ?, 'Introduced')""",
-        (bill_id, state, bill_number, title),
+        """INSERT INTO bills (id, state, bill_number, title, status_label, url)
+           VALUES (?, ?, ?, ?, 'Introduced', ?)""",
+        (bill_id, state, bill_number, title, url),
     )
     conn.commit()
     return bill_id
