@@ -16,3 +16,5 @@ legiscan-lookup/logs/*.log
 calaccess-pipeline/logs/*.log
 __pycache__/
 *.pyc
+# Personal Claude Code permission overrides — not team policy.
+.claude/settings.local.json
