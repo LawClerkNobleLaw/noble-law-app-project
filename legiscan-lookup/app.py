@@ -284,7 +284,38 @@ STYLE = """
   }
   .top-nav-inner {
     width: 100%; max-width: 46rem; margin: 0 auto; padding: 0 1.5rem;
-    display: flex; gap: var(--space-4); align-items: center;
+    display: flex; gap: var(--space-4); align-items: center; position: relative;
+  }
+  /* Wraps nav_links()/left_extra + the account widget (see top_nav()).
+     display:contents at desktop widths means this introduces no box of
+     its own — its children lay out directly in .top-nav-inner's flex
+     row, identical to before this element existed. Only the ≤640px
+     media query below turns it into an actual box (a dropdown panel). */
+  .top-nav-links { display: contents; }
+  /* Hidden until the ≤640px media query below shows it — nothing for
+     it to open above that width, since .top-nav-links is still just
+     the plain inline row. Two classes (.icon-btn.top-nav-menu-btn), not
+     one — .icon-btn's own `display: flex` (defined later in this file)
+     would otherwise win the display property on source order alone,
+     since a single-class selector here ties with it on specificity. */
+  .icon-btn.top-nav-menu-btn { display: none; flex: none; margin-left: auto; }
+  @media (max-width: 640px) {
+    .icon-btn.top-nav-menu-btn { display: flex; }
+    .top-nav-links {
+      display: none; position: absolute; top: 100%; left: 0; right: 0; flex-direction: column;
+      align-items: stretch; background: var(--paper); border-bottom: 1px solid var(--rule);
+      padding: 1rem 1.5rem; gap: 0.75rem; box-shadow: 0 8px 20px rgba(0,0,0,0.08); z-index: 30;
+    }
+    .top-nav-links.show { display: flex; }
+    /* The account widget's own wrapper (see top_nav()'s `account`
+       variable) carries margin-left:auto and a max-width inline —
+       exactly what's needed to push it to the far right of a
+       horizontal row, but meaningless (and, for max-width, actively
+       cramping) once .top-nav-links switches to a stacked column
+       above. !important earns its keep here overriding an inline
+       style for a genuinely different layout context, not routine
+       specificity-fighting. */
+    .top-nav-links.show > div { margin-left: 0 !important; max-width: none !important; }
   }
   .top-nav a { color: var(--accent); font-size: 0.85rem; text-decoration: none; }
   .top-nav a:hover { text-decoration: underline; }
@@ -561,6 +592,21 @@ STYLE = """
     width: 14rem; flex: none; background: var(--paper); border-right: 1px solid var(--rule);
     display: flex; flex-direction: column; height: 100vh; position: sticky; top: 0;
   }
+  /* Hidden on desktop — the hamburger next to it exists only for the
+     ≤900px drawer version of the sidebar below (see that media query),
+     so there's nothing for it to open until then. Two classes
+     (.icon-btn.app-topbar-menu-btn), not one — .icon-btn's own
+     `display: flex` (defined later in this file) would otherwise win
+     the display property on source order alone, since a single-class
+     selector here ties with it on specificity. */
+  .icon-btn.app-topbar-menu-btn { display: none; flex: none; }
+  /* Full-screen scrim behind the mobile sidebar drawer, closing it on
+     click same as .row-menu-dropdown/.autofill-dropdown close on
+     click-outside elsewhere in this file. Hidden/display:none outside
+     the ≤900px drawer state so it never intercepts clicks on desktop,
+     where the sidebar is always visible and never "open" in this sense. */
+  .app-sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 39; }
+  .app-sidebar-backdrop.show { display: block; }
   .app-brand {
     display: flex; align-items: center; gap: 0.5rem; height: 4rem; padding: 0 1.25rem;
     border-bottom: 1px solid var(--rule); font-weight: 600; font-size: 0.9rem; flex: none;
@@ -693,7 +739,27 @@ STYLE = """
      getComputedStyle() — this button's bell icon was genuinely
      rendering at 0x14px, not just a design nitpick. */
   .icon-btn svg { width: 0.85rem; height: 0.85rem; color: var(--slate); flex: none; }
-  @media (max-width: 700px) { .search-box { display: none; } }
+  /* Used to be `display: none` below 700px — FLAGGED_BODY renders this
+     inside a `display:flex;flex-wrap:wrap` panel-head row alongside the
+     "Sort by" select (see that call site), so instead of removing the
+     filter-as-you-type box outright (leaving mobile users with no way
+     to filter their flagged list at all), give it width:100% — the
+     flex-wrap parent already drops it to its own full-width row once it
+     no longer fits next to Sort-by, same as any other wrapped flex
+     item. */
+  @media (max-width: 700px) { .search-box { width: 100%; } }
+  /* Touch targets under the ~44px guideline (Apple HIG / WCAG 2.5.5) —
+     fine with a mouse pointer's precision, but risky to tap accurately
+     with a finger, especially .row-menu-btn sitting right next to other
+     row content. Scoped to (pointer: coarse) rather than a width
+     breakpoint since the risk is about input precision, not viewport
+     size — a touch laptop at desktop width has the same problem, and a
+     mouse-driven narrow window doesn't. */
+  @media (pointer: coarse) {
+    .icon-btn, .row-menu-btn { height: 2.75rem; width: 2.75rem; }
+    .panel-link { height: 2.75rem; padding: 0 1rem; }
+    .side-nav-item { height: 2.75rem; }
+  }
   .app-main { flex: 1; overflow-y: auto; padding: 1.5rem; background: var(--content-bg); }
   /* The page's own big heading + description + right-aligned controls
      (e.g. filter tabs), living inside .app-main — distinct from the
@@ -835,7 +901,20 @@ STYLE = """
     text-transform: uppercase; letter-spacing: 0.04em;
   }
   @media (max-width: 900px) {
-    .app-sidebar { display: none; }
+    /* Used to be `display: none` — the sidebar (and everything only it
+       held: section nav, Profile, account menu, sign-out, dark-mode
+       toggle) just vanished below 900px with no replacement, leaving
+       every app_shell() page with zero navigation on a phone. Now it's
+       an off-canvas drawer instead: same markup, positioned fixed and
+       slid off-screen by default, brought on-screen by adding .show
+       (see app_shell()'s own script for the hamburger button that
+       toggles it plus the backdrop/Escape/outside-click handling). */
+    .app-sidebar {
+      position: fixed; top: 0; left: 0; z-index: 40; transform: translateX(-100%);
+      transition: transform .2s ease; box-shadow: 0 0 40px rgba(0,0,0,0.25);
+    }
+    .app-sidebar.show { transform: translateX(0); }
+    .icon-btn.app-topbar-menu-btn { display: flex; }
     .stat-grid { grid-template-columns: 1fr 1fr; }
   }
 """
@@ -1081,14 +1160,52 @@ def top_nav(current, left_extra="", show_account_menu=True):
     account = (
         f'<div style="margin-left:auto;position:relative;max-width:14rem">'
         f'{account_widget(TOP_NAV_ACCOUNT_LINKS, "top-anchored", guest_plain=True)}</div>'
-        '</div></nav>'
-        if show_account_menu else "</div></nav>"
+        if show_account_menu else ""
     )
     # <nav>, not <div> — public pages (landing/signup/login/profile, the
     # only callers of top_nav()) otherwise had no navigation landmark at
     # all for screen-reader users to jump to; the .top-nav class and its
     # styling are unaffected since STYLE targets the class, not the tag.
-    return f'<nav class="top-nav" aria-label="Main"><div class="top-nav-inner">{TOP_BRAND}{left}{account}'
+    #
+    # {left} and {account} used to sit directly in .top-nav-inner's own
+    # row — fine at desktop widths, but with no wrap/collapse logic at
+    # all, that row (brand + nav_links()/left_extra + the account
+    # widget) simply ran wider than a phone screen and dragged the
+    # *whole page* into horizontal scroll (confirmed: 521px of content
+    # in a 375px viewport). .top-nav-links below wraps them together —
+    # `display: contents` at desktop widths so it's invisible to layout
+    # (children still lay out directly in .top-nav-inner's flex row,
+    # unchanged from before), collapsing into a hamburger-triggered
+    # dropdown panel only below STYLE's mobile breakpoint (see that
+    # media query). The toggle script mirrors account_widget()'s own
+    # open/close/Escape/click-outside dropdown, plus returning focus to
+    # the button on Escape.
+    return f"""<nav class="top-nav" aria-label="Main"><div class="top-nav-inner">{TOP_BRAND}
+  <button type="button" class="icon-btn top-nav-menu-btn" id="top-nav-menu-btn" aria-label="Open menu" aria-haspopup="true" aria-expanded="false" aria-controls="top-nav-links">
+    <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h10M2 7h10M2 10h10" stroke-linecap="round"/></svg>
+  </button>
+  <div class="top-nav-links" id="top-nav-links">{left}{account}</div>
+</div></nav>
+<script>
+(function() {{
+  const btn = document.getElementById('top-nav-menu-btn');
+  const links = document.getElementById('top-nav-links');
+  const setOpen = (open) => {{
+    links.classList.toggle('show', open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }};
+  btn.addEventListener('click', () => setOpen(!links.classList.contains('show')));
+  document.addEventListener('click', (e) => {{
+    if (!btn.contains(e.target) && !links.contains(e.target)) setOpen(false);
+  }});
+  document.addEventListener('keydown', (e) => {{
+    if (e.key === 'Escape' && links.classList.contains('show')) {{
+      setOpen(false);
+      btn.focus();
+    }}
+  }});
+}})();
+</script>"""
 
 
 # ── Sidebar app shell — for signed-in pages only, rolled out one page
@@ -1157,7 +1274,8 @@ def app_shell(current, body):
     profile_active = " active" if current == "/profile" else ""
     return f"""
 <div class="app-shell">
-  <aside class="app-sidebar">
+  <div class="app-sidebar-backdrop" id="shell-sidebar-backdrop"></div>
+  <aside class="app-sidebar" id="shell-sidebar">
     <div class="app-brand">
       <span class="app-brand-mark">
         <span class="brand-mark" style="width:20px;height:20px"></span>
@@ -1182,7 +1300,12 @@ def app_shell(current, body):
   </aside>
   <div class="app-body">
     <header class="app-topbar">
-      <div class="app-topbar-sub" id="shell-date"></div>
+      <div style="display:flex;align-items:center;gap:1rem">
+        <button type="button" class="icon-btn app-topbar-menu-btn" id="shell-menu-btn" aria-label="Open navigation" aria-haspopup="true" aria-expanded="false" aria-controls="shell-sidebar">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h10M2 7h10M2 10h10" stroke-linecap="round"/></svg>
+        </button>
+        <div class="app-topbar-sub" id="shell-date"></div>
+      </div>
     </header>
     <main class="app-main">{body}</main>
   </div>
@@ -1197,6 +1320,44 @@ def app_shell(current, body):
   // Sidebar footer's account button/menu (shell-guest/shell-account-btn/
   // shell-account-menu/shell-signout-btn) are wired by account_widget()'s
   // own <script>, not here — see the {{account_widget()}} call above.
+
+  // Below 900px the sidebar becomes an off-canvas drawer (see STYLE's
+  // .app-sidebar media query) opened by this hamburger button — same
+  // open/close/Escape/click-outside shape as account_widget()'s own
+  // dropdown, plus a backdrop (since this covers the whole screen, not
+  // a small anchored menu) and a basic focus trap/return-focus, since
+  // this one hides real navigation behind it rather than a few extra
+  // links.
+  const sidebar = document.getElementById('shell-sidebar');
+  const backdrop = document.getElementById('shell-sidebar-backdrop');
+  const menuBtn = document.getElementById('shell-menu-btn');
+  const setSidebarOpen = (open) => {{
+    sidebar.classList.toggle('show', open);
+    backdrop.classList.toggle('show', open);
+    menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    document.body.style.overflow = open ? 'hidden' : '';
+    if (open) {{
+      const firstFocusable = sidebar.querySelector('a, button');
+      if (firstFocusable) firstFocusable.focus();
+    }}
+  }};
+  menuBtn.addEventListener('click', () => setSidebarOpen(!sidebar.classList.contains('show')));
+  backdrop.addEventListener('click', () => setSidebarOpen(false));
+  document.addEventListener('keydown', (e) => {{
+    if (!sidebar.classList.contains('show')) return;
+    if (e.key === 'Escape') {{
+      setSidebarOpen(false);
+      menuBtn.focus();
+      return;
+    }}
+    if (e.key === 'Tab') {{
+      const focusable = sidebar.querySelectorAll('a, button');
+      if (!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {{ e.preventDefault(); last.focus(); }}
+      else if (!e.shiftKey && document.activeElement === last) {{ e.preventDefault(); first.focus(); }}
+    }}
+  }});
 }})();
 </script>
 """
@@ -2099,7 +2260,9 @@ function renderResults(data) {{
   resultsEl.innerHTML = `
     <div class="panel">
       <div class="panel-head"><div class="sub" style="margin:0">${{count.toLocaleString()}} bill${{count === 1 ? '' : 's'}} match — showing page ${{data.page || 1}} of ${{data.page_total || 1}}</div></div>
+      <div style="overflow-x:auto">
       <table><thead><tr><th>Bill</th><th>Title</th><th>Status</th><th>Last action</th></tr></thead><tbody>${{rowsHtml}}</tbody></table>
+      </div>
     </div>
     ${{hasMore ? '<div style="text-align:center;margin-top:1rem"><button type="button" class="secondary" id="next-page-btn">Next page →</button></div>' : ''}}
   `;
@@ -2259,6 +2422,7 @@ function renderResults(rows, truncated) {{
   }}
   resultsEl.innerHTML = `
     <div class="panel">
+      <div style="overflow-x:auto">
       <table>
         <thead><tr><th>Name</th><th>Type</th><th>Location</th><th>Status</th><th></th></tr></thead>
         <tbody>
@@ -2283,6 +2447,7 @@ function renderResults(rows, truncated) {{
         `).join('')}}
         </tbody>
       </table>
+      </div>
     </div>
     ${{truncated ? '<p class="sub" style="margin-top:0.75rem">Showing the first 50 matches — narrow your search if you don\\'t see what you\\'re looking for.</p>' : ''}}
   `;
@@ -3303,6 +3468,7 @@ function render(rows) {{
     return;
   }}
   listEl.innerHTML = `
+    <div style="overflow-x:auto">
     <table>
       <thead><tr><th>Bill</th><th>Status</th><th>Last checked</th><th>Clients &amp; positions</th><th></th></tr></thead>
       <tbody>
@@ -3338,6 +3504,7 @@ function render(rows) {{
       `).join('')}}
       </tbody>
     </table>
+    </div>
   `;
 }}
 
@@ -4430,28 +4597,28 @@ function render(r) {{
     <div class="panel" style="margin-top:1rem">
       <div class="panel-head"><div class="title">Status history</div></div>
       ${{historyRows
-        ? `<table><thead><tr><th>Date</th><th>Chamber</th><th>Action</th></tr></thead><tbody>${{historyRows}}</tbody></table>`
+        ? `<div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Chamber</th><th>Action</th></tr></thead><tbody>${{historyRows}}</tbody></table></div>`
         : '<p class="empty" style="padding:1rem 1.15rem">No status history recorded yet.</p>'}}
     </div>
 
     <div class="panel" style="margin-top:1rem">
       <div class="panel-head"><div class="title">Amendment history</div></div>
       ${{amendmentRows
-        ? `<table><thead><tr><th>Date</th><th>Chamber</th><th>Amendment</th></tr></thead><tbody>${{amendmentRows}}</tbody></table>`
+        ? `<div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Chamber</th><th>Amendment</th></tr></thead><tbody>${{amendmentRows}}</tbody></table></div>`
         : '<p class="empty" style="padding:1rem 1.15rem">No amendments recorded.</p>'}}
     </div>
 
     <div class="panel" style="margin-top:1rem">
       <div class="panel-head"><div class="title">Upcoming hearings</div></div>
       ${{hearingRows
-        ? `<table><thead><tr><th>When</th><th>Type</th><th>Details</th></tr></thead><tbody>${{hearingRows}}</tbody></table>`
+        ? `<div style="overflow-x:auto"><table><thead><tr><th>When</th><th>Type</th><th>Details</th></tr></thead><tbody>${{hearingRows}}</tbody></table></div>`
         : '<p class="empty" style="padding:1rem 1.15rem">No upcoming hearings scheduled.</p>'}}
     </div>
 
     <div class="panel" style="margin-top:1rem">
       <div class="panel-head"><div class="title">Votes</div></div>
       ${{voteRows
-        ? `<table><thead><tr><th>Date</th><th>Chamber</th><th>Result</th></tr></thead><tbody>${{voteRows}}</tbody></table>`
+        ? `<div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Chamber</th><th>Result</th></tr></thead><tbody>${{voteRows}}</tbody></table></div>`
         : '<p class="empty" style="padding:1rem 1.15rem">No votes recorded yet.</p>'}}
     </div>
   `;
@@ -4802,6 +4969,7 @@ function render(rows) {{
     return;
   }}
   listEl.innerHTML = `
+    <div style="overflow-x:auto">
     <table>
       <thead><tr><th>Form</th><th>Period</th><th>Status</th><th>Created</th><th></th></tr></thead>
       <tbody>
@@ -4830,6 +4998,7 @@ function render(rows) {{
       }}).join('')}}
       </tbody>
     </table>
+    </div>
   `;
 }}
 

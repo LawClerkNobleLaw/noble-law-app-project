@@ -52,7 +52,7 @@ services:
       # Used to build the "View action report" link in each digest email
       # — not secret, just needs to match this service's real public URL.
       - key: APP_BASE_URL
-        value: https://legiscan-lookup.onrender.com
+        value: https://therotunda.net
 
   # Thin trigger only — no disk, no real logic. Just wakes up, makes one
   # authenticated POST to the web service over Render's private network,
