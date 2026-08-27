@@ -2138,6 +2138,82 @@ function confirmDelete(title, message) {
 """
 
 
+# Small display-only helper for showing client/org names consistently.
+# c.name (or b.name — same field, different call sites) holds two very
+# different kinds of value with nothing in the data telling them apart:
+# a name typed in by hand, already well-cased ("Anthropic PBC",
+# "O'Brien Consulting"), and a name autofilled from CAL-ACCESS, which
+# comes through exactly as the source record has it — typically
+# ALL-CAPS ("BRICKLAYERS, TILESETTERS & ALLIED CRAFTWORKERS LOCAL 3
+# UNION"). Reshaping every name unconditionally would fix the second
+# case but wreck the first ("O'Brien" -> "O'brien", "McDonald Group" ->
+# "Mcdonald Group"), so titleCaseName() gates the whole transform on
+# the input being ALL-CAPS already (letters only — digits/punctuation/
+# whitespace have no case to check); anything not already shouting —
+# including a name that's merely got a lowercase letter somewhere in
+# it — passes through completely untouched. This is deliberately a
+# display-only cosmetic fix: call it only where a name is rendered as
+# a label, never on the stored value, an editable field's value, or
+# anything used as a lookup/link key (see each call site's own comment
+# for why that spot is safe).
+TITLE_CASE_JS = """
+const TITLE_CASE_LOWER = new Set(['AND', 'OF', 'THE']);
+const TITLE_CASE_KEEP_UPPER = new Set(['LLC', 'PBC', 'LLP', 'LLLP', 'INC', 'CORP', 'CO', 'LP', 'PAC', 'USA']);
+
+// Title-cases one "word" — really just a whitespace-delimited chunk,
+// so it may carry attached punctuation like the comma in
+// "BRICKLAYERS," or the ampersand standing alone as "&". `core` strips
+// that off (letters only) so it can be checked against the acronym
+// and connector-word lists without the punctuation getting in the
+// way, but the transform itself runs on `raw` so anything non-letter
+// stays exactly where it was — toUpperCase()/toLowerCase() are no-ops
+// on digits/punctuation, which is what makes "LOCAL 3 UNION" ->
+// "Local 3 Union" and "&" -> "&" work with no special-casing. Hyphens
+// split into their own segments ("SMITH-JONES" -> "Smith-Jones");
+// apostrophes deliberately do NOT ("O'BRIEN" -> "O'brien", not
+// "O'Brien" — there's no reliable way to tell a name-particle
+// apostrophe from any other kind without a name-specific exception
+// list, so this keeps the simple, safe rule instead of guessing).
+function titleCaseWord(raw, isEdgeWord) {
+  const core = raw.replace(/[^A-Za-z]/g, '');
+  if (TITLE_CASE_KEEP_UPPER.has(core)) return raw.toUpperCase();
+  if (!isEdgeWord && TITLE_CASE_LOWER.has(core)) return raw.toLowerCase();
+  return raw.split('-').map((segment) => {
+    let seenLetter = false;
+    return segment.replace(/[A-Za-z]/g, (ch) => {
+      if (seenLetter) return ch.toLowerCase();
+      seenLetter = true;
+      return ch.toUpperCase();
+    });
+  }).join('-');
+}
+
+// See the comment above this block's own TITLE_CASE_JS constant for
+// why this only touches a name that's ALL-CAPS already, and only ever
+// as a display label.
+function titleCaseName(name) {
+  if (!name) return name;
+  // Any lowercase letter at all means this isn't a shouting
+  // CAL-ACCESS name to begin with (or already got fixed by hand) —
+  // leave it alone. No uppercase letter either means there's nothing
+  // with a case to reshape (pure digits/punctuation, or empty).
+  if (!/[A-Z]/.test(name) || /[a-z]/.test(name)) return name;
+  // Split on whitespace but keep the whitespace runs themselves (the
+  // odd-indexed entries) so original spacing survives exactly, rather
+  // than being normalized to single spaces.
+  const tokens = name.split(/(\\s+)/);
+  const wordIdxs = [];
+  tokens.forEach((t, i) => { if (i % 2 === 0 && t !== '') wordIdxs.push(i); });
+  const firstIdx = wordIdxs[0];
+  const lastIdx = wordIdxs[wordIdxs.length - 1];
+  return tokens.map((t, i) => {
+    if (i % 2 !== 0 || t === '') return t;
+    return titleCaseWord(t, i === firstIdx || i === lastIdx);
+  }).join('');
+}
+"""
+
+
 # Shared "⋮" row-menu behavior (open/close/Escape/click-outside) for
 # every row-menu-dropdown in the app (Flagged Bills, Clients, Client
 # detail, Disclosures — each has a table of rows plus, on Client
@@ -2439,6 +2515,8 @@ const resultsEl = document.getElementById('results');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
 
+{TITLE_CASE_JS}
+
 form.addEventListener('submit', async (e) => {{
   e.preventDefault();
   const q = document.getElementById('q').value.trim();
@@ -2490,7 +2568,7 @@ function variantsRow(r) {{
   if (!r.variants || !r.variants.length) return '';
   const items = r.variants.map(v => `
     <div class="variant-row">
-      <a href="${{detailUrl(v)}}">${{v.name}}</a>
+      <a href="${{detailUrl(v)}}">${{titleCaseName(v.name)}}</a>
       <span class="sub" style="margin:0">${{locationOrContext(v)}}</span>
     </div>
   `).join('');
@@ -2518,7 +2596,7 @@ function entityGroupRow(r) {{
   if (r.kind !== 'entity_group') return '';
   const items = r.entities.map(e => `
     <div class="variant-row">
-      <a href="${{detailUrl(e)}}">${{e.name}}</a>
+      <a href="${{detailUrl(e)}}">${{titleCaseName(e.name)}}</a>
       <span class="sub" style="margin:0">${{[locationOrContext(e), e.registration_status].filter(Boolean).join(' · ')}}</span>
     </div>
   `).join('');
@@ -2526,7 +2604,7 @@ function entityGroupRow(r) {{
     <tr class="variants-row">
       <td colspan="5">
         <details>
-          <summary>${{r.entities.length}} separately registered entities named ${{r.name}}</summary>
+          <summary>${{r.entities.length}} separately registered entities named ${{titleCaseName(r.name)}}</summary>
           <p class="sub" style="margin:0 0 0.5rem">Each is its own real CAL-ACCESS registration, grouped here by name only — nothing has been merged.</p>
           ${{items}}
         </details>
@@ -2548,7 +2626,7 @@ function renderResults(rows, truncated) {{
         <tbody>
         ${{rows.map(r => r.kind === 'entity_group' ? `
           <tr>
-            <td>${{r.name}}</td>
+            <td>${{titleCaseName(r.name)}}</td>
             <td><span class="tag">${{r.entities.length}} registered entities</span></td>
             <td></td>
             <td></td>
@@ -2557,7 +2635,7 @@ function renderResults(rows, truncated) {{
           ${{entityGroupRow(r)}}
         ` : `
           <tr>
-            <td><a href="${{detailUrl(r)}}">${{r.name}}</a></td>
+            <td><a href="${{detailUrl(r)}}">${{titleCaseName(r.name)}}</a></td>
             <td>${{r.entity_type ? `<span class="tag">${{r.entity_type}}</span>` : `<span class="tag">named as client only</span>`}}</td>
             <td>${{locationOrContext(r)}}</td>
             <td>${{r.registration_status || ''}}</td>
@@ -3186,6 +3264,7 @@ FLAGGED_BODY = f"""
 <script>
 {CLIENT_QUICKADD_JS}
 {CONFIRM_DELETE_JS}
+{TITLE_CASE_JS}
 const listEl = document.getElementById('list');
 const loadingEl = document.getElementById('loading');
 const errorEl = document.getElementById('error');
@@ -3477,7 +3556,7 @@ function positionSelect(r, c) {{
 function clientCell(r) {{
   const chips = (r.assigned_clients || []).map(c => `
     <div class="client-chip">
-      <a href="/clients/detail?id=${{c.id}}">${{c.name}}</a>
+      <a href="/clients/detail?id=${{c.id}}">${{titleCaseName(c.name)}}</a>
       ${{positionSelect(r, c)}}
       <button type="button" class="icon-btn" onclick="unassignClient(${{r.bill_id}}, ${{c.id}}, this)" aria-label="Remove client from this bill" title="Remove client" style="height:1.5rem;width:1.5rem;color:var(--slate)">×</button>
     </div>
@@ -3848,6 +3927,7 @@ CLIENTS_BODY = f"""
 
 <script>
 {CONFIRM_DELETE_JS}
+{TITLE_CASE_JS}
 // bus_phone is stored exactly as typed, with no format enforced on
 // entry — this only reformats a clean 10-digit US number for display,
 // e.g. "5082157570" -> "(508) 215-7570". Anything else (an extension,
@@ -4158,7 +4238,7 @@ function render(rows) {{
       <tbody>
       ${{rows.map(c => `
         <tr>
-          <td><a href="/clients/detail?id=${{c.id}}">${{c.name}}</a></td>
+          <td><a href="/clients/detail?id=${{c.id}}">${{titleCaseName(c.name)}}</a></td>
           <td>${{[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), formatPhone(c.bus_phone)].filter(Boolean).join(' · ')}}</td>
           <td>${{c.interests || ''}}</td>
           <td>${{c.existing_filer_id || ''}}</td>
@@ -4224,6 +4304,7 @@ CLIENT_DETAIL_BODY = f"""
 
 <script>
 {CONFIRM_DELETE_JS}
+{TITLE_CASE_JS}
 // bus_phone is stored exactly as typed, with no format enforced on
 // entry — this only reformats a clean 10-digit US number for display,
 // e.g. "5082157570" -> "(508) 215-7570". Anything else (an extension,
@@ -4249,7 +4330,7 @@ function renderClient(d) {{
   currentClientName = c.name;
   clientEl.innerHTML = `
     <div class="card">
-      <div class="bill-title">${{c.name}}</div>
+      <div class="bill-title">${{titleCaseName(c.name)}}</div>
       <div class="bill-desc" style="margin-top:0.4rem">
         ${{[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), formatPhone(c.bus_phone)].filter(Boolean).join(' · ') || 'No address on file'}}
       </div>
