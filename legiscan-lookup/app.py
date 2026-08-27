@@ -172,23 +172,19 @@ def _login_lockout_remaining_minutes(email):
 
 STYLE = """
   :root {
-    /* --accent is a real, distinct blue hue — not an alias for --slate.
-       It's the only "this is interactively colored, not neutral gray"
-       signal in the app (button.secondary/a.secondary/the watch select
-       all key off it with --accent-soft as their background), so it
-       has to read as a color, not as muted body text. #1d4ed8 (light)
-       / #60a5fa (dark) were chosen for WCAG 2.1 contrast against
-       --accent-soft specifically (#f5f5f5 / #262626): 6.15:1 and
-       5.95:1 respectively, both comfortably above the 4.5:1 text
-       minimum (see PR description for the full sRGB->linear->luminance
-       math). --accent-solid/--accent-solid-text are the button-fill
-       pair, kept separate from --accent because in dark mode the fill
-       inverts (light pill, dark text) while --accent stays a
-       light-on-dark text color — one variable can't do both.
+    /* Monochrome — replaces the earlier indigo/Linear palette. No brand
+       accent hue anywhere; --accent is now just an alias for --slate
+       (kept as its own variable since several rules below reference it
+       by name for what used to be a colored "watch/neutral" role — a
+       plain "In committee" style tag reads better as neutral gray than
+       as a leftover colored one). --accent-solid/--accent-solid-text
+       are the button-fill pair, kept separate from --accent because in
+       dark mode the fill inverts (light pill, dark text) while --accent
+       stays a light-on-dark text color — one variable can't do both.
        --content-bg is only used by the sidebar-shell pages (app_shell())
        for the slightly-off-white area behind the shell's cards. */
     --ink: #171717; --paper: #ffffff; --content-bg: #fafafa; --surface: #ffffff;
-    --slate: #6b6b6b; --rule: #e5e5e5; --accent: #1d4ed8;
+    --slate: #6b6b6b; --rule: #e5e5e5; --accent: var(--slate);
     --accent-solid: #171717; --accent-solid-text: #ffffff;
     --accent-soft: #f5f5f5; --good: #15803d; --good-soft: #dcfce7;
     --error: #b91c1c; --error-soft: #fee2e2;
@@ -234,7 +230,7 @@ STYLE = """
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --ink: #f5f5f5; --paper: #0a0a0a; --content-bg: #171717; --surface: #0a0a0a;
-      --slate: #a3a3a3; --rule: #262626; --accent: #60a5fa;
+      --slate: #a3a3a3; --rule: #262626; --accent: var(--slate);
       --accent-solid: #f5f5f5; --accent-solid-text: #171717;
       --accent-soft: #262626; --good: #4ade80; --good-soft: #0e2817;
       --error: #f87171; --error-soft: #2f1313;
@@ -250,7 +246,7 @@ STYLE = """
      OS, where that media query never matches at all. */
   :root[data-theme="dark"] {
     --ink: #f5f5f5; --paper: #0a0a0a; --content-bg: #171717; --surface: #0a0a0a;
-    --slate: #a3a3a3; --rule: #262626; --accent: #60a5fa;
+    --slate: #a3a3a3; --rule: #262626; --accent: var(--slate);
     --accent-solid: #f5f5f5; --accent-solid-text: #171717;
     --accent-soft: #262626; --good: #4ade80; --good-soft: #0e2817;
     --error: #f87171; --error-soft: #2f1313;
