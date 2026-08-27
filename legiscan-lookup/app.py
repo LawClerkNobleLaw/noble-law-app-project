@@ -4318,6 +4318,7 @@ function renderBills(bills) {{
           <td>${{b.status_label ? `<span class="status-badge">${{b.status_label}}</span>` : ''}}</td>
           <td>${{positionSelect(b.bill_id, b.position || 'watch')}}</td>
           <td class="row-menu">
+            ${{b.url ? `<a class="secondary" href="${{b.url}}" target="_blank" rel="noopener" style="margin-right:0.4rem">View</a>` : ''}}
             <a class="secondary" href="/report?bill_id=${{b.bill_id}}&from_label=${{encodeURIComponent(currentClientName)}}&from_href=${{encodeURIComponent('/clients/detail?id=' + clientId)}}" style="margin-right:0.4rem">Report</a>
             <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'bill-${{b.bill_id}}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-bill-${{b.bill_id}}">
               <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
