@@ -2970,18 +2970,15 @@ document.addEventListener('keydown', (e) => {{
 }});
 
 async function unflag(billId) {{
-  // Unflagging drops the bill's tracked position/client context with
-  // no undo — worth a confirm, same reasoning as removeClient() on the
-  // Clients page. "Confirm Unflagging" up front names the action the
-  // same way the flag-confirmation modal's own "Confirm Flagged Bill"
-  // button does, and spells out client + position explicitly (not just
-  // "position") since both go away together, not just one of them.
+  // Same confirm() pattern as removeClient() on the Clients page — a
+  // plain "[Verb] [thing]? [what else goes with it]. This can't be
+  // undone." sentence, no "Confirm X:" prefix.
   const r = currentRows.find(x => x.bill_id === billId);
   const label = r ? `${{r.state}} ${{r.bill_number}}` : 'this bill';
   const clientNote = r && (r.assigned_clients || []).length
-    ? ' Its assigned client(s) and saved position(s) will be removed too.'
+    ? ' This also removes its assigned client(s) and saved position(s).'
     : '';
-  if (!confirm(`Confirm Unflagging: unflag ${{label}}? You'll stop tracking it.${{clientNote}}`)) return;
+  if (!confirm(`Unflag ${{label}}?${{clientNote}} This can't be undone.`)) return;
   errorEl.className = '';
   try {{
     const res = await fetch(`/api/flag?bill_id=${{billId}}`, {{ method: 'DELETE' }});
@@ -4604,11 +4601,14 @@ function render(rows) {{
 // call, then reload from the server rather than guessing the new list
 // locally.
 async function removeFiling(id) {{
+  // Same confirm() pattern as removeClient() on the Clients page — a
+  // plain "[Verb] [thing]? [what else goes with it]. This can't be
+  // undone." sentence.
   const r = lastRows.find(x => x.id === id);
   const meta = r && FORM_META[r.form_type];
   const label = (meta && meta.label) || (r ? ('Form ' + r.form_type) : 'this filing');
-  const signedNote = r && r.status === 'ready_to_file' ? ' This filing was already signed off — deleting it removes that record too.' : '';
-  if (!confirm(`Delete this ${{label}} draft?${{signedNote}} This can't be undone.`)) return;
+  const signedNote = r && r.status === 'ready_to_file' ? ' This also removes its sign-off record.' : '';
+  if (!confirm(`Remove this ${{label}} draft?${{signedNote}} This can't be undone.`)) return;
   try {{
     const res = await fetch(`/api/prepared-filings?id=${{id}}`, {{ method: 'DELETE' }});
     if (!res.ok) {{
@@ -4809,8 +4809,8 @@ async function signOff(e) {{
 // since there's nothing left here to show.
 async function removeFiling() {{
   const label = FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type);
-  const signedNote = filing.status === 'ready_to_file' ? ' This filing was already signed off — deleting it removes that record too.' : '';
-  if (!confirm(`Delete this ${{label}} draft?${{signedNote}} This can't be undone.`)) return;
+  const signedNote = filing.status === 'ready_to_file' ? ' This also removes its sign-off record.' : '';
+  if (!confirm(`Remove this ${{label}} draft?${{signedNote}} This can't be undone.`)) return;
   try {{
     const res = await fetch(`/api/prepared-filings?id=${{filingId}}`, {{ method: 'DELETE' }});
     if (!res.ok) {{
