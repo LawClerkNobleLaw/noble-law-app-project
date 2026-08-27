@@ -2900,6 +2900,7 @@ FLAGGED_BODY = f"""
 
 <script>
 {CLIENT_QUICKADD_JS}
+{CONFIRM_DELETE_JS}
 const listEl = document.getElementById('list');
 const loadingEl = document.getElementById('loading');
 const errorEl = document.getElementById('error');
@@ -3108,18 +3109,16 @@ document.addEventListener('keydown', (e) => {{
 }});
 
 async function unflag(billId) {{
-  // Unflagging drops the bill's tracked position/client context with
-  // no undo — worth a confirm, same reasoning as removeClient() on the
-  // Clients page. "Confirm Unflagging" up front names the action the
-  // same way the flag-confirmation modal's own "Confirm Flagged Bill"
-  // button does, and spells out client + position explicitly (not just
-  // "position") since both go away together, not just one of them.
+  // Unflagging drops the bill's tracked position/client context with no
+  // undo — same real confirmation as removeClient() (see
+  // CONFIRM_DELETE_JS), not the browser's own confirm().
   const r = currentRows.find(x => x.bill_id === billId);
   const label = r ? `${{r.state}} ${{r.bill_number}}` : 'this bill';
   const clientNote = r && (r.assigned_clients || []).length
-    ? ' Its assigned client(s) and saved position(s) will be removed too.'
+    ? ' This also removes its assigned client(s) and saved position(s).'
     : '';
-  if (!confirm(`Confirm Unflagging: unflag ${{label}}? You'll stop tracking it.${{clientNote}}`)) return;
+  const ok = await confirmDelete('Unflag this bill?', `Unflag ${{label}}?${{clientNote}} This can't be undone.`);
+  if (!ok) return;
   errorEl.className = '';
   try {{
     const res = await fetch(`/api/flag?bill_id=${{billId}}`, {{ method: 'DELETE' }});
@@ -3158,9 +3157,11 @@ async function assignClient(billId, selectEl) {{
 }}
 
 async function unassignClient(billId, clientId, btnEl) {{
+  // Same confirmDelete() dialog as removeClient() (see CONFIRM_DELETE_JS).
   const r = currentRows.find(x => x.bill_id === billId);
   const c = r && (r.assigned_clients || []).find(x => x.id === clientId);
-  if (!confirm(`Remove ${{c ? c.name : 'this client'}} from this bill?`)) return;
+  const ok = await confirmDelete('Remove client?', `Remove ${{c ? c.name : 'this client'}} from this bill? This can't be undone.`);
+  if (!ok) return;
   errorEl.className = '';
   btnEl.disabled = true;
   try {{
@@ -4194,9 +4195,12 @@ async function setPosition(billId, selectEl) {{
 }}
 
 async function removeBill(billId) {{
+  // Same confirmDelete() dialog as removeClient() above (see
+  // CONFIRM_DELETE_JS).
   const b = currentBills.find(x => x.bill_id === billId);
   const label = b ? `${{b.state}} ${{b.bill_number}}` : 'this bill';
-  if (!confirm(`Remove ${{label}} from this client?`)) return;
+  const ok = await confirmDelete('Remove bill?', `Remove ${{label}} from this client? This can't be undone.`);
+  if (!ok) return;
   errorEl.className = '';
   try {{
     const res = await fetch(`/api/bill-clients?bill_id=${{billId}}&client_id=${{clientId}}`, {{ method: 'DELETE' }});
@@ -4687,6 +4691,7 @@ DISCLOSURES_BODY = f"""
 </div>
 
 <script>
+{CONFIRM_DELETE_JS}
 // A friendly "Aug 21, 2:03 PM" instead of the raw
 // "2026-08-21T14:03:00" ISO string the API returns.
 function fmtDateTime(iso) {{
@@ -4828,16 +4833,17 @@ function render(rows) {{
   `;
 }}
 
-// Same deletion pattern as CLIENTS_BODY's removeClient() — a real
-// confirm() naming what's about to be lost (no undo), then a DELETE
-// call, then reload from the server rather than guessing the new list
-// locally.
+// Same deletion pattern as CLIENTS_BODY's removeClient() — the shared
+// confirmDelete() dialog naming what's about to be lost (no undo, see
+// CONFIRM_DELETE_JS), then a DELETE call, then reload from the server
+// rather than guessing the new list locally.
 async function removeFiling(id) {{
   const r = lastRows.find(x => x.id === id);
   const meta = r && FORM_META[r.form_type];
   const label = (meta && meta.label) || (r ? ('Form ' + r.form_type) : 'this filing');
-  const signedNote = r && r.status === 'ready_to_file' ? ' This filing was already signed off — deleting it removes that record too.' : '';
-  if (!confirm(`Delete this ${{label}} draft?${{signedNote}} This can't be undone.`)) return;
+  const signedNote = r && r.status === 'ready_to_file' ? ' This also removes its sign-off record.' : '';
+  const ok = await confirmDelete('Remove draft?', `Remove this ${{label}} draft?${{signedNote}} This can't be undone.`);
+  if (!ok) return;
   try {{
     const res = await fetch(`/api/prepared-filings?id=${{id}}`, {{ method: 'DELETE' }});
     if (!res.ok) {{
@@ -4899,6 +4905,7 @@ DISCLOSURE_REVIEW_BODY = f"""
 <div id="content"></div>
 
 <script>
+{CONFIRM_DELETE_JS}
 // A friendly "Aug 21, 2:03 PM" instead of the raw
 // "2026-08-21T14:03:00" ISO string the API returns.
 function fmtDateTime(iso) {{
@@ -5040,13 +5047,15 @@ async function signOff(e) {{
 }}
 
 // Same deletion pattern as the Clients section's removeClient() (see
-// CLIENTS_BODY / CLIENT_DETAIL_BODY) — a real confirm() naming what's
-// about to be lost (no undo), then a DELETE call, then leave this page
-// since there's nothing left here to show.
+// CLIENTS_BODY / CLIENT_DETAIL_BODY) — the shared confirmDelete()
+// dialog naming what's about to be lost (no undo, see
+// CONFIRM_DELETE_JS), then a DELETE call, then leave this page since
+// there's nothing left here to show.
 async function removeFiling() {{
   const label = FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type);
-  const signedNote = filing.status === 'ready_to_file' ? ' This filing was already signed off — deleting it removes that record too.' : '';
-  if (!confirm(`Delete this ${{label}} draft?${{signedNote}} This can't be undone.`)) return;
+  const signedNote = filing.status === 'ready_to_file' ? ' This also removes its sign-off record.' : '';
+  const ok = await confirmDelete('Remove draft?', `Remove this ${{label}} draft?${{signedNote}} This can't be undone.`);
+  if (!ok) return;
   try {{
     const res = await fetch(`/api/prepared-filings?id=${{filingId}}`, {{ method: 'DELETE' }});
     if (!res.ok) {{
