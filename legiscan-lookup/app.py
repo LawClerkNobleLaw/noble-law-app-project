@@ -2138,6 +2138,29 @@ function confirmDelete(title, message) {
 # now also carries the flag-confirmation modal this page used to have,
 # since /report is the one place bill detail — and now flagging too —
 # actually lives). /discover itself now just redirects here.
+#
+# Deliberately no .stat-grid/.stat-card row here, unlike FLAGGED_BODY/
+# CLIENTS_BODY/DISCLOSURES_BODY. Every existing stat-card pulls
+# per-account numbers (flagged bill count, client count, drafts
+# awaiting sign-off) from session-gated /api/... endpoints that 401 a
+# logged-out caller. /lookup is one of exactly two pages in the app
+# that render without a session at all (see the comment above and
+# app_shell()'s own docstring) — it's the "free to look up any bill,
+# no account needed" front door, not just a page a logged-in user
+# happens to also use. A stats row here would either 401-redirect a
+# guest straight to /login the moment its JS ran (breaking that
+# promise) or have to hide itself for guests, which is the majority of
+# this page's actual traffic — a tile row that's invisible for the
+# primary audience isn't a real feature, it's dead weight for everyone
+# else. There's also no honest per-account number to show a guest in
+# the first place: "bills flagged" is meaningless before they have an
+# account, and a client-side "bills looked up this session" counter
+# would be fake, unpersisted state, not a real server-backed metric.
+# The one number this page actually surfaces — how many bills matched
+# a given search — is already shown inline in renderResults() below
+# ("N bills match — showing page X of Y"); a real "bills tracked"
+# total belongs to /flagged, where it's already one of that page's
+# stat-cards.
 LOOKUP_BODY = f"""
 <div class="page-head">
   <div>
@@ -2278,6 +2301,22 @@ PAGE = page("Look up a bill — Rotunda", "/lookup", LOOKUP_BODY)
 
 # Same reasoning as LOOKUP_BODY above — /lobbying is the other page that
 # renders the shell without a session.
+#
+# Same reasoning as LOOKUP_BODY above for the missing .stat-grid too,
+# plus one more reason specific to this page: the natural-seeming
+# metric a stat row would want here — "your clients cross-referenced
+# against CAL-ACCESS" — is per-account (it means *your firm's* client
+# roster matched against entities), fetched via /api/clients, which is
+# just as session-gated as /api/flagged and just as unavailable to the
+# guests this public search is built for. That number also isn't
+# genuinely homeless without this page: it's the client roster
+# CLIENTS_BODY already owns and displays, so restating it here would
+# be either a broken tile for guests or a redundant one for logged-in
+# users looking at a page whose actual job is anonymous org lookup,
+# not account state. The result-count messaging renderResults() below
+# already prints (including the truncated-at-50 note) is this page's
+# honest equivalent of a "total" — there's no second, more meaningful
+# number sitting unused behind it.
 LOBBYING_BODY = f"""
 <div class="page-head">
   <div>
