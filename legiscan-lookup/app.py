@@ -3017,9 +3017,11 @@ async function assignClient(billId, selectEl) {{
 }}
 
 async function unassignClient(billId, clientId, btnEl) {{
+  // Same confirm() pattern as removeClient() on the Clients page — a
+  // plain "[Verb] [thing]? This can't be undone." sentence.
   const r = currentRows.find(x => x.bill_id === billId);
   const c = r && (r.assigned_clients || []).find(x => x.id === clientId);
-  if (!confirm(`Remove ${{c ? c.name : 'this client'}} from this bill?`)) return;
+  if (!confirm(`Remove ${{c ? c.name : 'this client'}} from this bill? This can't be undone.`)) return;
   errorEl.className = '';
   btnEl.disabled = true;
   try {{
@@ -3993,9 +3995,11 @@ async function setPosition(billId, selectEl) {{
 }}
 
 async function removeBill(billId) {{
+  // Same confirm() pattern as removeClient() on the Clients page — a
+  // plain "[Verb] [thing]? This can't be undone." sentence.
   const b = currentBills.find(x => x.bill_id === billId);
   const label = b ? `${{b.state}} ${{b.bill_number}}` : 'this bill';
-  if (!confirm(`Remove ${{label}} from this client?`)) return;
+  if (!confirm(`Remove ${{label}} from this client? This can't be undone.`)) return;
   errorEl.className = '';
   try {{
     const res = await fetch(`/api/bill-clients?bill_id=${{billId}}&client_id=${{clientId}}`, {{ method: 'DELETE' }});
