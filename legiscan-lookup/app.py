@@ -696,7 +696,14 @@ STYLE = """
      a page navigated to from elsewhere needs its ancestor group
      revealed too). */
   .side-nav-parent {
-    width: 100%; background: none; border: none; font: inherit; cursor: pointer; text-align: left;
+    /* font-family: inherit, NOT the `font` shorthand — `font: inherit`
+       resets font-SIZE (and weight/line-height) too, which clobbered
+       .side-nav-item's own 0.82rem here (same specificity, later in
+       source) and silently rendered every group button at the
+       browser's default 16px instead — enough to wrap two-word labels
+       like "Lobbying Activity" onto a second line and throw off the
+       whole sidebar's vertical rhythm. */
+    width: 100%; background: none; border: none; font-family: inherit; cursor: pointer; text-align: left;
   }
   .nav-caret { display: inline-flex; margin-left: auto; flex: none; opacity: 0.5; transition: transform .16s ease; }
   .nav-group.open .nav-caret { transform: rotate(90deg); }
@@ -1357,7 +1364,7 @@ SHELL_NAV_ITEMS = [
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
      '<path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>',
      [
-         ("/lobbying", "Organization search",
+         ("/lobbying", "Search",
           '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
           '<circle cx="6" cy="6" r="4"/><path d="M9.5 9.5L12.5 12.5" stroke-linecap="round"/></svg>'),
          ("/clients", "Clients",
