@@ -1039,22 +1039,48 @@ STYLE = """
 """
 
 
+# Deliberately NOT HttpOnly (unlike accounts.SESSION_COOKIE) — see
+# Handler._signed_in_hint_cookie_header()'s own comment for why this
+# needs to be readable by THEME_INIT_SCRIPT's inline script and why
+# that's safe (it grants nothing; it's a UI hint, not an auth token).
+SIGNED_IN_HINT_COOKIE = "signed_in_hint"
+
 # Sets data-theme from localStorage BEFORE first paint, so a page load
-# doesn't flash the OS-preference theme for a moment before JS gets
-# around to correcting it to whatever the user actually picked via the
-# toggle in account_widget(). Every page's <head> includes this, right
-# after <style> (see STYLE's own :not([data-theme="light"]) media
-# query and :root[data-theme="dark"] block, which is what this
-# attribute actually controls) — a page with no stored preference
-# leaves the attribute unset entirely, so the plain OS-preference
-# media query keeps working exactly as it always has for anyone who's
-# never touched the toggle.
-THEME_INIT_SCRIPT = """
+# doesn't flash the wrong theme for a moment before JS gets around to
+# correcting it. Every page's <head> includes this, right after <style>
+# (see STYLE's own :not([data-theme="light"]) media query and
+# :root[data-theme="dark"] block, which is what this attribute actually
+# controls).
+#
+# Priority order: (1) an explicit choice from the toggle in
+# account_widget() (localStorage['theme'], set for anyone — signed in
+# or not — who's ever used it) always wins. (2) Failing that, a
+# signed-OUT visitor defaults to dark rather than following the OS's
+# light/dark preference — product decision, not a bug: this app is
+# meant to look like the mockup's always-dark marketing/auth
+# experience for anyone who hasn't signed in yet. "Signed out" here
+# means SIGNED_IN_HINT_COOKIE is absent — that cookie is set/cleared
+# alongside the real session cookie (see _signed_in_hint_cookie_header)
+# specifically because this script runs synchronously before any
+# fetch could resolve, and the real session cookie is HttpOnly (opaque
+# to JS by design). (3) Otherwise (signed in, no explicit choice),
+# leave the attribute unset entirely, so the plain OS-preference media
+# query keeps working exactly as it always has.
+#
+# One edge case worth naming: a session created before this change
+# shipped won't have SIGNED_IN_HINT_COOKIE yet, so that visitor reads
+# as "signed out" for this initial-paint guess only, until their next
+# login/logout resets it — account_widget()'s own /api/me check still
+# correctly shows them as signed in regardless; this only affects which
+# theme they see before that check resolves.
+THEME_INIT_SCRIPT = f"""
 <script>
-(function() {
+(function() {{
   var t = localStorage.getItem('theme');
-  if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
-})();
+  if (t === 'dark' || t === 'light') {{ document.documentElement.setAttribute('data-theme', t); return; }}
+  var signedIn = document.cookie.indexOf('{SIGNED_IN_HINT_COOKIE}=1') !== -1;
+  if (!signedIn) document.documentElement.setAttribute('data-theme', 'dark');
+}})();
 </script>
 """
 
@@ -5734,8 +5760,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        if set_cookie:
-            self.send_header("Set-Cookie", set_cookie)
+        self._write_set_cookie_headers(set_cookie)
         self.end_headers()
         self.wfile.write(body)
 
@@ -5744,10 +5769,22 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        if set_cookie:
-            self.send_header("Set-Cookie", set_cookie)
+        self._write_set_cookie_headers(set_cookie)
         self.end_headers()
         self.wfile.write(body)
+
+    def _write_set_cookie_headers(self, set_cookie):
+        """set_cookie may be a single cookie header string, a list of
+        them (login/logout now set two: the real HttpOnly session
+        cookie plus SIGNED_IN_HINT_COOKIE — see that constant's own
+        comment), or None. HTTP allows repeating the Set-Cookie header
+        once per cookie; send_header() called twice does exactly that,
+        it does not overwrite."""
+        if not set_cookie:
+            return
+        cookies = [set_cookie] if isinstance(set_cookie, str) else set_cookie
+        for cookie in cookies:
+            self.send_header("Set-Cookie", cookie)
 
     def _send_bytes(self, status, content_type, body, filename=None):
         self.send_response(status)
@@ -5786,6 +5823,31 @@ class Handler(BaseHTTPRequestHandler):
             # actually means 30 days, not "until you close the tab."
             parts.append(f"Max-Age={accounts.SESSION_TTL_DAYS * 86400}")
         if is_https:
+            parts.append("Secure")
+        return "; ".join(parts)
+
+    def _signed_in_hint_cookie_header(self, clear=False):
+        """A second, deliberately non-HttpOnly cookie set/cleared
+        alongside the real session cookie (see _session_cookie_header
+        just above) — set on signup/login, cleared on logout. Holds no
+        session token and grants nothing; it exists only so
+        THEME_INIT_SCRIPT's inline pre-paint <script> (which runs
+        synchronously, before any fetch could resolve, to avoid a
+        flash of the wrong theme) can tell "there's probably a session"
+        from "there's probably not" via plain document.cookie, which
+        the real session cookie's HttpOnly flag deliberately blocks JS
+        from reading. Anyone can forge or strip this cookie — that's
+        fine, since nothing security-sensitive reads it; the real
+        /api/me check (see account_widget()) still governs actual
+        access. SIGNED_IN_HINT_COOKIE is defined near THEME_INIT_SCRIPT,
+        not accounts.py, since it's a UI/theme concern, not an auth
+        one."""
+        parts = [f"{SIGNED_IN_HINT_COOKIE}={'' if clear else '1'}", "Path=/", "SameSite=Lax"]
+        if clear:
+            parts.append("Max-Age=0")
+        else:
+            parts.append(f"Max-Age={accounts.SESSION_TTL_DAYS * 86400}")
+        if self.headers.get("X-Forwarded-Proto", "").lower() == "https":
             parts.append("Secure")
         return "; ".join(parts)
 
@@ -6438,7 +6500,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(400, {"error": str(e)})
                     return
                 token = accounts.create_session(conn, user_id)
-                self._send_json(200, {"status": "created"}, set_cookie=self._session_cookie_header(token))
+                self._send_json(200, {"status": "created"},
+                                 set_cookie=[self._session_cookie_header(token), self._signed_in_hint_cookie_header()])
             finally:
                 conn.close()
             return
@@ -6466,7 +6529,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 _clear_login_failures(email)
                 token = accounts.create_session(conn, user_id)
-                self._send_json(200, {"status": "logged in"}, set_cookie=self._session_cookie_header(token))
+                self._send_json(200, {"status": "logged in"},
+                                 set_cookie=[self._session_cookie_header(token), self._signed_in_hint_cookie_header()])
             finally:
                 conn.close()
             return
@@ -6481,7 +6545,8 @@ class Handler(BaseHTTPRequestHandler):
                     accounts.destroy_session(conn, morsel.value)
                 finally:
                     conn.close()
-            self._send_json(200, {"status": "logged out"}, set_cookie=self._session_cookie_header(None, clear=True))
+            self._send_json(200, {"status": "logged out"},
+                             set_cookie=[self._session_cookie_header(None, clear=True), self._signed_in_hint_cookie_header(clear=True)])
             return
 
         if parsed.path == "/api/profile":
