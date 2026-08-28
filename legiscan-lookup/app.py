@@ -677,7 +677,12 @@ STYLE = """
      dark mark on white. Dark mode: white mark on black. */
   .app-brand-mark { display: flex; align-items: center; flex: none; }
   nav.app-nav { padding: 1rem 0.75rem; flex: 1; overflow-y: auto; }
-  .app-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+  /* gap: 2px, not a --space-* token — matches the mockup's own
+     `<nav style="gap: 2px">` between top-level groups exactly; every
+     other value in this file that's off the 4px spacing scale gets a
+     literal value rather than forcing it onto the nearest token (see
+     STYLE's own --space-* comment). */
+  .app-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
   .side-nav-item {
     height: 2rem; display: flex; align-items: center; gap: var(--space-2); border-radius: var(--radius-md); padding: 0 0.75rem;
     font-size: 0.82rem; font-weight: 500; color: var(--slate); text-decoration: none;
@@ -711,9 +716,20 @@ STYLE = """
      display:flex (STYLE, above) is one class + one element ((0,1,1)),
      which would otherwise beat a single-class .nav-subitems ((0,1,0))
      and leave every group's children visible regardless of .open. */
-  .app-nav ul.nav-subitems { display: none; flex-direction: column; gap: var(--space-1); padding: 0.15rem 0 0.25rem 1.4rem; }
+  /* No gap at all — the mockup's own children wrapper
+     (`padding: 4px 0 8px 32px`) doesn't set one either; consecutive
+     children are separated only by their own height, same as this
+     rule's 0 gap plus each .child link's own height below. */
+  .app-nav ul.nav-subitems { display: none; flex-direction: column; gap: 0; padding: 4px 0 8px 2rem; }
   .nav-group.open .nav-subitems { display: flex; }
-  .side-nav-item.sub { height: 1.85rem; font-size: 0.8rem; }
+  /* .side-nav-item.child, not .side-nav-item.sub — "sub" collided
+     with the pre-existing generic `.sub` utility (subtitle text,
+     margin: 0 0 2rem — see that rule above) since a bare class
+     selector matches regardless of what else is on the element. That
+     leaked a 2rem bottom margin onto every child nav link, which is
+     what actually read as "too much space" between Bill lookup/
+     Flagged bills and Search/Clients — not the group-to-group gap. */
+  .side-nav-item.child { height: 1.85rem; font-size: 0.8rem; margin: 0; }
   .side-nav-label {
     font-size: 0.68rem; font-weight: 600; color: var(--slate); letter-spacing: .05em;
     text-transform: uppercase; margin: 1.25rem 0.75rem 0.5rem;
@@ -1419,7 +1435,7 @@ def app_shell(current, body):
     def render_group(label, icon, children):
         has_current = any(href == current for href, _, _ in children)
         child_html = "".join(
-            f'<li><a href="{href}" data-nav="{href}" class="side-nav-item sub{" active" if href == current else ""}">{c_icon}{c_label}</a></li>'
+            f'<li><a href="{href}" data-nav="{href}" class="side-nav-item child{" active" if href == current else ""}">{c_icon}{c_label}</a></li>'
             for href, c_label, c_icon in children
         )
         caret = ('<span class="nav-caret"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" '
