@@ -172,34 +172,69 @@ def _login_lockout_remaining_minutes(email):
 
 STYLE = """
   :root {
-    /* Monochrome — replaces the earlier indigo/Linear palette. No brand
-       accent hue anywhere; --accent is now just an alias for --slate
-       (kept as its own variable since several rules below reference it
-       by name for what used to be a colored "watch/neutral" role — a
-       plain "In committee" style tag reads better as neutral gray than
-       as a leftover colored one). --accent-solid/--accent-solid-text
-       are the button-fill pair, kept separate from --accent because in
+    /* Rotunda visual redesign (2026-08) — replaces the monochrome
+       palette that itself replaced an earlier indigo/Linear one (see
+       git history: #27 tried reintroducing color on secondary buttons,
+       #30 reverted it). This is a deliberate, larger reversal of that
+       revert, built from a Claude Design mockup the team approved —
+       not a regression back to #27's version. Same token *names* as
+       before on purpose, so the hundreds of existing rules below that
+       reference --ink/--paper/--slate/etc. by name pick up the new
+       values for free; only the values themselves, plus a handful of
+       new tokens (--bg, --gold, --warn, --info, --radius-lg), change
+       here. --content-bg is the sidebar-shell (app_shell()) page
+       background — in this design it's intentionally the SAME value as
+       --paper (the chrome bg), since the mockup has no separate "bar"
+       color at all: sidebar/topbar/content all sit on one flat --bg,
+       divided only by 1px hairlines (--rule). --surface is the one
+       token that still reads as a distinct "raised" tone (cards/panels/
+       dropdowns/modals) — the mockup's own cards are actually
+       transparent+border, but keeping --surface non-transparent for
+       now avoids relitigating every .card/.panel rule in this pass;
+       see the redesign follow-up for per-page component work. */
+    --bg: #FAF8F3; --ink: #111111; --paper: #FAF8F3; --content-bg: #FAF8F3; --surface: #FFFFFF;
+    --gold: #8A6A18;
+    --slate: color-mix(in srgb, var(--ink) 65%, transparent);
+    --rule: color-mix(in srgb, var(--ink) 14%, transparent);
+    --accent: var(--slate);
+    /* --accent-solid/--accent-solid-text are the button-fill pair — in
        dark mode the fill inverts (light pill, dark text) while --accent
-       stays a light-on-dark text color — one variable can't do both.
-       --content-bg is only used by the sidebar-shell pages (app_shell())
-       for the slightly-off-white area behind the shell's cards. */
-    --ink: #171717; --paper: #ffffff; --content-bg: #fafafa; --surface: #ffffff;
-    --slate: #6b6b6b; --rule: #e5e5e5; --accent: var(--slate);
-    --accent-solid: #171717; --accent-solid-text: #ffffff;
-    --accent-soft: #f5f5f5; --good: #15803d; --good-soft: #dcfce7;
-    --error: #b91c1c; --error-soft: #fee2e2;
+       above stays a light-on-dark *text* color, so one variable can't
+       do both. --accent-solid-hover is the mockup's own style-hover
+       swap (a solid near-black/near-white pill goes fully black/white
+       on hover) — real buttons below now use this instead of a generic
+       opacity fade. */
+    --accent-solid: #141414; --accent-solid-text: #F7F5F0; --accent-solid-hover: #000000;
+    --accent-soft: color-mix(in srgb, var(--ink) 8%, transparent);
+    /* Status/position color system: one hue per meaning (early=blue,
+       active/watch=amber, passed/support=green, failed/oppose=red),
+       fixed lightness+chroma per theme so only the hue varies — ported
+       directly from the mockup's own hue()/statusColor()/rag() JS
+       (same H values: 245/85/145/25). --good/--error keep their
+       existing names (passed/failed) since dozens of rules already
+       reference them; --warn/--info are new (active-or-watch /
+       introduced-or-in-committee). *-soft variants are translucent
+       tints of the hue itself now, not independent flat colors, so a
+       badge's soft background always stays in the same family as its
+       own text/dot color. */
+    --good: oklch(0.48 0.13 145); --good-soft: color-mix(in srgb, var(--good) 16%, transparent);
+    --error: oklch(0.48 0.13 25); --error-soft: color-mix(in srgb, var(--error) 16%, transparent);
+    --warn: oklch(0.48 0.13 85); --warn-soft: color-mix(in srgb, var(--warn) 16%, transparent);
+    --info: oklch(0.48 0.13 245); --info-soft: color-mix(in srgb, var(--info) 16%, transparent);
     --shadow-rest: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.03);
-    --shadow-hover: 0 4px 12px rgba(0,0,0,0.06);
+    --shadow-hover: 0 8px 24px rgba(0,0,0,0.10);
     /* The handful of border-radius values actually used below (4-8px)
-       collapse into these two tokens; 999px pills get their own. Left
+       collapse into these two tokens; 999px pills get their own, and
+       --radius-lg (new) is the mockup's card/panel/search-bar radius —
+       not consumed anywhere yet in this pass (existing .card/.panel/
+       .stat-card keep their own hardcoded 18px for now), just defined
+       early for the per-page redesign work that follows this one. Left
        alone on purpose: 50% and the two circular dots (.step-dot,
        .status-badge::before) that use a fixed pixel radius instead of
        50% only because their box is sized in rem, not px — those are
        circles, not rounded rectangles, so they're not part of this
-       scale. Also left alone: 18px, used by a few larger cards/panels
-       as a deliberately bigger third tier — collapsing it into
-       --radius-md would be a real size change, not just a naming one. */
-    --radius-sm: 6px; --radius-md: 8px; --radius-pill: 999px;
+       scale. */
+    --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px; --radius-pill: 999px;
     /* Not redeclared in the dark :root below — unlike color/radius,
        spacing doesn't change between themes, so one definition here
        covers both. Values below that already land on a 4px step
@@ -210,11 +245,19 @@ STYLE = """
        wholesale rewrite of every dimension in the file. */
     --space-1: 4px; --space-2: 8px; --space-3: 12px;
     --space-4: 16px; --space-5: 24px; --space-6: 32px;
-    /* Not redeclared per-theme, same reasoning as --space-* above — the
-       font stack doesn't change with light/dark. Matches the stack
-       already hardcoded at each of .bill-id/td.date/.filter-tab .n/etc.
-       below; LANDING_STYLE references this token directly instead of
-       repeating the stack a sixth time. */
+    /* Body copy is now Poppins (see FONT_LINKS) rather than the system
+       stack — the mockup's own declared stack is "Garet, Poppins,
+       system-ui, sans-serif"; Garet is a paid font whose web-embedding
+       license isn't confirmed yet (see redesign notes), so it's
+       omitted here and the stack falls through to Poppins, which reads
+       close to Garet (both rounded/geometric) and needs no licensing
+       decision since it's a free Google Font. --font-serif is the
+       mockup's one deliberate exception (Instrument Serif, for an
+       editorial-style headline) — also not consumed by anything in
+       this pass, defined for the page-level work that uses it. --mono
+       is unchanged; bill IDs/dates keep using it for now. */
+    --font-sans: Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-serif: "Instrument Serif", Georgia, serif;
     --mono: ui-monospace, monospace;
     /* One definition covers both themes — .brand-mark masks this
        shape and fills it with --ink, which already flips per theme on
@@ -229,14 +272,13 @@ STYLE = """
      values, since a media query alone can't know about the toggle. */
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --ink: #f5f5f5; --paper: #0a0a0a; --content-bg: #171717; --surface: #0a0a0a;
-      --slate: #a3a3a3; --rule: #262626; --accent: var(--slate);
-      --accent-solid: #f5f5f5; --accent-solid-text: #171717;
-      --accent-soft: #262626; --good: #4ade80; --good-soft: #0e2817;
-      --error: #f87171; --error-soft: #2f1313;
+      --bg: #000000; --ink: #ffffff; --paper: #000000; --content-bg: #000000; --surface: #0C0C0C;
+      --gold: #C9B27A;
+      --accent-solid: #F4EFE4; --accent-solid-text: #0A0A0A; --accent-solid-hover: #ffffff;
+      --good: oklch(0.76 0.12 145); --error: oklch(0.76 0.12 25);
+      --warn: oklch(0.76 0.12 85); --info: oklch(0.76 0.12 245);
       --shadow-rest: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
-      --shadow-hover: 0 4px 14px rgba(0,0,0,0.5);
-      --radius-sm: 6px; --radius-md: 8px; --radius-pill: 999px;
+      --shadow-hover: 0 18px 40px rgba(0,0,0,0.35);
     }
   }
   /* The other half of the manual override: an explicit dark choice
@@ -245,19 +287,19 @@ STYLE = """
      it) since [data-theme="dark"] needs to win even on a light-mode
      OS, where that media query never matches at all. */
   :root[data-theme="dark"] {
-    --ink: #f5f5f5; --paper: #0a0a0a; --content-bg: #171717; --surface: #0a0a0a;
-    --slate: #a3a3a3; --rule: #262626; --accent: var(--slate);
-    --accent-solid: #f5f5f5; --accent-solid-text: #171717;
-    --accent-soft: #262626; --good: #4ade80; --good-soft: #0e2817;
-    --error: #f87171; --error-soft: #2f1313;
+    --bg: #000000; --ink: #ffffff; --paper: #000000; --content-bg: #000000; --surface: #0C0C0C;
+    --gold: #C9B27A;
+    --accent-solid: #F4EFE4; --accent-solid-text: #0A0A0A; --accent-solid-hover: #ffffff;
+    --good: oklch(0.76 0.12 145); --error: oklch(0.76 0.12 25);
+    --warn: oklch(0.76 0.12 85); --info: oklch(0.76 0.12 245);
     --shadow-rest: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
-    --shadow-hover: 0 4px 14px rgba(0,0,0,0.5);
-    --radius-sm: 6px; --radius-md: 8px; --radius-pill: 999px;
+    --shadow-hover: 0 18px 40px rgba(0,0,0,0.35);
   }
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--content-bg); color: var(--ink);
-    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font: 16px/1.5 var(--font-sans);
+    -webkit-font-smoothing: antialiased;
   }
   /* A handful of plain, unclassed <a> tags (e.g. a client's name in the
      flagged-bills list) had no color rule anywhere, so they fell back to
@@ -265,11 +307,15 @@ STYLE = """
      this is the one place that acts as a fallback for those. Anywhere
      that already sets its own color (.secondary, .primary, .panel-link,
      etc.) keeps doing so — a class selector beats this bare-tag one. */
-  a { color: var(--accent); }
+  a { color: var(--accent); text-decoration: none; }
+  /* Matches the mockup's a:hover — every plain link warms to --gold on
+     hover instead of the browser default underline-only treatment. */
+  a:hover { color: var(--gold); }
   a:focus-visible, button:focus-visible, input:focus-visible,
   select:focus-visible, summary:focus-visible {
-    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm);
+    outline: 2px solid var(--gold); outline-offset: 2px; border-radius: var(--radius-sm);
   }
+  ::selection { background: var(--accent-solid); color: var(--accent-solid-text); }
   .wrap { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
   /* A full-width bar, same grammar as the signed-in shell's .app-topbar
      (fixed height, border-bottom, solid --paper against the page's
@@ -363,35 +409,50 @@ STYLE = """
   }
   select { cursor: pointer; }
   input#bill { flex: 1; min-width: 8rem; }
+  /* Solid actions are full pills now (not var(--radius-md)'s 8px) with
+     a real hover color swap (--accent-solid-hover) instead of a generic
+     opacity fade — matches the mockup's "Confirm"/"Bill report" pill
+     buttons and their own style-hover="background: var(--accent-hover)". */
   button {
     font: inherit; font-weight: 600; padding: var(--space-2) var(--space-4); border: none;
-    border-radius: var(--radius-md); background: var(--accent-solid); color: var(--accent-solid-text); cursor: pointer;
+    border-radius: var(--radius-pill); background: var(--accent-solid); color: var(--accent-solid-text); cursor: pointer;
+    transition: background .12s ease;
   }
-  button:hover { opacity: 0.9; }
+  button:hover { background: var(--accent-solid-hover); }
   button:disabled { opacity: 0.5; cursor: default; }
-  button.secondary { background: var(--accent-soft); color: var(--accent); }
-  button.danger { background: var(--error-soft); color: var(--error); }
+  /* Secondary/danger actions are outlined pills (transparent fill, a
+     border that deepens on hover) rather than the old soft-filled
+     background — matches the mockup's "Flag this bill"/"Cancel"
+     treatment, where the only solid-filled pill on a page is the one
+     primary action. */
+  button.secondary, button.danger {
+    background: transparent; border: 1px solid var(--rule); color: var(--ink);
+  }
+  button.danger { color: var(--error); }
+  button.secondary:hover { border-color: var(--ink); }
+  button.danger:hover { border-color: var(--error); }
   /* Same button look for plain <a> links used as actions (e.g. "View"
      on LegiScan, "Report" to the action-report page) — button's base
      rule only targets <button>, so links need their own copy of the
      same properties plus the anchor-specific reset. */
   a.secondary, a.danger {
     display: inline-flex; align-items: center; gap: var(--space-2); font: inherit; font-weight: 600;
-    padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); text-decoration: none;
+    padding: var(--space-2) var(--space-4); border-radius: var(--radius-pill); text-decoration: none;
+    background: transparent; border: 1px solid var(--rule); color: var(--ink); transition: border-color .12s ease, color .12s ease;
   }
-  a.secondary { background: var(--accent-soft); color: var(--accent); }
-  a.danger { background: var(--error-soft); color: var(--error); }
+  a.danger { color: var(--error); }
   a.secondary svg, a.danger svg { width: 0.85rem; height: 0.85rem; flex: none; }
   /* Solid-fill counterpart to a.secondary/a.danger above, same reasoning
      — an <a> styled to look like the app's solid dark <button>. */
   a.primary {
     display: inline-flex; align-items: center; gap: var(--space-2); font: inherit; font-weight: 600;
-    padding: 0.5rem var(--space-4); border-radius: var(--radius-md); text-decoration: none;
-    background: var(--accent-solid); color: var(--accent-solid-text);
+    padding: 0.5rem var(--space-4); border-radius: var(--radius-pill); text-decoration: none;
+    background: var(--accent-solid); color: var(--accent-solid-text); transition: background .12s ease;
   }
-  a.primary:hover { opacity: 0.9; }
+  a.primary:hover { background: var(--accent-solid-hover); }
   a.primary svg { width: 0.85rem; height: 0.85rem; }
-  a.secondary:hover, a.danger:hover { opacity: 0.9; }
+  a.secondary:hover { border-color: var(--ink); color: var(--ink); }
+  a.danger:hover { border-color: var(--error); }
   #result { display: none; }
   #result.show { display: block; }
   .card {
@@ -625,6 +686,27 @@ STYLE = """
   .side-nav-item svg { width: 0.9rem; height: 0.9rem; flex: none; }
   .side-nav-item:hover { background: var(--accent-soft); color: var(--ink); }
   .side-nav-item.active { background: var(--accent-soft); color: var(--ink); }
+  /* Grouped/accordion nav (matches the mockup's Bills / Lobbying
+     Activity / Draft groups, each expanding to its own children) —
+     .side-nav-parent is a <button>, not an <a> (it toggles, it doesn't
+     navigate), styled identically to .side-nav-item plus its own
+     caret. .nav-subitems is display:none until its <li> gets .open
+     (added at render time for whichever group contains `current`, and
+     by REPORT_BODY's own script — see its data-nav re-targeting — when
+     a page navigated to from elsewhere needs its ancestor group
+     revealed too). */
+  .side-nav-parent {
+    width: 100%; background: none; border: none; font: inherit; cursor: pointer; text-align: left;
+  }
+  .nav-caret { display: inline-flex; margin-left: auto; flex: none; opacity: 0.5; transition: transform .16s ease; }
+  .nav-group.open .nav-caret { transform: rotate(90deg); }
+  /* .app-nav ul.nav-subitems, not just .nav-subitems — .app-nav ul's own
+     display:flex (STYLE, above) is one class + one element ((0,1,1)),
+     which would otherwise beat a single-class .nav-subitems ((0,1,0))
+     and leave every group's children visible regardless of .open. */
+  .app-nav ul.nav-subitems { display: none; flex-direction: column; gap: var(--space-1); padding: 0.15rem 0 0.25rem 1.4rem; }
+  .nav-group.open .nav-subitems { display: flex; }
+  .side-nav-item.sub { height: 1.85rem; font-size: 0.8rem; }
   .side-nav-label {
     font-size: 0.68rem; font-weight: 600; color: var(--slate); letter-spacing: .05em;
     text-transform: uppercase; margin: 1.25rem 0.75rem 0.5rem;
@@ -953,6 +1035,20 @@ THEME_INIT_SCRIPT = """
 </script>
 """
 
+# Two Google Fonts (free, no licensing decision needed): Poppins is the
+# body/UI typeface (--font-sans in STYLE); Instrument Serif is the one
+# deliberate display exception the mockup uses for an editorial-style
+# headline (--font-serif). Garet, the mockup's actual primary typeface,
+# is a paid font whose web-embedding license isn't confirmed — omitted
+# here on purpose (see STYLE's own comment on --font-sans); the stack
+# already falls through to Poppins without it. Included in every page's
+# <head> alongside THEME_INIT_SCRIPT so both are one edit, not five.
+FONT_LINKS = """
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+"""
+
 
 def nav_links(current):
     """Links to whichever OTHER content pages exist — computed once per
@@ -1106,21 +1202,25 @@ def account_widget(extra_links="", menu_class="", guest_plain=False):
 
 
 # The real Rotunda logo — a stylized capitol/rotunda silhouette (dome,
-# entablature bar, three columns, base) built as inline SVG rather
-# than an <img>, so it recolors via CSS the same way every other icon
-# in this app already does instead of needing separate light/dark
-# raster exports. .brand-mark is a sized, empty element that masks
-# this shape and fills it with --ink (see .brand-mark's own CSS) —
-# --ink already flips per theme on its own, so unlike the old two-PNG
-# version this needs only ONE definition here, not three (:root, the
-# dark media query, and [data-theme="dark"]).
+# entablature bar, four columns, base) built as inline SVG rather than
+# an <img>, so it recolors via CSS the same way every other icon in
+# this app already does instead of needing separate light/dark raster
+# exports (the mockup's own logo is a flat white-on-black PNG, so this
+# keeps that same shape but as a theme-aware mask instead of adopting
+# the PNG and the static-asset-serving it would need). .brand-mark is
+# a sized, empty element that masks this shape and fills it with --ink
+# (see .brand-mark's own CSS) — --ink already flips per theme on its
+# own, so unlike a two-PNG version this needs only ONE definition here,
+# not three (:root, the dark media query, and [data-theme="dark"]).
+# Four columns (was three) to match the mockup's own mark.
 BRAND_MARK_SVG = """<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
   <path d="M20 42 A30 30 0 0 1 80 42" fill="none" stroke="#000" stroke-width="10"/>
   <rect x="8" y="47" width="84" height="7"/>
-  <rect x="23" y="59" width="9" height="27"/>
-  <rect x="45.5" y="59" width="9" height="27"/>
-  <rect x="68" y="59" width="9" height="27"/>
-  <rect x="18" y="91" width="64" height="7"/>
+  <rect x="18" y="59" width="9" height="27"/>
+  <rect x="35" y="59" width="9" height="27"/>
+  <rect x="52" y="59" width="9" height="27"/>
+  <rect x="69" y="59" width="9" height="27"/>
+  <rect x="14" y="91" width="72" height="7"/>
 </svg>"""
 BRAND_MARK_SVG_B64 = base64.b64encode(BRAND_MARK_SVG.encode("utf-8")).decode("ascii")
 
@@ -1228,25 +1328,51 @@ def top_nav(current, left_extra="", show_account_menu=True):
 # sidebar pointing at pages you can't use yet doesn't make sense before
 # you're signed in. /flagged is the first page moved over — /clients,
 # /disclosures, /profile, /report, and /clients/detail follow later.
+#
+# Grouped/accordion structure (Bills / Lobbying Activity / Draft),
+# matching the mockup's own nav grouping — was a flat 5-item list
+# before this redesign. Each group is (label, icon, [(href, label,
+# icon), ...]); app_shell() below expands whichever group contains
+# `current` by default. The mockup also shows a top-level "home" item
+# and a "draft > position letters" child — both omitted here since
+# neither has a real page behind it yet (no dashboard/home route, no
+# position-letter drafting feature); "draft" only has one real child
+# (Disclosures/Form 601 prep) until position letters becomes a real
+# feature.
 SHELL_NAV_ITEMS = [
-    # Was two separate items ("Lookup" + "Discover") until the two
-    # pages merged into one search experience — see LOOKUP_BODY.
-    ("/lookup", "Lookup",
+    ("Bills",
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
-     '<circle cx="6" cy="6" r="4"/><path d="M9.5 9.5L12.5 12.5" stroke-linecap="round"/></svg>'),
-    ("/lobbying", "Organization Search",
+     '<rect x="3" y="1.5" width="8" height="11" rx="1"/><path d="M5 4.5h4M5 7h4M5 9.5h2.5" stroke-linecap="round"/></svg>',
+     [
+         # Was two separate items ("Lookup" + "Discover") until the two
+         # pages merged into one search experience — see LOOKUP_BODY.
+         ("/lookup", "Bill lookup",
+          '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+          '<circle cx="6" cy="6" r="4"/><path d="M9.5 9.5L12.5 12.5" stroke-linecap="round"/></svg>'),
+         ("/flagged", "Flagged bills",
+          '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+          '<path d="M2 1v12M2 2h8l-2 2.5L10 7H2" stroke-linejoin="round"/></svg>'),
+     ]),
+    ("Lobbying Activity",
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
-     '<path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>'),
-    ("/flagged", "Flagged bills",
+     '<path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>',
+     [
+         ("/lobbying", "Organization search",
+          '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+          '<circle cx="6" cy="6" r="4"/><path d="M9.5 9.5L12.5 12.5" stroke-linecap="round"/></svg>'),
+         ("/clients", "Clients",
+          '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+          '<circle cx="5.5" cy="4.5" r="2.5"/><path d="M1 12c0-2.5 2-4.2 4.5-4.2S10 9.5 10 12" stroke-linecap="round"/></svg>'),
+     ]),
+    ("Draft",
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
-     '<path d="M2 1v12M2 2h8l-2 2.5L10 7H2" stroke-linejoin="round"/></svg>'),
-    ("/clients", "Clients",
-     '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
-     '<circle cx="5.5" cy="4.5" r="2.5"/><path d="M1 12c0-2.5 2-4.2 4.5-4.2S10 9.5 10 12" stroke-linecap="round"/></svg>'),
-    ("/disclosures", "Disclosures",
-     '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
-     '<rect x="3" y="1.5" width="8" height="11" rx="1"/>'
-     '<path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>'),
+     '<path d="M2.3 11.7l1.8-.4L11 4.4a1 1 0 000-1.4l-.9-.9a1 1 0 00-1.4 0L1.8 9l-.4 1.8z"/></svg>',
+     [
+         ("/disclosures", "Disclosures",
+          '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+          '<rect x="3" y="1.5" width="8" height="11" rx="1"/>'
+          '<path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>'),
+     ]),
 ]
 
 
@@ -1280,11 +1406,24 @@ def app_shell(current, body):
     # context depends on where the visitor came from, not on the fixed
     # `current` this whole shell was built with at import time — can find
     # and re-target the right <li> client-side instead of parsing link
-    # text. See REPORT_BODY's own script for the one place that happens.
-    nav_html = "".join(
-        f'<li><a href="{href}" data-nav="{href}" class="side-nav-item{" active" if href == current else ""}">{icon}{label}</a></li>'
-        for href, label, icon in SHELL_NAV_ITEMS
-    )
+    # text. See REPORT_BODY's own script for the one place that happens
+    # (and this function's own script below, which expands a group when
+    # that re-targeting lands on one of its children).
+    def render_group(label, icon, children):
+        has_current = any(href == current for href, _, _ in children)
+        child_html = "".join(
+            f'<li><a href="{href}" data-nav="{href}" class="side-nav-item sub{" active" if href == current else ""}">{c_icon}{c_label}</a></li>'
+            for href, c_label, c_icon in children
+        )
+        caret = ('<span class="nav-caret"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" '
+                 'stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 5l8 7-8 7"/></svg></span>')
+        return (
+            f'<li class="nav-group{" open" if has_current else ""}">'
+            f'<button type="button" class="side-nav-item side-nav-parent" aria-expanded="{"true" if has_current else "false"}">'
+            f'{icon}<span>{label}</span>{caret}</button>'
+            f'<ul class="nav-subitems">{child_html}</ul></li>'
+        )
+    nav_html = "".join(render_group(label, icon, children) for label, icon, children in SHELL_NAV_ITEMS)
     profile_active = " active" if current == "/profile" else ""
     return f"""
 <div class="app-shell">
@@ -1329,6 +1468,18 @@ def app_shell(current, body):
   const today = new Date();
   document.getElementById('shell-date').textContent = today.toLocaleDateString('en-US', {{
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+  }});
+
+  // Each Bills/Lobbying Activity/Draft group starts open only if it
+  // holds `current` (see render_group() above); clicking its parent
+  // button just toggles its own .nav-group, independent of the others.
+  document.querySelectorAll('.side-nav-parent').forEach((btn) => {{
+    btn.addEventListener('click', () => {{
+      const group = btn.closest('.nav-group');
+      const open = !group.classList.contains('open');
+      group.classList.toggle('open', open);
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }});
   }});
 
   // Sidebar footer's account button/menu (shell-guest/shell-account-btn/
@@ -1386,11 +1537,13 @@ def page(title, path, body):
     copied into 13 constants by hand.
 
     Deliberately NOT used by the handful of pages that build their
-    <body> some other way (LANDING_PAGE and SIGNUP_PAGE/LOGIN_PAGE/
-    PROFILE_PAGE call top_nav() with page-specific left_extra/
-    show_account_menu args, not app_shell() — collapsing those would
-    mean restructuring how each one builds its body, not just
-    deduping this wrapper)."""
+    <body> some other way — SIGNUP_PAGE/LOGIN_PAGE/PROFILE_PAGE call
+    top_nav() with page-specific left_extra/show_account_menu args, not
+    app_shell() (collapsing those would mean restructuring how each one
+    builds its body, not just deduping this wrapper); LANDING_PAGE
+    doesn't use either helper at all — it's a standalone full-bleed
+    splash with no shared nav chrome (see LANDING_STYLE's own
+    comment)."""
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -1398,6 +1551,7 @@ def page(title, path, body):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <style>{STYLE}</style>
+{FONT_LINKS}
 {THEME_INIT_SCRIPT}
 </head>
 <body>
@@ -1407,134 +1561,84 @@ def page(title, path, body):
 """
 
 
-# The marketing homepage at "/" — everything else in this file is the
-# actual product; this is the only page that sells it. Reuses the same
-# STYLE (tokens, .card, .panel, .status-badge, .position-badge, buttons,
-# top_nav()) as every other page — LANDING_STYLE below adds only what's
-# genuinely new here (hero, feature grid, workflow, trust, footer).
-# Renders as .mkt-wrap rather than .wrap — the shared .wrap is the
-# app's narrow 46rem content column; a marketing page with a feature
-# grid needs real width, so it gets its own container instead of
-# overloading .wrap's meaning.
+# The marketing homepage at "/" — replaced (2026-08 redesign) with the
+# mockup's own minimal splash screen (Rotunda Landing.dc.html): just
+# the wordmark, brand mark, tagline, and a "get started" link, in place
+# of the previous full hero/feature-grid/workflow/trust/footer page —
+# a deliberate content cut the user confirmed, not an oversight.
+# Unlike every other page in this file, LANDING_STYLE hardcodes its own
+# colors rather than reading STYLE's --bg/--ink tokens: the mockup
+# itself has no light-mode variant for this screen (compare Rotunda
+# Dashboard.dc.html, which explicitly supports both) — it's always
+# this one dark look, regardless of the visitor's system/toggle
+# preference. Reuses the masked brand-mark shape (--brand-mark, see
+# BRAND_MARK_SVG above) instead of the mockup's own raster PNG logo —
+# same reasoning as the sidebar's app-brand-mark: recolors for free, no
+# static-asset route needed for a redesign this size. "get started"
+# goes to /signup, which already offers "← Lookup"/"Log in →" links of
+# its own (see SIGNUP_PAGE) — this splash doesn't need its own chrome
+# to keep those reachable.
 LANDING_STYLE = """
-  .mkt-wrap { max-width: 72.5rem; margin: 0 auto; padding: 0 2rem; }
-  .hero { position: relative; padding: 5.5rem 0 5rem; overflow: hidden; }
-  .hero-inner { display: flex; flex-direction: column; align-items: center; text-align: center; }
-  .eyebrow {
-    display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.78rem; font-weight: 600;
-    background: var(--accent-soft); border: 1px solid var(--rule); padding: 0.4rem 0.75rem;
-    border-radius: 20px; margin-bottom: 1.4rem;
+  .splash {
+    position: relative; overflow: hidden; min-height: 100svh; background: #000; color: #fff;
+    display: flex; flex-direction: column;
   }
-  .eyebrow .dot { width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--ink); }
-  h1.headline { font-size: 3.5rem; line-height: 1.08; font-weight: 700; letter-spacing: -0.025em; max-width: 47rem; }
-  .sub-lg { margin-top: 1.4rem; font-size: 1.15rem; line-height: 1.6; color: var(--slate); max-width: 35rem; }
-  .hero-ctas { display: flex; gap: 0.75rem; margin-top: 2rem; }
-  .hero-note { margin-top: 1rem; font-size: 0.82rem; color: var(--slate); }
-
-  .frame {
-    margin-top: 3.5rem; width: 100%; max-width: 55rem; border-radius: 18px; border: 1px solid var(--rule);
-    background: var(--surface); box-shadow: 0 30px 60px -20px rgba(0,0,0,0.18); overflow: hidden; text-align: left;
+  .splash a { color: #fff; }
+  .splash a:hover { color: #F4EFE4; }
+  .splash ::selection { background: #F4EFE4; color: #000; }
+  /* Four faint decorative layers, all pointer-events:none and purely
+     cosmetic — a dotted-grid swatch in two corners, three concentric
+     ring outlines bleeding off the top-left/bottom-right, and one soft
+     radial glow low-center. Pixel values ported directly from the
+     mockup rather than converted to rem, since these are one-off
+     decorative shapes tied to this exact screen, not reused anywhere
+     else that would benefit from rem's user-font-size scaling. */
+  .splash-dots {
+    position: absolute; pointer-events: none;
+    background-image: radial-gradient(rgba(255,255,255,0.2) 2px, transparent 2.2px);
+    background-size: 33px 33px;
   }
-  .frame-body { display: flex; height: 23.75rem; }
-  .frame-sidebar {
-    width: 11.25rem; flex: none; background: var(--paper); border-right: 1px solid var(--rule);
-    display: flex; flex-direction: column; padding: 0.9rem 0.6rem;
+  .splash-dots.tl { top: -8px; left: 0; width: 264px; height: 194px; background-position: 22px 22px; }
+  .splash-dots.br { bottom: -10px; right: -10px; width: 372px; height: 190px; }
+  .splash-ring { position: absolute; border-radius: 50%; pointer-events: none; }
+  .splash-ring.r1 { top: -17vmax; left: -15vmax; width: 40vmax; height: 40vmax; max-width: 560px; max-height: 560px; border: 1px solid rgba(255,255,255,0.28); }
+  .splash-ring.r2 { top: -10vmax; left: -26vmax; width: 32vmax; height: 32vmax; max-width: 450px; max-height: 450px; border: 1px solid rgba(255,255,255,0.22); }
+  .splash-ring.r3 { bottom: -22vmax; right: -10vmax; width: 47vmax; height: 47vmax; max-width: 660px; max-height: 660px; border: 1px solid rgba(255,255,255,0.26); }
+  .splash-glow {
+    position: absolute; bottom: -190px; left: 50%; transform: translateX(-50%); width: 460px; height: 330px;
+    border-radius: 50%; background: radial-gradient(closest-side, rgba(255,255,255,0.2), rgba(255,255,255,0)); pointer-events: none;
   }
-  .frame-brand { display: flex; align-items: center; gap: 0.45rem; padding: 0.1rem 0.4rem 0.9rem; font-weight: 600; font-size: 0.78rem; }
-  .frame-nav-item { height: 1.75rem; display: flex; align-items: center; gap: 0.5rem; border-radius: 7px; padding: 0 0.5rem; font-size: 0.72rem; font-weight: 500; color: var(--slate); }
-  .frame-nav-item svg { width: 0.75rem; height: 0.75rem; flex: none; }
-  .frame-nav-item.active { background: var(--accent-soft); color: var(--ink); }
-  .frame-main { flex: 1; background: var(--content-bg); padding: 1rem 1.1rem; overflow: hidden; }
-  .frame-topbar { margin-bottom: 0.85rem; }
-  .frame-title { font-size: 0.875rem; font-weight: 600; }
-  .frame-sub { font-size: 0.68rem; color: var(--slate); margin-top: 0.1rem; }
-  .frame-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin-bottom: 0.75rem; }
-  .frame-stat { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 0.55rem 0.7rem; box-shadow: var(--shadow-rest); }
-  .frame-stat .n { font-family: var(--mono); font-size: 1.05rem; font-weight: 600; }
-  .frame-stat .l { font-size: 0.58rem; color: var(--slate); margin-top: 0.05rem; }
-  .frame-table { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
-  .frame-row { display: grid; grid-template-columns: 1fr 5.25rem 4.6rem 1.6rem; gap: 0.5rem; align-items: center; padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--rule); font-size: 0.68rem; }
-  .frame-row:last-child { border-bottom: none; }
-  .frame-row .bill { font-weight: 600; }
-  .frame-row .id { font-family: var(--mono); color: var(--slate); font-size: 0.58rem; margin-top: 0.05rem; }
-  .frame-row .status-badge, .frame-row .position-badge { font-size: 0.58rem; padding: 0.1rem 0.4rem; }
-  .frame-row .status-badge::before { width: 0.25rem; height: 0.25rem; }
-  .frame-row .row-menu-btn { height: 1.3rem; width: 1.3rem; }
-  .frame-row .row-menu-btn svg { width: 0.6rem; height: 0.6rem; }
-
-  .strip { border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); background: var(--paper); }
-  .strip-row { display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 2rem 0; }
-  .strip-item { padding: 0 1.75rem; border-left: 1px solid var(--rule); font-size: 0.9rem; color: var(--slate); line-height: 1.55; }
-  .strip-item:first-child { border-left: none; padding-left: 0; }
-  .strip-item b { color: var(--ink); font-weight: 600; }
-
-  section.mkt-section { padding: 6.25rem 0; }
-  .section-head { max-width: 37.5rem; margin-bottom: 3.5rem; }
-  .kicker { font-family: var(--mono); font-size: 0.75rem; color: var(--slate); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 0.875rem; }
-  .section-head h2 { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
-  .section-head p { margin-top: 0.875rem; font-size: 1rem; color: var(--slate); line-height: 1.6; }
-
-  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
-  .feat { padding: 1.5rem; transition: box-shadow .2s ease, transform .2s ease; }
-  .feat:hover { box-shadow: var(--shadow-hover); transform: translateY(-2px); }
-  .feat.wide { grid-column: span 2; }
-  .feat-icon {
-    width: 2.125rem; height: 2.125rem; border-radius: 9px; background: var(--accent-soft); border: 1px solid var(--rule);
-    display: flex; align-items: center; justify-content: center; color: var(--ink); margin-bottom: 1rem;
+  .splash-topline { position: relative; padding: clamp(28px, 5vh, 56px) clamp(28px, 4vw, 56px) 0; flex: none; }
+  .splash-topline div { height: 1px; background: rgba(255,255,255,0.6); }
+  .splash-main {
+    position: relative; flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; padding: clamp(16px, 4vh, 40px) 24px 0; text-align: center;
   }
-  .feat h3 { font-size: 1rem; font-weight: 600; letter-spacing: -0.005em; }
-  .feat p { margin-top: 0.55rem; font-size: 0.875rem; color: var(--slate); line-height: 1.6; }
-  .feat-tag { display: inline-block; margin-top: 0.875rem; font-family: var(--mono); font-size: 0.69rem; color: var(--slate); border: 1px solid var(--rule); border-radius: 5px; padding: 0.2rem 0.45rem; }
-
-  .flow { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
-  .flow::before { content: ""; position: absolute; top: 1.45rem; left: calc(16.6% + 0.5rem); right: calc(16.6% + 0.5rem); height: 1px; background: var(--rule); }
-  .flow-num {
-    width: 2.875rem; height: 2.875rem; border-radius: 50%; background: var(--paper); border: 1px solid var(--rule);
-    display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 0.875rem; color: var(--ink);
-    margin-bottom: 1.4rem; position: relative; z-index: 1;
+  .splash-word {
+    margin: 0; font-size: clamp(34px, 4.6vw, 62px); font-weight: 700; letter-spacing: 0.3em;
+    line-height: 1; text-indent: 0.3em;
   }
-  .flow-step h3 { font-size: 1.06rem; font-weight: 600; }
-  .flow-step p { margin-top: 0.5rem; font-size: 0.875rem; color: var(--slate); line-height: 1.6; max-width: 18.75rem; }
-
-  .trust { padding: 3rem 3.25rem; display: flex; gap: 2.375rem; align-items: flex-start; }
-  .trust-icon {
-    width: 3.125rem; height: 3.125rem; flex: none; border-radius: 12px; background: var(--accent-soft); border: 1px solid var(--rule);
-    display: flex; align-items: center; justify-content: center; color: var(--ink);
+  .splash-mark {
+    display: inline-block; width: clamp(140px, 18vw, 250px); height: clamp(140px, 18vw, 250px);
+    margin: clamp(14px, 2.6vh, 24px) 0 0; background-color: #fff;
+    -webkit-mask-image: var(--brand-mark); mask-image: var(--brand-mark);
+    -webkit-mask-size: contain; mask-size: contain;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+    -webkit-mask-position: center; mask-position: center;
   }
-  .trust h2 { font-size: 1.56rem; font-weight: 700; letter-spacing: -0.015em; }
-  .trust p { margin-top: 0.75rem; font-size: 0.94rem; color: var(--slate); line-height: 1.7; max-width: 40rem; }
-  .trust p + p { margin-top: 0.625rem; }
-
-  .cta-band { border-radius: 20px; text-align: center; padding: 4rem 2.5rem; background: var(--paper); }
-  .cta-band h2 { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; max-width: 32.5rem; margin: 0 auto; }
-  .cta-band .hero-ctas { justify-content: center; margin-top: 1.6rem; }
-  .cta-band p.foot { margin-top: 1rem; font-size: 0.81rem; color: var(--slate); }
-
-  .mkt-footer { border-top: 1px solid var(--rule); padding: 3.25rem 0 2.25rem; }
-  .foot-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 2.5rem; flex-wrap: wrap; }
-  .foot-brand { max-width: 16.25rem; }
-  .foot-brand .top-brand { margin-bottom: 0.625rem; pointer-events: none; }
-  .foot-brand p { font-size: 0.84rem; color: var(--slate); line-height: 1.6; }
-  .foot-col h4 { font-size: 0.75rem; color: var(--slate); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.875rem; font-weight: 600; }
-  .foot-col a { display: block; font-size: 0.875rem; color: var(--slate); margin-bottom: 0.625rem; transition: color .15s ease; }
-  .foot-col a:hover { color: var(--ink); }
-  .foot-bottom { margin-top: 3rem; padding-top: 1.375rem; border-top: 1px solid var(--rule); font-size: 0.78rem; color: var(--slate); }
-
-  @media (max-width: 55rem) {
-    h1.headline { font-size: 2.375rem; }
-    .grid { grid-template-columns: 1fr; }
-    .feat.wide { grid-column: span 1; }
-    .flow { grid-template-columns: 1fr; }
-    .flow::before { display: none; }
-    .strip-row { grid-template-columns: 1fr; }
-    .strip-item { border-left: none; padding: 0; border-top: 1px solid var(--rule); padding-top: 1.125rem; }
-    .strip-item:first-child { border-top: none; padding-top: 0; }
-    .strip-item + .strip-item { margin-top: 1.125rem; }
-    .trust { flex-direction: column; padding: 1.875rem; }
-    .frame-sidebar { display: none; }
-    .frame-row { grid-template-columns: 1fr 4.6rem 1.6rem; }
-    .frame-row .position-badge { display: none; }
+  .splash-tagline {
+    margin: clamp(12px, 2.2vh, 20px) 0 0; font-size: clamp(11px, 1.05vw, 14px); font-weight: 400;
+    letter-spacing: 0.22em; text-transform: uppercase; color: rgba(255,255,255,0.9);
   }
+  .splash-cta {
+    position: relative; flex: none; display: flex; flex-direction: column; align-items: center; gap: 10px;
+    padding: clamp(20px, 4vh, 40px) 24px clamp(32px, 8vh, 72px);
+  }
+  .splash-cta a { font-size: 19px; font-weight: 400; letter-spacing: 0.01em; padding: 4px 8px; }
+  .splash-chevrons { display: flex; flex-direction: column; align-items: center; animation: splash-chevron 1.9s ease-in-out infinite; }
+  .splash-chevrons svg:last-child { margin-top: -3px; }
+  @keyframes splash-chevron { 0%, 100% { transform: translateY(0); opacity: 0.75; } 50% { transform: translateY(5px); opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .splash-chevrons { animation: none; } }
 """
 
 LANDING_PAGE = f"""<!doctype html>
@@ -1544,215 +1648,33 @@ LANDING_PAGE = f"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rotunda</title>
 <style>{STYLE}{LANDING_STYLE}</style>
-{THEME_INIT_SCRIPT}
+{FONT_LINKS}
 </head>
 <body>
-{top_nav("/", left_extra='<a href="/lookup">Lookup</a><a href="#features">Product</a><a href="#workflow">Workflow</a><a href="#trust">Compliance</a>')}
+<div class="splash">
+  <div class="splash-dots tl" aria-hidden="true"></div>
+  <div class="splash-dots br" aria-hidden="true"></div>
+  <div class="splash-ring r1" aria-hidden="true"></div>
+  <div class="splash-ring r2" aria-hidden="true"></div>
+  <div class="splash-ring r3" aria-hidden="true"></div>
+  <div class="splash-glow" aria-hidden="true"></div>
 
-<main>
-<header class="hero">
-  <div class="mkt-wrap hero-inner">
-    <div class="eyebrow"><span class="dot"></span>Built for California lobbying compliance</div>
-    <h1 class="headline">The system of record for every bill your clients care about.</h1>
-    <p class="sub-lg">Rotunda watches Sacramento so you don't have to. Flag a bill, assign a client and a position, and get one plain-English digest the moment anything actually changes — then let it fill out your FPPC paperwork before the deadline finds you.</p>
-    <div class="hero-ctas">
-      <a href="/signup" class="primary" style="min-height:2.75rem;font-size:0.875rem;">Start tracking bills</a>
-      <a href="#features" class="secondary" style="min-height:2.75rem;">See how it works</a>
+  <div class="splash-topline"><div></div></div>
+
+  <main class="splash-main">
+    <h1 class="splash-word">rotunda</h1>
+    <span class="splash-mark" role="img" aria-label="Rotunda"></span>
+    <p class="splash-tagline">everything under the dome</p>
+  </main>
+
+  <div class="splash-cta">
+    <a href="/signup">get started</a>
+    <div class="splash-chevrons" aria-hidden="true">
+      <svg width="16" height="9" viewBox="0 0 16 9" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.1" stroke-linecap="round"><path d="M1 1l7 7 7-7"></path></svg>
+      <svg width="16" height="9" viewBox="0 0 16 9" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="1.1" stroke-linecap="round"><path d="M1 1l7 7 7-7"></path></svg>
     </div>
-    <p class="hero-note">Free to <a href="/lookup">look up any bill</a>. No account needed until you flag one.</p>
-
-    <div class="frame" aria-hidden="true">
-      <div class="frame-body">
-        <div class="frame-sidebar">
-          <div class="frame-brand">
-            <span class="brand-mark" style="width:13px;height:13px"></span>
-            Rotunda
-          </div>
-          <div class="frame-nav-item">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="4"/><path d="M9.5 9.5L12.5 12.5" stroke-linecap="round"/></svg>
-            Lookup
-          </div>
-          <div class="frame-nav-item">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>
-            Organization Search
-          </div>
-          <div class="frame-nav-item active">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 1v12M2 2h8l-2 2.5L10 7H2" stroke-linejoin="round"/></svg>
-            Flagged bills
-          </div>
-          <div class="frame-nav-item">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5.5" cy="4.5" r="2.5"/><path d="M1 12c0-2.5 2-4.2 4.5-4.2S10 9.5 10 12" stroke-linecap="round"/></svg>
-            Clients
-          </div>
-          <div class="frame-nav-item">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="1.5" width="8" height="11" rx="1"/><path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Disclosures
-          </div>
-        </div>
-        <div class="frame-main">
-          <div class="frame-topbar">
-            <div class="frame-title">Flagged Bills</div>
-            <div class="frame-sub">8 bills across 3 clients</div>
-          </div>
-          <div class="frame-stats">
-            <div class="frame-stat"><div class="n">8</div><div class="l">Flagged bills</div></div>
-            <div class="frame-stat"><div class="n">3</div><div class="l">Active clients</div></div>
-            <div class="frame-stat"><div class="n">1</div><div class="l">Needs a client</div></div>
-          </div>
-          <div class="frame-table">
-            <div class="frame-row">
-              <div><div class="bill">Lobbying Disclosure Modernization Act</div><div class="id">AB 1228</div></div>
-              <div class="status-badge">Hearing sched.</div>
-              <div><span class="position-badge support">Support</span></div>
-              <div class="row-menu-btn"><svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.4"/><circle cx="7" cy="7" r="1.4"/><circle cx="7" cy="11" r="1.4"/></svg></div>
-            </div>
-            <div class="frame-row">
-              <div><div class="bill">Coastal Development Permit Streamlining</div><div class="id">SB 402</div></div>
-              <div class="status-badge">Amended</div>
-              <div><span class="position-badge watch">Watch</span></div>
-              <div class="row-menu-btn"><svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.4"/><circle cx="7" cy="7" r="1.4"/><circle cx="7" cy="11" r="1.4"/></svg></div>
-            </div>
-            <div class="frame-row">
-              <div><div class="bill">Groundwater Extraction Fees</div><div class="id">SB 155</div></div>
-              <div class="status-badge">Failed</div>
-              <div><span class="position-badge oppose">Oppose</span></div>
-              <div class="row-menu-btn"><svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.4"/><circle cx="7" cy="7" r="1.4"/><circle cx="7" cy="11" r="1.4"/></svg></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</header>
-
-<div class="strip">
-  <div class="mkt-wrap strip-row">
-    <div class="strip-item"><b>Refreshed daily,</b> not on every page load — flagged bills recheck once a day, straight from LegiScan and CAL-ACCESS.</div>
-    <div class="strip-item"><b>One digest,</b> not fifty alerts — you hear about a bill only when its status, amendments, or hearings actually change.</div>
-    <div class="strip-item"><b>You sign every filing.</b> Rotunda prepares the paperwork; nothing is final until you type your name and confirm it.</div>
   </div>
 </div>
-
-<section class="mkt-section" id="features">
-  <div class="mkt-wrap">
-    <div class="section-head">
-      <div class="kicker">Product</div>
-      <h2>Everything a lobbying compliance program needs. Nothing it doesn't.</h2>
-      <p>Six tools that already run on plain bill numbers and real FPPC forms — not a generic project tracker wearing a legislative skin.</p>
-    </div>
-
-    <div class="grid">
-      <div class="feat card wide">
-        <div class="feat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 3v4M12 17v4M3 12h4M17 12h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="4.5" stroke="currentColor" stroke-width="1.6"/></svg></div>
-        <h3>Flagged bills &amp; a daily digest that respects your inbox</h3>
-        <p>Flag anything your clients care about. A background job re-checks only those bills once a day and diffs the old state against the new one — status, amendments, hearings, votes. Nothing changed means no email at all.</p>
-        <span class="feat-tag">refresh_watchlist.py</span>
-      </div>
-
-      <div class="feat card">
-        <div class="feat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.6"/><path d="M20 20l-4.3-4.3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
-        <h3>Live bill lookup</h3>
-        <p>Search any California bill by number and see its current status straight from LegiScan. No login, nothing saved — just the answer.</p>
-      </div>
-
-      <div class="feat card">
-        <div class="feat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="8" r="3.4" stroke="currentColor" stroke-width="1.6"/><path d="M3.5 19c0-3.3 2.5-5.6 5.5-5.6s5.5 2.3 5.5 5.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M15.5 6.2c1.6.5 2.7 1.9 2.7 3.6 0 1.5-.9 2.8-2.1 3.4M17.5 13.7c1.9.6 3.2 2.5 3.2 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
-        <h3>Clients &amp; positions</h3>
-        <p>Keep each client's profile, industry, and CAL-ACCESS filer ID. Assign any flagged bill a position — Support, Oppose, or Watch — and change it any time.</p>
-      </div>
-
-      <div class="feat card">
-        <div class="feat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M7 3h8l4 4v14H5V3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 12h6M9 16h6M9 8h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
-        <h3>Action reports</h3>
-        <p>One page per bill: current status, full history, amendments, upcoming hearings, and your client's position — ready to forward or print.</p>
-      </div>
-
-      <div class="feat card">
-        <div class="feat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 21V10l8-6 8 6v11" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 21v-7h6v7" stroke="currentColor" stroke-width="1.6"/></svg></div>
-        <h3>Organization Search</h3>
-        <p>Cross-reference California's CAL-ACCESS lobbying disclosure data alongside your bills — the same dataset, refreshed on its own daily pipeline.</p>
-      </div>
-
-      <div class="feat card">
-        <div class="feat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 4h14v16H5z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 9l1.6 1.6L14 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 15h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
-        <h3>Disclosure form prep</h3>
-        <p>Generates a real FPPC Form 601, pre-filled from your profile and clients. You always review the filled PDF before anything is marked ready to file.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="mkt-section" id="workflow" style="padding-top:0">
-  <div class="mkt-wrap">
-    <div class="section-head">
-      <div class="kicker">Workflow</div>
-      <h2>From "someone should watch this bill" to a filed disclosure.</h2>
-      <p>The same three steps whether it's one client or forty.</p>
-    </div>
-    <div class="flow">
-      <div class="flow-step">
-        <div class="flow-num">01</div>
-        <h3>Flag the bills that matter</h3>
-        <p>Search, flag, and assign each one to a client with a position — Support, Oppose, or Watch.</p>
-      </div>
-      <div class="flow-step">
-        <div class="flow-num">02</div>
-        <h3>Get one digest when it moves</h3>
-        <p>A daily job diffs every flagged bill and emails only the people affected, only when something changed.</p>
-      </div>
-      <div class="flow-step">
-        <div class="flow-num">03</div>
-        <h3>Generate, review, sign off</h3>
-        <p>Pre-fill Form 601 from your clients, review the real PDF, then sign off when it's ready to file yourself.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="mkt-section" id="trust" style="padding-top:0">
-  <div class="mkt-wrap">
-    <div class="trust card">
-      <div class="trust-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 3l7 3v6c0 5-3.5 7.5-7 9-3.5-1.5-7-4-7-9V6l7-3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 12l2.2 2.2L15.5 9.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-      <div>
-        <h2>You file it. We never do.</h2>
-        <p>Rotunda prepares your FPPC disclosures — it never submits anything to the FPPC or the Secretary of State on your behalf. The filled PDF is always shown for review first, and nothing is marked "ready to file" until you type your legal name and confirm it yourself.</p>
-        <p>Fields we can't verify — subcontracted clients, individual lobbyists beyond the account holder — stay blank instead of being guessed, and the review page says so.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="mkt-section" style="padding-top:0">
-  <div class="mkt-wrap">
-    <div class="cta-band card">
-      <h2>Stop tracking bills in a spreadsheet.</h2>
-      <div class="hero-ctas">
-        <a href="/signup" class="primary" style="min-height:2.75rem;font-size:0.875rem;">Start tracking bills</a>
-      </div>
-      <p class="foot">Look up your first bill in seconds. No account needed until you flag one.</p>
-    </div>
-  </div>
-</section>
-</main>
-
-<footer class="mkt-footer">
-  <div class="mkt-wrap">
-    <div class="foot-row">
-      <div class="foot-brand">
-        {TOP_BRAND}
-        <p>Legislative tracking and lobbying-disclosure prep for California lobbying firms. Built by Noble Law.</p>
-      </div>
-      <div class="foot-col">
-        <h4>Product</h4>
-        <a href="/lookup">Search bills</a>
-        <a href="#features">Features</a>
-        <a href="#workflow">Workflow</a>
-        <a href="#trust">Compliance</a>
-      </div>
-    </div>
-    <div class="foot-bottom">&copy; 2026 Rotunda. A Noble Law product. Not affiliated with the FPPC or California Secretary of State.</div>
-  </div>
-</footer>
 </body>
 </html>
 """
@@ -2778,6 +2700,7 @@ SIGNUP_PAGE = f"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign up — Rotunda</title>
 <style>{STYLE}</style>
+{FONT_LINKS}
 {THEME_INIT_SCRIPT}
 </head>
 <body>
@@ -2863,6 +2786,7 @@ LOGIN_PAGE = f"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Log in — Rotunda</title>
 <style>{STYLE}</style>
+{FONT_LINKS}
 {THEME_INIT_SCRIPT}
 </head>
 <body>
@@ -2951,6 +2875,7 @@ PROFILE_PAGE = f"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Registration details — Rotunda</title>
 <style>{STYLE}</style>
+{FONT_LINKS}
 {THEME_INIT_SCRIPT}
 </head>
 <body>
@@ -4561,6 +4486,16 @@ const billId = new URLSearchParams(window.location.search).get('bill_id');
   if (navItem) {{
     document.querySelectorAll('.side-nav-item.active').forEach(a => a.classList.remove('active'));
     navItem.classList.add('active');
+    // navItem now sits inside a (possibly collapsed) Bills/Lobbying
+    // Activity/Draft group — see render_group() in app_shell() — so
+    // open its ancestor .nav-group too, or the newly-active item would
+    // be marked correctly but stay visually hidden.
+    const group = navItem.closest('.nav-group');
+    if (group) {{
+      group.classList.add('open');
+      const parentBtn = group.querySelector('.side-nav-parent');
+      if (parentBtn) parentBtn.setAttribute('aria-expanded', 'true');
+    }}
   }}
 }})();
 

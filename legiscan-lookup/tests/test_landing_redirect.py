@@ -60,7 +60,7 @@ def test_signed_out_visit_to_root_still_shows_landing_page(live_server):
 
     assert status == 200
     assert location is None
-    assert b"The system of record for every bill your clients care about." in body
+    assert b"everything under the dome" in body
 
 
 def test_signed_in_visit_to_root_redirects_to_flagged_without_rendering_landing_page(live_server):
@@ -88,4 +88,4 @@ def test_visit_to_root_with_a_bogus_session_cookie_still_shows_landing_page(live
 
     assert status == 200
     assert location is None
-    assert b"The system of record for every bill your clients care about." in body
+    assert b"everything under the dome" in body
