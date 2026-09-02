@@ -1,0 +1,411 @@
+
+<div class="page-head">
+  <div>
+    <h1>Clients</h1>
+    <p class="sub">Modeled on CAL-ACCESS Forms 602/603, tied to your account.</p>
+  </div>
+  <button type="button" id="add-client-btn">+ Add client</button>
+</div>
+
+<div class="stat-grid" id="stats"></div>
+
+<div class="card" id="form-card" style="display:none">
+  <form id="f">
+    <label style="flex:1 1 100%;position:relative">
+      <div class="sub" style="margin:0 0 0.3rem">Client / employer name</div>
+      <input id="name" required style="width:100%" autocomplete="off">
+      <div id="name-autofill-dropdown" class="autofill-dropdown" style="top:100%;left:0;right:0;width:auto"></div>
+    </label>
+
+    <div style="flex:1 1 100%">
+      <h2 class="section" style="margin-top:1.2rem">Business address</h2>
+      <p class="sub" id="name-autofill-note" style="margin:0.2rem 0 0;display:none">Prefilled from CAL-ACCESS — edit anything below if it looks wrong.</p>
+    </div>
+    <label for="bus_addr1" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Street address</label>
+    <input id="bus_addr1" placeholder="Street address" style="flex:1 1 100%">
+    <label for="bus_city" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">City</label>
+    <input id="bus_city" placeholder="City" style="flex:2">
+    <label for="bus_st" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">State</label>
+    <input id="bus_st" placeholder="State" maxlength="2" style="flex:1;text-transform:uppercase">
+    <label for="bus_zip4" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">ZIP code</label>
+    <input id="bus_zip4" placeholder="ZIP" style="flex:1">
+    <label for="bus_phone" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Phone</label>
+    <input id="bus_phone" placeholder="Phone — e.g. (916) 555-0100" style="flex:1 1 100%">
+
+    <label style="flex:1 1 100%">
+      <div class="sub" style="margin:1.2rem 0 0.3rem">Description of the client's industry or interests</div>
+      <textarea id="interests" rows="2" style="width:100%"></textarea>
+    </label>
+
+    <label style="flex:1 1 100%">
+      <div class="sub" style="margin:1.2rem 0 0.3rem">California Secretary of State filer ID <span style="font-weight:400">(optional — if you know it)</span></div>
+      <input id="existing_filer_id" placeholder="e.g. 1486088" style="width:100%">
+    </label>
+
+    <div style="flex:1 1 100%">
+      <h2 class="section" style="margin-top:1.2rem">For disclosure forms <span style="font-weight:400;text-transform:none">(optional — used to pre-fill Form 601, see /disclosures)</span></h2>
+    </div>
+    <label style="flex:1">
+      <div class="sub" style="margin:0 0 0.3rem">Effective date</div>
+      <input id="effective_date" type="date" style="width:100%">
+    </label>
+    <label style="flex:1">
+      <div class="sub" style="margin:0 0 0.3rem">Period of contract</div>
+      <input id="contract_period" placeholder="e.g. Ongoing, or a date range" style="width:100%">
+    </label>
+    <label style="flex:1 1 100%">
+      <div class="sub" style="margin:1.2rem 0 0.3rem">Agencies to be lobbied on this client's behalf</div>
+      <textarea id="agencies_lobbied" rows="2" style="width:100%"></textarea>
+    </label>
+
+    <button type="submit" id="submit-client-btn" style="margin-top:1rem">Add client →</button>
+    <button type="button" id="cancel-client-btn" class="secondary" style="margin-top:1rem">Cancel</button>
+  </form>
+</div>
+
+<div id="loading"><span class="spinner"></span>Saving…</div>
+<div id="error" role="alert" aria-live="assertive"></div>
+
+<div class="panel">
+  <div class="panel-head"><div class="title">Your clients</div></div>
+  <div id="list"></div>
+</div>
+
+<script src="{{CONFIRM_DELETE_SRC}}"></script>
+<script src="{{TITLE_CASE_SRC}}"></script>
+<script src="{{ROW_MENU_SRC}}"></script>
+<script>
+// bus_phone is stored exactly as typed, with no format enforced on
+// entry — this only reformats a clean 10-digit US number for display,
+// e.g. "5082157570" -> "(508) 215-7570". Anything else (an extension,
+// a non-US number, a partial digit string) passes through unchanged
+// rather than being mangled by a formatter that assumed too much.
+function formatPhone(raw) {
+  if (!raw) return raw;
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length !== 10) return raw;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+const form = document.getElementById('f');
+const formCard = document.getElementById('form-card');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+const listEl = document.getElementById('list');
+const statsEl = document.getElementById('stats');
+const addBtn = document.getElementById('add-client-btn');
+const cancelBtn = document.getElementById('cancel-client-btn');
+const submitBtn = document.getElementById('submit-client-btn');
+let allClients = [];
+let editingId = null;  // null = creating a new client; otherwise the id being edited
+
+const ICON_CLIENTS = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5.5" cy="4.5" r="2.5"/><path d="M1 12c0-2.5 2-4.2 4.5-4.2S10 9.5 10 12" stroke-linecap="round"/><circle cx="10.5" cy="5.5" r="1.8"/><path d="M9 12c0-1.7 1.3-3 3-3" stroke-linecap="round"/></svg>';
+const ICON_ALERT = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M7 4.5v3" stroke-linecap="round"/><circle cx="7" cy="9.8" r="0.6" fill="currentColor" stroke="none"/></svg>';
+
+function renderStats() {
+  if (!allClients.length) { statsEl.innerHTML = ''; return; }
+  const missingFilerId = allClients.filter(c => !c.existing_filer_id).length;
+  statsEl.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-icon">${ICON_CLIENTS}</div>
+      <div class="stat-label">Clients</div>
+      <div class="stat-value">${allClients.length}</div>
+      <div class="stat-foot">Tied to your account</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">${ICON_ALERT}</div>
+      <div class="stat-label">Missing filer ID</div>
+      <div class="stat-value">${missingFilerId}</div>
+      <div class="stat-foot">Optional, but useful for cross-checking CAL-ACCESS</div>
+    </div>
+  `;
+}
+
+// Fills the address fields (+ filer ID) from one CAL-ACCESS entity
+// record and shows the "Prefilled from CAL-ACCESS" note — shared by
+// the URL-based prefill below (arriving from Organization Search) and
+// the live name-autofill dropdown further down, so there's one prefill
+// behavior instead of two that could drift apart. bus_phone is
+// deliberately left alone: no CAL-ACCESS filer record has a phone
+// number at all (see calaccess_db.py), so there's nothing to fill it
+// with — it stays a plain manual field either way. Every field this
+// touches stays a normal, editable input either way — there's no
+// separate "locked" mode, typing over a prefilled value IS completing
+// it manually.
+const nameAutofillNoteEl = document.getElementById('name-autofill-note');
+
+function applyEntityAutofill(e) {
+  document.getElementById('bus_addr1').value = e.address || '';
+  document.getElementById('bus_city').value = e.city || '';
+  document.getElementById('bus_st').value = e.state || '';
+  document.getElementById('bus_zip4').value = e.zip || '';
+  if (e.filer_id) document.getElementById('existing_filer_id').value = e.filer_id;
+  nameAutofillNoteEl.style.display = '';
+}
+
+// Arriving from Organization Search's "+ Client" link (?prefill_name=...
+// and, for a registered entity, &prefill_entity_id=...) opens the form
+// pre-filled from that entity's CAL-ACCESS record instead of leaving
+// name/address/etc. to be typed in by hand.
+const urlParams = new URLSearchParams(window.location.search);
+const prefillName = urlParams.get('prefill_name');
+const prefillEntityId = urlParams.get('prefill_entity_id');
+
+async function applyPrefill() {
+  if (!prefillName) return;
+  showForm();
+  document.getElementById('name').value = prefillName;
+  if (!prefillEntityId) return;
+  try {
+    const res = await fetch(`/api/lobbying/detail?id=${encodeURIComponent(prefillEntityId)}`);
+    const data = await res.json();
+    if (!res.ok || !data.entity) return;
+    applyEntityAutofill(data.entity);
+  } catch (err) {
+    // Prefill is a convenience, not a requirement — if it fails, the form
+    // is already open and named, same as clicking "+ Add client" directly.
+  }
+}
+
+// Live autofill as the name is typed: after a short pause, search
+// CAL-ACCESS (the same /api/lobbying/search Organization Search uses)
+// and offer any matching REGISTERED entities as suggestions — only
+// those have an address on file to autofill from; unregistered
+// "mentioned as someone else's client" rows (kind: 'client') have
+// none, so they're filtered out here rather than shown as a dead end.
+// Picking one calls /api/lobbying/detail for its full record and
+// applies it the same way applyPrefill() above does.
+//
+// A "client" here means an employer that hires the firm, not a
+// lobbying firm or coalition — but a typed name can still coincidentally
+// match one of those, so rather than hiding them outright (a dead end
+// if that's really who the user meant), employer matches sort first and
+// firm/coalition matches render de-emphasized (see .non-employer-match).
+const nameInput = document.getElementById('name');
+const nameDropdown = document.getElementById('name-autofill-dropdown');
+let nameAutofillTimer = null;
+
+function closeNameAutofillDropdown() {
+  nameDropdown.classList.remove('show');
+  nameDropdown.innerHTML = '';
+}
+
+function renderAutofillMatches(dropdownEl, matches, onSelect) {
+  const sorted = [...matches].sort((a, b) =>
+    (a.entity_type === 'employer' ? 0 : 1) - (b.entity_type === 'employer' ? 0 : 1));
+  dropdownEl.innerHTML = sorted.map(r => `
+    <button type="button" class="${r.entity_type === 'employer' ? '' : 'non-employer-match'}" onclick="${onSelect}(${r.id})">
+      ${r.name}
+      ${r.entity_type && r.entity_type !== 'employer' ? ` <span class="tag">${r.entity_type}</span>` : ''}
+      ${r.city || r.state ? ` <span class="sub" style="margin:0">— ${[r.city, r.state].filter(Boolean).join(', ')}</span>` : ''}
+    </button>
+  `).join('');
+  dropdownEl.classList.add('show');
+}
+
+async function runNameAutofillSearch(q) {
+  try {
+    const res = await fetch(`/api/lobbying/search?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+    if (!res.ok) return;
+    // Still the same query the user's typing, not a stale response
+    // that raced in after they kept typing (or already picked one).
+    if (nameInput.value.trim() !== q) return;
+    const matches = (data.results || []).filter(r => r.kind === 'entity').slice(0, 6);
+    if (!matches.length) { closeNameAutofillDropdown(); return; }
+    renderAutofillMatches(nameDropdown, matches, 'selectNameAutofillMatch');
+  } catch (err) {
+    // A failed suggestion lookup shouldn't block typing a name by
+    // hand — just don't offer any suggestions this time.
+  }
+}
+
+async function selectNameAutofillMatch(entityId) {
+  closeNameAutofillDropdown();
+  try {
+    const res = await fetch(`/api/lobbying/detail?id=${encodeURIComponent(entityId)}`);
+    const data = await res.json();
+    if (!res.ok || !data.entity) return;
+    nameInput.value = data.entity.name || nameInput.value;
+    applyEntityAutofill(data.entity);
+  } catch (err) {
+    // Same reasoning as runNameAutofillSearch's catch — leave the
+    // name as typed rather than blocking on this.
+  }
+}
+
+nameInput.addEventListener('input', () => {
+  nameAutofillNoteEl.style.display = 'none';
+  clearTimeout(nameAutofillTimer);
+  const q = nameInput.value.trim();
+  if (q.length < 2) { closeNameAutofillDropdown(); return; }
+  nameAutofillTimer = setTimeout(() => runNameAutofillSearch(q), 300);
+});
+document.addEventListener('click', (e) => {
+  if (!nameDropdown.contains(e.target) && e.target !== nameInput) closeNameAutofillDropdown();
+});
+nameInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeNameAutofillDropdown();
+});
+
+function showForm() {
+  formCard.style.display = 'block';
+  addBtn.style.display = 'none';
+}
+
+function hideForm(afterSave) {
+  // Only ask before discarding if there's actually something typed to
+  // lose — an empty/untouched form can just close silently. Skipped
+  // entirely after a successful save (afterSave=true, from the submit
+  // handler below) — the data wasn't lost, it's the reason the form is
+  // closing, so a "discard?" prompt right after saving would be a
+  // confusing false alarm rather than a safeguard.
+  const hasInput = !afterSave && Array.from(form.querySelectorAll('input, textarea')).some(el => el.value.trim());
+  if (hasInput && !confirm('Discard this client info? Anything typed here will be lost.')) return;
+  formCard.style.display = 'none';
+  addBtn.style.display = '';
+  form.reset();
+  editingId = null;
+  submitBtn.textContent = 'Add client →';
+  errorEl.className = '';
+  nameAutofillNoteEl.style.display = 'none';
+  closeNameAutofillDropdown();
+}
+
+function editClient(id) {
+  const c = allClients.find(x => x.id === id);
+  if (!c) return;
+  editingId = id;
+  document.getElementById('name').value = c.name || '';
+  document.getElementById('bus_addr1').value = c.bus_addr1 || '';
+  document.getElementById('bus_city').value = c.bus_city || '';
+  document.getElementById('bus_st').value = c.bus_st || '';
+  document.getElementById('bus_zip4').value = c.bus_zip4 || '';
+  document.getElementById('bus_phone').value = c.bus_phone || '';
+  document.getElementById('interests').value = c.interests || '';
+  document.getElementById('existing_filer_id').value = c.existing_filer_id || '';
+  document.getElementById('effective_date').value = c.effective_date || '';
+  document.getElementById('contract_period').value = c.contract_period || '';
+  document.getElementById('agencies_lobbied').value = c.agencies_lobbied || '';
+  submitBtn.textContent = 'Save changes →';
+  nameAutofillNoteEl.style.display = 'none';
+  showForm();
+}
+
+addBtn.addEventListener('click', showForm);
+cancelBtn.addEventListener('click', hideForm);
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorEl.className = ''; loadingEl.className = 'show';
+  form.querySelector('button[type="submit"]').disabled = true;
+
+  try {
+    const body = {
+      name: document.getElementById('name').value.trim(),
+      bus_addr1: document.getElementById('bus_addr1').value.trim(),
+      bus_city: document.getElementById('bus_city').value.trim(),
+      bus_st: document.getElementById('bus_st').value.trim(),
+      bus_zip4: document.getElementById('bus_zip4').value.trim(),
+      bus_phone: document.getElementById('bus_phone').value.trim(),
+      interests: document.getElementById('interests').value.trim(),
+      existing_filer_id: document.getElementById('existing_filer_id').value.trim(),
+      effective_date: document.getElementById('effective_date').value.trim(),
+      contract_period: document.getElementById('contract_period').value.trim(),
+      agencies_lobbied: document.getElementById('agencies_lobbied').value.trim(),
+    };
+    if (editingId) body.id = editingId;
+    const res = await fetch('/api/clients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save client');
+    hideForm(true);
+    load();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    loadingEl.className = '';
+    form.querySelector('button[type="submit"]').disabled = false;
+  }
+});
+
+async function removeClient(id) {
+  // Deleting a client also deletes every bill/position it's linked to
+  // (see db.delete_client) — no undo exists, so this is worth a real
+  // confirmation naming what's about to be lost, not just a click. Uses
+  // the shared styled dialog (see CONFIRM_DELETE_JS) rather than the
+  // browser's own confirm().
+  const c = allClients.find(x => x.id === id);
+  const name = c ? c.name : 'this client';
+  const ok = await confirmDelete('Remove client?', `Remove ${name}? This also removes all of its bill and position assignments. This can't be undone.`);
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/clients?id=${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Could not remove client');
+    }
+    load();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+async function load() {
+  try {
+    const res = await fetch('/api/clients');
+    if (res.status === 401) {
+      window.location.href = '/login';
+      return;
+    }
+    const rows = await res.json();
+    allClients = rows;
+    renderStats();
+    render(rows);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+function render(rows) {
+  if (!rows.length) {
+    listEl.innerHTML = '<p class="empty">No clients added yet — use the form above.</p>';
+    return;
+  }
+  listEl.innerHTML = `
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>Name</th><th>Business address</th><th>Industry / interests</th><th>Filer ID</th><th></th></tr></thead>
+      <tbody>
+      ${rows.map(c => `
+        <tr>
+          <td><a href="/clients/detail?id=${c.id}">${titleCaseName(c.name)}</a></td>
+          <td>${[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), formatPhone(c.bus_phone)].filter(Boolean).join(' · ')}</td>
+          <td>${c.interests || ''}</td>
+          <td>${c.existing_filer_id || ''}</td>
+          <td class="row-menu">
+            <button type="button" class="secondary" onclick="editClient(${c.id})" style="margin-right:0.4rem">Edit</button>
+            <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'client-${c.id}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-client-${c.id}">
+              <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
+            </button>
+            <div class="row-menu-dropdown" id="row-menu-client-${c.id}">
+              <button type="button" onclick="removeClient(${c.id})">Remove client</button>
+            </div>
+          </td>
+        </tr>
+      `).join('')}
+      </tbody>
+    </table>
+    </div>
+  `;
+}
+
+load();
+applyPrefill();
+</script>

@@ -1,0 +1,68 @@
+
+<div class="page-head"><div><a href="/flagged" class="sub">← Flagged bills</a></div></div>
+<div class="page-head">
+  <div>
+    <h1>Sponsors &amp; votes</h1>
+    <p class="sub">Every sponsor across your flagged bills, and how each bill they sponsored was voted on. A sponsor can be a committee, not only an individual legislator — LegiScan lists both the same way.</p>
+  </div>
+</div>
+
+<div id="error" role="alert" aria-live="assertive"></div>
+<div id="loading"><span class="spinner"></span>Loading…</div>
+<div id="sponsors"></div>
+
+<script>
+const sponsorsEl = document.getElementById('sponsors');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+
+function voteSummary(votes) {
+  if (!votes.length) return '<span class="sub" style="margin:0">No recorded votes yet.</span>';
+  return votes.map(v => `
+    <div style="margin-top:0.35rem">
+      <span class="tag">${v.chamber || ''}</span>
+      <span class="sub" style="margin:0 0 0 0.4rem">${v.date || ''} — ${v.description || ''}</span>
+      <div class="sub" style="margin:0.15rem 0 0;font-size:0.78rem">
+        Yea ${v.yea || 0} · Nay ${v.nay || 0} · NV ${v.nv || 0} · Absent ${v.absent || 0}
+        ${v.passed ? ' <span class="tag">Passed</span>' : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+function render(sponsors) {
+  if (!sponsors.length) {
+    sponsorsEl.innerHTML = '<p class="empty">No sponsor data recorded across your flagged bills yet.</p>';
+    return;
+  }
+  sponsorsEl.innerHTML = sponsors.map(s => `
+    <div class="panel" style="margin-bottom:1rem">
+      <div class="panel-head">
+        <div>
+          <div class="title">${s.name}</div>
+          <div class="sub">${s.party || 'No party on file'}</div>
+        </div>
+      </div>
+      <div>
+        ${s.bills.map(b => `
+          <div class="bill-row" style="padding:0.85rem 1.15rem;border-bottom:1px solid var(--rule);align-items:flex-start">
+            <div style="flex:1;min-width:0">
+              <div class="bill-id"><a href="/report?bill_id=${b.bill_id}">${b.state} ${b.bill_number}</a> — ${b.title || ''}${b.role ? ` <span class="tag">${b.role}</span>` : ''}</div>
+              ${voteSummary(b.votes)}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+fetch('/api/flagged/sponsors').then(r => r.json()).then(sponsors => {
+  loadingEl.className = '';
+  render(sponsors);
+}).catch(() => {
+  loadingEl.className = '';
+  errorEl.textContent = 'Could not load sponsor data.';
+  errorEl.className = 'show';
+});
+</script>

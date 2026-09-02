@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in — Rotunda</title>
+<link rel="stylesheet" href="{{STYLE_HREF}}">
+{{FONT_LINKS}}
+{{THEME_INIT_SCRIPT}}
+</head>
+<body>
+{{top_nav}}
+<main>
+<div class="wrap">
+  <h1>Log in</h1>
+
+  <div class="card">
+    <form id="f" style="margin:0">
+      <label style="flex:1 1 100%">
+        <div class="sub" style="margin:0 0 0.3rem">Email</div>
+        <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required style="width:100%">
+      </label>
+      <label style="flex:1 1 100%">
+        <div class="sub" style="margin:0 0 0.3rem">Password</div>
+        <div style="display:flex;gap:0.5rem">
+          <input id="password" type="password" autocomplete="current-password" required style="width:100%">
+          <button type="button" id="toggle-password" class="secondary" aria-pressed="false" style="flex:none">Show</button>
+        </div>
+      </label>
+      <button type="submit">Log in</button>
+    </form>
+  </div>
+
+  <div id="loading"><span class="spinner"></span>Logging in…</div>
+  <div id="error" role="alert" aria-live="assertive"></div>
+</div>
+</main>
+
+<script>
+const togglePasswordBtn = document.getElementById('toggle-password');
+const passwordInput = document.getElementById('password');
+togglePasswordBtn.addEventListener('click', () => {
+  const show = passwordInput.type === 'password';
+  passwordInput.type = show ? 'text' : 'password';
+  togglePasswordBtn.textContent = show ? 'Hide' : 'Show';
+  togglePasswordBtn.setAttribute('aria-pressed', show ? 'true' : 'false');
+});
+const form = document.getElementById('f');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+
+  errorEl.className = ''; loadingEl.className = 'show';
+  form.querySelector('button').disabled = true;
+
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not log in');
+    // ?next=... is set by _redirect_to_login() (see app.py) whenever
+    // a logged-out visitor got bounced here from a page they were
+    // actually trying to use — e.g. "+ Add as client" from Organization
+    // Search. Only ever followed if it's a same-site path (starts with
+    // "/" but not "//", which browsers treat as protocol-relative to
+    // another host) — anything else falls back to /flagged rather than
+    // risk turning this into an open redirect.
+    const next = new URLSearchParams(window.location.search).get('next');
+    window.location.href = (next && next.startsWith('/') && !next.startsWith('//')) ? next : '/flagged';
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+    loadingEl.className = '';
+    form.querySelector('button').disabled = false;
+  }
+});
+</script>
+</body>
+</html>

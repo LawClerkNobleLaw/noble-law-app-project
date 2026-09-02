@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign up — Rotunda</title>
+<link rel="stylesheet" href="{{STYLE_HREF}}">
+{{FONT_LINKS}}
+{{THEME_INIT_SCRIPT}}
+</head>
+<body>
+{{top_nav}}
+<main>
+<div class="wrap">
+  <h1>Create your account</h1>
+  <div class="step-indicator">
+    <span class="step-dot filled"></span><span class="step-dot"></span>
+    <span class="sub">Step 1 of 2 — after this, you'll fill in your CAL-ACCESS-style registration details.</span>
+  </div>
+
+  <div class="card">
+    <form id="f" style="margin:0">
+      <label style="flex:1 1 100%">
+        <div class="sub" style="margin:0 0 0.3rem">Email</div>
+        <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required style="width:100%">
+      </label>
+      <label style="flex:1 1 100%">
+        <div class="sub" style="margin:0 0 0.3rem">Password</div>
+        <div style="display:flex;gap:0.5rem">
+          <input id="password" type="password" autocomplete="new-password" required minlength="8" style="width:100%">
+          <button type="button" id="toggle-password" class="secondary" aria-pressed="false" style="flex:none">Show</button>
+        </div>
+        <div class="sub" style="margin:0.3rem 0 0;font-size:0.78rem">8+ characters</div>
+      </label>
+      <button type="submit">Continue →</button>
+    </form>
+  </div>
+
+  <div id="loading"><span class="spinner"></span>Creating account…</div>
+  <div id="error" role="alert" aria-live="assertive"></div>
+</div>
+</main>
+
+<script>
+const togglePasswordBtn = document.getElementById('toggle-password');
+const passwordInput = document.getElementById('password');
+togglePasswordBtn.addEventListener('click', () => {
+  const show = passwordInput.type === 'password';
+  passwordInput.type = show ? 'text' : 'password';
+  togglePasswordBtn.textContent = show ? 'Hide' : 'Show';
+  togglePasswordBtn.setAttribute('aria-pressed', show ? 'true' : 'false');
+});
+const form = document.getElementById('f');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+
+  errorEl.className = ''; loadingEl.className = 'show';
+  form.querySelector('button').disabled = true;
+
+  try {
+    const res = await fetch('/api/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not create account');
+    window.location.href = '/signup/profile';
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+    loadingEl.className = '';
+    form.querySelector('button').disabled = false;
+  }
+});
+</script>
+</body>
+</html>

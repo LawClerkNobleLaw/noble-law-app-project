@@ -1,0 +1,74 @@
+
+<div class="page-head"><div><a href="/flagged" class="sub">← Flagged bills</a></div></div>
+<div class="page-head">
+  <div>
+    <h1>Hearing calendar</h1>
+    <p class="sub">Every scheduled hearing across your flagged bills, grouped by day.</p>
+  </div>
+</div>
+
+<div id="error" role="alert" aria-live="assertive"></div>
+<div id="loading"><span class="spinner"></span>Loading…</div>
+<div id="calendar"></div>
+
+<script>
+const calendarEl = document.getElementById('calendar');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+
+function fmtDay(dateStr) {
+  if (!dateStr) return 'Date to be determined';
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+function render(rows) {
+  if (!rows.length) {
+    calendarEl.innerHTML = '<p class="empty">No hearings scheduled across your flagged bills yet.</p>';
+    return;
+  }
+
+  // rows already arrive sorted by date/time from the API — this just
+  // buckets consecutive same-date rows into a group, presentation-only.
+  const groups = [];
+  let current = null;
+  for (const h of rows) {
+    const key = h.date || '';
+    if (!current || current.key !== key) {
+      current = { key, rows: [] };
+      groups.push(current);
+    }
+    current.rows.push(h);
+  }
+
+  calendarEl.innerHTML = groups.map(g => `
+    <div class="panel" style="margin-bottom:1rem">
+      <div class="panel-head"><div class="title">${fmtDay(g.key)}</div></div>
+      <div>
+        ${g.rows.map(h => `
+          <div class="bill-row hearing-row">
+            <div class="bill-icon">
+              <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2.5" width="10" height="9.5" rx="1"/><path d="M2 5.5h10M5 1.5v2M9 1.5v2" stroke-linecap="round"/></svg>
+            </div>
+            <div style="flex:1;min-width:0">
+              <div class="bill-title">${h.event_type || 'Hearing'}${h.time ? ' · ' + h.time : ''}</div>
+              <div class="bill-id"><a href="/report?bill_id=${h.bill_id}">${h.state} ${h.bill_number}</a> — ${h.title || ''}</div>
+              ${(h.location || h.description) ? `<div class="sub" style="margin:0.3rem 0 0;font-size:0.78rem">${[h.location, h.description].filter(Boolean).join(' — ')}</div>` : ''}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+fetch('/api/flagged/calendar').then(r => r.json()).then(rows => {
+  loadingEl.className = '';
+  render(rows);
+}).catch(() => {
+  loadingEl.className = '';
+  errorEl.textContent = 'Could not load the calendar.';
+  errorEl.className = 'show';
+});
+</script>

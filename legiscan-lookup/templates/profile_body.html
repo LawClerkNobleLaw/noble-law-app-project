@@ -1,0 +1,85 @@
+
+<div class="page-head">
+  <div>
+    <h1>Your Profile</h1>
+    <p class="sub">Your CAL-ACCESS registration details — used to pre-fill disclosure forms.</p>
+  </div>
+</div>
+<div id="loading"><span class="spinner"></span>Loading…</div>
+<div id="error" role="alert" aria-live="assertive"></div>
+<div id="content"></div>
+
+<script>
+const contentEl = document.getElementById('content');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+
+function row(label, value) {
+  if (!value) return '';
+  return `<div style="display:grid;grid-template-columns:11rem 1fr;padding:0.45rem 0;border-bottom:1px solid var(--rule)">
+    <div class="sub" style="margin:0">${label}</div><div>${value}</div>
+  </div>`;
+}
+
+// bus_phone is stored exactly as typed, with no format enforced on
+// entry — this only reformats a clean 10-digit US number for display,
+// e.g. "5082157570" -> "(508) 215-7570". Anything else (an extension,
+// a non-US number, a partial digit string) passes through unchanged
+// rather than being mangled by a formatter that assumed too much.
+function formatPhone(raw) {
+  if (!raw) return raw;
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length !== 10) return raw;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+async function load() {
+  try {
+    const [meRes, profileRes] = await Promise.all([fetch('/api/me'), fetch('/api/profile')]);
+    const me = await meRes.json();
+    const { profile } = await profileRes.json();
+
+    if (!profile) {
+      contentEl.innerHTML = `
+        <div class="panel" style="padding:1.5rem">
+          <p class="empty">You haven't filled in your registration details yet.</p>
+          <button type="button" onclick="window.location.href='/signup/profile'" style="margin-top:0.8rem">Add registration details →</button>
+        </div>
+      `;
+      loadingEl.className = '';
+      return;
+    }
+
+    const mailing = profile.mail_same_as_bus
+      ? 'Same as business address'
+      : [profile.mail_addr1, profile.mail_city, profile.mail_st, profile.mail_zip4].filter(Boolean).join(', ');
+
+    contentEl.innerHTML = `
+      <div class="card">
+        <div class="bill-id">${me.email || ''}</div>
+        <div class="bill-title">${profile.legal_name}</div>
+        <span class="tag">${profile.registrant_type === 'firm' ? 'Firm' : 'Individual lobbyist'}</span>
+      </div>
+      <div class="panel" style="margin-top:1rem">
+        <div class="panel-head"><div class="title">Registration details</div></div>
+        <div style="padding:0 1.15rem">
+          ${row('Business address', [profile.bus_addr1, profile.bus_city, profile.bus_st, profile.bus_zip4].filter(Boolean).join(', '))}
+          ${row('Mailing address', mailing)}
+          ${row('Phone', formatPhone(profile.bus_phone))}
+          ${row('CA SOS filer ID', profile.existing_filer_id)}
+        </div>
+        <div class="card-actions" style="padding:1rem 1.15rem">
+          <button type="button" class="secondary" onclick="window.location.href='/signup/profile'">Edit →</button>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    loadingEl.className = '';
+  }
+}
+
+load();
+</script>

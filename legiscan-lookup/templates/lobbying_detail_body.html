@@ -1,0 +1,108 @@
+
+<div class="page-head"><div><a href="/lobbying" class="sub">← Organization Search</a></div></div>
+<div id="error" role="alert" aria-live="assertive"></div>
+<div id="loading" class="show"><span class="spinner"></span>Loading…</div>
+<div id="detail"></div>
+
+<script>
+const errorEl = document.getElementById('error');
+const detailEl = document.getElementById('detail');
+const params = new URLSearchParams(window.location.search);
+
+function money(n) {
+  return typeof n === 'number' ? '$' + n.toLocaleString(undefined, {maximumFractionDigits: 0}) : '';
+}
+
+function highlight(text, name) {
+  return (text || '').toLowerCase() === (name || '').toLowerCase() ? `<strong>${text}</strong>` : (text || '');
+}
+
+// raw_bill_text is real free text from CAL-ACCESS ingestion, not a
+// clean bill list — it mixes real bill numbers with prose ("SB 53;
+// Legislature, Governor's Office Re: ...") and sometimes has no bill
+// number at all ("See Attachment A"). So this doesn't split-and-
+// replace the whole string; it finds actual bill-number substrings
+// (a chamber prefix + number, with "SB 53, 420" style comma lists
+// expanded to one pill per number) and turns just those into links,
+// leaving every other word of the original text exactly as it was —
+// nothing here is parsed further or thrown away.
+function billPills(text) {
+  if (!text) return '';
+  const re = /\b(AB|SB|ACA|SCA|AJR|SJR|ACR|SCR|HR|SR)\s?(\d+(?:\s*,\s*\d+)*)\b/gi;
+  return text.replace(re, (whole, prefix, nums) => nums.split(',').map(n => {
+    const bill = `${prefix.toUpperCase()} ${n.trim()}`;
+    return `<a class="tag" href="/lookup?bill=${encodeURIComponent(bill)}">${bill}</a>`;
+  }).join(' '));
+}
+
+function relationshipRows(rows, selectedName) {
+  if (!rows.length) return '<div class="panel" style="padding:1rem 1.15rem"><p class="empty">No lobbying relationships found for this name.</p></div>';
+  return `
+    <div class="panel">
+      <div class="panel-head"><div class="title">Lobbying relationships</div></div>
+      <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Firm</th><th>Client / employer</th><th>Form</th><th>Period</th><th>Amount</th><th>Bill / activity</th></tr></thead>
+        <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td>${highlight(r.firm, selectedName)}</td>
+            <td>${highlight(r.client, selectedName)}</td>
+            <td><span class="tag" title="Firm/client direction is inferred from this form type">${r.form_type || '—'}</span></td>
+            <td class="date">${(r.period_start || '').split(' ')[0]} – ${(r.period_end || '').split(' ')[0]}</td>
+            <td>${money(r.amount_spent)}</td>
+            <td>${billPills(r.raw_bill_text)}</td>
+          </tr>
+        `).join('')}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  `;
+}
+
+function addClientUrl(d) {
+  const p = new URLSearchParams({prefill_name: d.name});
+  if (d.entity && d.entity.id) p.set('prefill_entity_id', d.entity.id);
+  return `/clients?${p.toString()}`;
+}
+
+function renderDetail(d) {
+  const e = d.entity;
+  detailEl.innerHTML = `
+    <div class="card">
+      <div class="bill-title">${d.name}</div>
+      ${e ? `
+        <div style="margin-top:0.3rem">
+          <span class="tag">${e.entity_type || ''}</span>
+          ${e.registration_status ? `<span class="tag">${e.registration_status}</span>` : ''}
+          ${e.source_form ? `<span class="tag">Form ${e.source_form}</span>` : ''}
+        </div>
+        <div class="bill-desc" style="margin-top:0.5rem">${[e.address, e.city, e.state, e.zip].filter(Boolean).join(', ')}</div>
+      ` : '<div class="bill-desc" style="margin-top:0.3rem">Named as a client in a disclosure — no independent registration on file.</div>'}
+      <div class="card-actions">
+        <a class="secondary" href="${addClientUrl(d)}">+ Add as client</a>
+      </div>
+    </div>
+    <div style="margin-top:1rem">${relationshipRows(d.relationships, d.name)}</div>
+  `;
+}
+
+async function load() {
+  try {
+    const p = params.get('id') ? `id=${encodeURIComponent(params.get('id'))}` : `name=${encodeURIComponent(params.get('name') || '')}`;
+    const res = await fetch(`/api/lobbying/detail?${p}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load detail');
+    renderDetail(data);
+  } catch (err) {
+    detailEl.innerHTML = '';
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    document.getElementById('loading').className = '';
+  }
+}
+
+load();
+</script>

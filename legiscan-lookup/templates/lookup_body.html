@@ -1,0 +1,128 @@
+
+<div class="page-head">
+  <div>
+    <h1>Search bills</h1>
+    <p class="sub">Look up an exact bill number or search free text across every California bill — powered by LegiScan.</p>
+  </div>
+</div>
+
+<div class="card">
+  <form id="f" style="margin:0">
+    <label for="q" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Bill number or search terms</label>
+    <input id="q" placeholder="e.g. SB122, or housing element, cannabis licensing…" required style="flex:1">
+    <button type="submit">Search</button>
+  </form>
+</div>
+
+<div id="loading" class="skeleton">
+  <div class="panel">
+    {{top_nav}}
+  </div>
+</div>
+<div id="error" role="alert" aria-live="assertive"></div>
+<div id="results"></div>
+
+<script>
+const form = document.getElementById('f');
+const resultsEl = document.getElementById('results');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+let currentQuery = '';
+let currentPage = 1;
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const q = document.getElementById('q').value.trim();
+  if (q) runSearch(q, 1);
+});
+
+// Two different things prefill this page: the global header search
+// box + any old /discover?q=... bookmark send ?q=..., while a link
+// that already knows an exact bill number (billPills() elsewhere in
+// this app, and the ?next=... round trip _redirect_to_login() builds)
+// sends ?bill=... — both just seed the same one search box now that
+// lookup and discovery are a single page.
+const urlParams = new URLSearchParams(window.location.search);
+const prefillQuery = urlParams.get('q') || urlParams.get('bill');
+if (prefillQuery) {
+  document.getElementById('q').value = prefillQuery;
+  runSearch(prefillQuery, 1);
+}
+
+async function runSearch(q, page) {
+  currentQuery = q; currentPage = page;
+  errorEl.className = ''; loadingEl.className = 'skeleton show'; resultsEl.innerHTML = '';
+  form.querySelector('button').disabled = true;
+
+  try {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&page=${page}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Search failed');
+    renderResults(data);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    loadingEl.className = 'skeleton';
+    form.querySelector('button').disabled = false;
+  }
+}
+
+// LegiScan's search doesn't return a coded status the way getBill does
+// (see shape_bill() in legiscan_client.py) — just each result's own
+// last_action text, same keyword-match idea as milestoneClass()
+// elsewhere in this app, just condensed to one current-state label
+// instead of per-row history categories.
+function statusLabel(lastAction) {
+  const a = (lastAction || '').toLowerCase();
+  if (a.includes('chaptered') || a.includes('approved by the governor')) return 'Passed';
+  if (a.includes('vetoed')) return 'Vetoed';
+  if (a.includes('died') || a.includes('failed')) return 'Failed';
+  if (a.includes('introduced')) return 'Introduced';
+  return 'In progress';
+}
+
+function snippet(title) {
+  if (!title) return '';
+  return title.length > 140 ? title.slice(0, 140).trim() + '…' : title;
+}
+
+// Every search — one hit or a hundred — renders as this same row
+// list, one consistent UI regardless of result count. Clicking any
+// row goes to the full action report rather than expanding detail in
+// place (see REPORT_BODY, which now also has "Flag this bill" for a
+// bill that isn't flagged yet).
+function renderResults(data) {
+  const rows = data.results || [];
+  if (!rows.length) {
+    resultsEl.innerHTML = '<p class="empty">No bills match that search. Try a broader term, check the spelling, or a different bill number.</p>';
+    return;
+  }
+  // from_label/from_href tell /report where this click came from, so its
+  // back link and sidebar highlight can point back to Lookup instead of
+  // always assuming Flagged Bills (see REPORT_BODY's own script for the
+  // read side of this).
+  const rowsHtml = rows.map(r => `
+    <tr class="row-link" onclick="window.location.href='/report?bill_id=${r.bill_id}&from_label=Lookup&from_href=%2Flookup'">
+      <td><a href="/report?bill_id=${r.bill_id}&from_label=Lookup&from_href=%2Flookup">${r.bill_number}</a></td>
+      <td>${snippet(r.title)}</td>
+      <td><span class="status-badge">${statusLabel(r.last_action)}</span></td>
+      <td class="date">${r.last_action_date || ''}</td>
+    </tr>
+  `).join('');
+  const count = data.count || rows.length;
+  const hasMore = data.page_total && Number(data.page) < Number(data.page_total);
+  resultsEl.innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><div class="sub" style="margin:0">${count.toLocaleString()} bill${count === 1 ? '' : 's'} match — showing page ${data.page || 1} of ${data.page_total || 1}</div></div>
+      <div style="overflow-x:auto">
+      <table><thead><tr><th>Bill</th><th>Title</th><th>Status</th><th>Last action</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+      </div>
+    </div>
+    ${hasMore ? '<div style="text-align:center;margin-top:1rem"><button type="button" class="secondary" id="next-page-btn">Next page →</button></div>' : ''}
+  `;
+  if (hasMore) {
+    document.getElementById('next-page-btn').addEventListener('click', () => runSearch(currentQuery, currentPage + 1));
+  }
+}
+</script>

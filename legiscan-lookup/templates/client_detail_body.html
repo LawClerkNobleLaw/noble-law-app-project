@@ -1,0 +1,238 @@
+
+<div class="page-head"><div><a href="/clients" class="sub">← Clients</a></div></div>
+<div id="error" role="alert" aria-live="assertive"></div>
+<div id="loading" class="show"><span class="spinner"></span>Loading…</div>
+<div id="client"></div>
+
+<div class="card" style="margin-top:1rem">
+  <div class="bill-title" style="margin-bottom:0.8rem">Add a bill</div>
+  <form id="add-bill-f">
+    <label for="bill_number" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Bill number</label>
+    <input id="bill_number" placeholder="e.g. SB122" autocomplete="off" required style="flex:1;min-width:8rem">
+    <label for="add-bill-position" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Position</label>
+    <select id="add-bill-position">
+      <option value="watch">Watch</option>
+      <option value="support">Support</option>
+      <option value="oppose">Oppose</option>
+    </select>
+    <button type="submit">Add →</button>
+  </form>
+  <div id="add-bill-loading" class="empty" style="display:none;margin-top:0.6rem">Looking up bill…</div>
+</div>
+
+<div class="panel" style="margin-top:1rem">
+  <div class="panel-head"><div class="title">Bills</div></div>
+  <div id="bills"></div>
+</div>
+
+<script src="{{CONFIRM_DELETE_SRC}}"></script>
+<script src="{{TITLE_CASE_SRC}}"></script>
+<script src="{{ROW_MENU_SRC}}"></script>
+<script>
+// bus_phone is stored exactly as typed, with no format enforced on
+// entry — this only reformats a clean 10-digit US number for display,
+// e.g. "5082157570" -> "(508) 215-7570". Anything else (an extension,
+// a non-US number, a partial digit string) passes through unchanged
+// rather than being mangled by a formatter that assumed too much.
+function formatPhone(raw) {
+  if (!raw) return raw;
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length !== 10) return raw;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+const clientId = new URLSearchParams(window.location.search).get('id');
+const errorEl = document.getElementById('error');
+const clientEl = document.getElementById('client');
+const billsEl = document.getElementById('bills');
+const addBillForm = document.getElementById('add-bill-f');
+const addBillLoading = document.getElementById('add-bill-loading');
+const POSITIONS = [['watch', 'Watch'], ['support', 'Support'], ['oppose', 'Oppose']];
+
+function renderClient(d) {
+  const c = d.client;
+  currentClientName = c.name;
+  clientEl.innerHTML = `
+    <div class="card">
+      <div class="bill-title">${titleCaseName(c.name)}</div>
+      <div class="bill-desc" style="margin-top:0.4rem">
+        ${[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), formatPhone(c.bus_phone)].filter(Boolean).join(' · ') || 'No address on file'}
+      </div>
+      ${c.interests ? `<div class="bill-desc" style="margin-top:0.4rem">${c.interests}</div>` : ''}
+      <div class="card-actions" style="align-items:center">
+        <a class="secondary" href="/clients">Edit in Clients →</a>
+        ${d.entity_id ? `<a class="secondary" href="/lobbying/detail?id=${d.entity_id}">View CAL-ACCESS record →</a>` : ''}
+        <span class="row-menu" style="margin-left:auto">
+          <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'client-header')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-client-header">
+            <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
+          </button>
+          <div class="row-menu-dropdown" id="row-menu-client-header">
+            <button type="button" onclick="removeClient()">Remove client</button>
+          </div>
+        </span>
+      </div>
+    </div>
+  `;
+}
+
+let currentClientName = 'this client';
+
+// Same cascade warning as the Clients list's own removeClient() (see
+// CLIENTS_BODY) — deleting a client here deletes every bill/position
+// it's linked to too, so this needs the same real confirmation naming
+// what's about to be lost, not just a click. Uses the shared styled
+// dialog (see CONFIRM_DELETE_JS) rather than the browser's own
+// confirm(), and — like the Clients list — tucks the trigger itself
+// into a kebab menu instead of sitting at equal weight next to "Edit
+// in Clients"/"View CAL-ACCESS record".
+async function removeClient() {
+  const ok = await confirmDelete('Remove client?', `Remove ${currentClientName}? This also removes all of its bill and position assignments. This can't be undone.`);
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/clients?id=${clientId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Could not remove client');
+    }
+    window.location.href = '/clients';
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+function positionSelect(billId, position) {
+  return `<select class="position-select ${position}" data-saved="${position}" onchange="setPosition(${billId}, this)" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${POSITIONS.map(([value, label]) =>
+    `<option value="${value}" ${position === value ? 'selected' : ''}>${label}</option>`
+  ).join('')}</select>`;
+}
+
+let currentBills = [];
+
+function renderBills(bills) {
+  currentBills = bills;
+  if (!bills.length) {
+    billsEl.innerHTML = '<p class="empty">No bills assigned to this client yet — add one above.</p>';
+    return;
+  }
+  billsEl.innerHTML = `
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>Bill</th><th>Title</th><th>Status</th><th>Position</th><th></th></tr></thead>
+      <tbody>
+      ${bills.map(b => `
+        <tr>
+          <td class="chamber">${b.state} ${b.bill_number}</td>
+          <td>${b.title || ''}</td>
+          <td>${b.status_label ? `<span class="status-badge">${b.status_label}</span>` : ''}</td>
+          <td>${positionSelect(b.bill_id, b.position || 'watch')}</td>
+          <td class="row-menu">
+            ${b.url ? `<a class="secondary" href="${b.url}" target="_blank" rel="noopener" style="margin-right:0.4rem">View</a>` : ''}
+            <a class="secondary" href="/report?bill_id=${b.bill_id}&from_label=${encodeURIComponent(currentClientName)}&from_href=${encodeURIComponent('/clients/detail?id=' + clientId)}" style="margin-right:0.4rem">Report</a>
+            <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'bill-${b.bill_id}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-bill-${b.bill_id}">
+              <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
+            </button>
+            <div class="row-menu-dropdown" id="row-menu-bill-${b.bill_id}">
+              <button type="button" onclick="removeBill(${b.bill_id})">Remove from client</button>
+            </div>
+          </td>
+        </tr>
+      `).join('')}
+      </tbody>
+    </table>
+    </div>
+  `;
+}
+
+async function load() {
+  try {
+    const res = await fetch(`/api/clients/detail?id=${clientId}`);
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load client');
+    renderClient(data);
+    renderBills(data.bills);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    document.getElementById('loading').className = '';
+  }
+}
+
+async function setPosition(billId, selectEl) {
+  const newPosition = selectEl.value;
+  const savedPosition = selectEl.dataset.saved;
+  errorEl.className = '';
+  selectEl.className = 'position-select ' + newPosition;
+  selectEl.disabled = true;
+  try {
+    const res = await fetch('/api/bill-clients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bill_id: billId, client_id: Number(clientId), position: newPosition }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Could not update position');
+    }
+    selectEl.dataset.saved = newPosition;
+    load();
+  } catch (err) {
+    selectEl.value = savedPosition;
+    selectEl.className = 'position-select ' + savedPosition;
+    selectEl.disabled = false;
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+async function removeBill(billId) {
+  // Same confirmDelete() dialog as removeClient() above (see
+  // CONFIRM_DELETE_JS).
+  const b = currentBills.find(x => x.bill_id === billId);
+  const label = b ? `${b.state} ${b.bill_number}` : 'this bill';
+  const ok = await confirmDelete('Remove bill?', `Remove ${label} from this client? This can't be undone.`);
+  if (!ok) return;
+  errorEl.className = '';
+  try {
+    const res = await fetch(`/api/bill-clients?bill_id=${billId}&client_id=${clientId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Could not remove bill');
+    }
+    load();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+addBillForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const bill_number = document.getElementById('bill_number').value.trim();
+  if (!bill_number) return;
+  const position = document.getElementById('add-bill-position').value;
+  errorEl.className = ''; addBillLoading.style.display = 'block';
+  addBillForm.querySelector('button').disabled = true;
+  try {
+    const res = await fetch('/api/client-bills', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: Number(clientId), bill_number, position }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not add bill');
+    addBillForm.reset();
+    renderBills(data.bills);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    addBillLoading.style.display = 'none';
+    addBillForm.querySelector('button').disabled = false;
+  }
+});
+
+load();
+</script>
