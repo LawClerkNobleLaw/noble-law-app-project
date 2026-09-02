@@ -105,6 +105,8 @@ PORT = config.PORT
 # anywhere (and Render's own start command) finds them the same way.
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
+JS_CONTENT_TYPE = "application/javascript; charset=utf-8"
+
 
 def _read_static_text(name):
     """Read one static asset into a string, at import time.
@@ -452,15 +454,58 @@ BRAND_MARK_SVG_B64 = base64.b64encode(BRAND_MARK_SVG.encode("utf-8")).decode("as
 # above exists, not right after STYLE's own definition.
 STYLE = STYLE.replace("__BRAND_MARK_SVG_B64__", BRAND_MARK_SVG_B64)
 
+# The shared page JS, extracted (2026-09) out of this module into
+# static/js/ — it was ~500 lines of JavaScript, plus its explanatory
+# comments, sitting in Python strings here. Each file's own header
+# comment says what it does and which pages share it.
+#
+# Each one is served as a real script file and pulled in with a
+# <script src="..."> tag ahead of the page's own inline <script> (see
+# the *_SRC constants below), rather than being pasted into the page
+# body the way it used to be. Two reasons: a browser now fetches each
+# of these once for a whole session instead of re-reading an identical
+# copy embedded into every page that shares it, and those explanatory
+# comments stay a developer-facing thing on disk instead of shipping to
+# the browser inside every page response.
+#
+# Safe as separate classic scripts because all five are self-contained:
+# top-level function/const declarations plus a couple of document-level
+# listeners, nothing that reads a page's own variables at load time. A
+# classic <script src> runs before the inline <script> that follows it,
+# and top-level declarations land in the same shared global scope they
+# used to share by being pasted into that block — so the page code
+# calling them sees exactly what it saw before.
+#
+# Reading them from files also retires a hazard the old form had: each
+# constant had to stay a plain, non-f string, because these are full of
+# JS template literals whose ${...} would otherwise collide with
+# Python's own interpolation. A file has no such rule.
+BILL_TABLES_JS = _read_static_text("js/bill_tables.js")
+CLIENT_QUICKADD_JS = _read_static_text("js/client_quickadd.js")
+CONFIRM_DELETE_JS = _read_static_text("js/confirm_delete.js")
+TITLE_CASE_JS = _read_static_text("js/title_case.js")
+ROW_MENU_JS = _read_static_text("js/row_menu.js")
+
+
 # Every file the /static/ route will serve, name -> (bytes, content type),
 # built once at import rather than read per request. STYLE has to be in
 # here below the .replace() above, not next to its own load, so the bytes
 # served are the ones with the brand mark already substituted in.
 STATIC_ASSETS = {
     "style.css": (STYLE.encode("utf-8"), "text/css; charset=utf-8"),
+    "js/bill_tables.js": (BILL_TABLES_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/client_quickadd.js": (CLIENT_QUICKADD_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/confirm_delete.js": (CONFIRM_DELETE_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/title_case.js": (TITLE_CASE_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/row_menu.js": (ROW_MENU_JS.encode("utf-8"), JS_CONTENT_TYPE),
 }
 
 STYLE_HREF = _asset_url("style.css")
+BILL_TABLES_SRC = _asset_url("js/bill_tables.js")
+CLIENT_QUICKADD_SRC = _asset_url("js/client_quickadd.js")
+CONFIRM_DELETE_SRC = _asset_url("js/confirm_delete.js")
+TITLE_CASE_SRC = _asset_url("js/title_case.js")
+ROW_MENU_SRC = _asset_url("js/row_menu.js")
 
 TOP_BRAND = """<a href="/" class="top-brand">
   <span class="brand-mark" style="width:17px;height:17px"></span>
@@ -912,521 +957,6 @@ LANDING_PAGE = f"""<!doctype html>
 """
 
 
-# Shared history/amendment/hearing/vote row-rendering JS, used by both
-# LOOKUP_BODY (live LegiScan data from /api/bill) and REPORT_BODY (the
-# same table shapes from db.get_bill_report(), see legiscan_client.py's
-# shape_bill()) — a plain (non-f) string, interpolated into both pages'
-# own <script> blocks below via {BILL_TABLES_JS} rather than hand-
-# duplicated, so a future change to any of these four tables has one
-# place to edit instead of two that have to be kept in sync by hand.
-# Each function takes the already-extracted array (d.hearings vs
-# r.upcoming_hearings, etc.), not the whole bill/report object, since
-# the two pages don't even use the same field name for hearings.
-BILL_TABLES_JS = """
-// A history table is easy to skim by date/chamber but hard to skim by
-// WHAT HAPPENED — every row reads the same until you actually read it.
-// This buckets each row into one of three real legislative milestones
-// by keyword match on its own action text (LegiScan's own wording, not
-// a separate field) so the colored left edge is scannable down the
-// column instead. Keyword match, not a lookup table, because LegiScan's
-// action text is free-form and these three phrasings cover the cases
-// that matter here — a row that matches none of them just renders
-// unstyled, same as before.
-function milestoneClass(action) {
-  const a = (action || '').toLowerCase();
-  if (a.includes('introduced')) return 'milestone-intro';
-  if (a.includes('chaptered') || a.includes('approved by the governor') || a.includes('passed')) return 'milestone-passed';
-  if (a.includes('amended')) return 'milestone-amended';
-  return '';
-}
-
-function historyRowsHtml(history) {
-  return (history || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(h =>
-    `<tr class="${milestoneClass(h.action)}"><td class="date">${h.date || ''}</td><td class="chamber">${h.chamber || ''}</td><td>${h.action || ''}</td></tr>`
-  ).join('');
-}
-
-function amendmentRowsHtml(amendments) {
-  return (amendments || []).map(a => `
-    <tr>
-      <td class="date">${a.date || ''}</td>
-      <td class="chamber">${a.chamber || ''}</td>
-      <td>${a.title || a.description || ''}${a.adopted ? ' <span class="tag">Adopted</span>' : ''}${a.url ? ` — <a href="${a.url}" target="_blank" rel="noopener">View amended text →</a>` : ''}</td>
-    </tr>
-  `).join('');
-}
-
-function hearingRowsHtml(hearings) {
-  return (hearings || []).map(h => `
-    <tr>
-      <td class="date">${h.date || ''}${h.time ? ' ' + h.time : ''}</td>
-      <td class="chamber">${h.event_type || ''}</td>
-      <td>${h.description || ''}${h.location ? ` — ${h.location}` : ''}</td>
-    </tr>
-  `).join('');
-}
-
-// No page had a Votes panel until Phase 1 added it here — LegiScan's
-// own per-bill vote index (roll_call_id, chamber, tally), already
-// broken out by shape_bill(), just wasn't surfaced in the UI before.
-function voteRowsHtml(votes) {
-  return (votes || []).map(v => `
-    <tr>
-      <td class="date">${v.date || ''}</td>
-      <td class="chamber">${v.chamber || ''}</td>
-      <td>
-        ${v.description || ''}${v.passed ? ' <span class="tag">Passed</span>' : ''}
-        <div class="sub" style="margin:0.2rem 0 0;font-size:0.78rem">
-          Yea ${v.yea || 0} · Nay ${v.nay || 0} · NV ${v.nv || 0} · Absent ${v.absent || 0}
-        </div>
-      </td>
-    </tr>
-  `).join('');
-}
-"""
-
-
-# Shared client-picking JS, used by the flag-confirmation modal in
-# LOOKUP_BODY and by clientCell()'s per-row "Assign to client" dropdown
-# in FLAGGED_BODY — same reasoning as BILL_TABLES_JS above (one place
-# to edit, not two hand-kept-in-sync copies), interpolated into both
-# pages' own <script> blocks via {CLIENT_QUICKADD_JS}. A plain
-# (non-f) string for the same reason BILL_TABLES_JS is: it's full of
-# JS template-literal ${{...}} expressions that must stay literal, not
-# get swallowed as Python f-string interpolation.
-#
-# Covers two things every client <select> in this app now needs:
-#   - POSITIONS / clientOptionsHtml(): the shared support/oppose/watch
-#     list and a client <option> list that always ends in "+ Add new
-#     client", so every picker offers the same escape hatch instead of
-#     dead-ending at "no clients yet" (see clientCell()'s old fallback
-#     for what that used to look like).
-#   - The "+ Add new client" quick-add panel itself — a small modal,
-#     built lazily on first use and reused by both callers rather than
-#     duplicated, since a page can only ever have one open at a time.
-#     A trimmed copy of CLIENTS_BODY's own form: same fields minus the
-#     "for disclosure forms" section (effective_date/contract_period/
-#     agencies_lobbied), which stays editable later on the full
-#     /clients page — this is a quick add, not the whole form.
-CLIENT_QUICKADD_JS = """
-const POSITIONS = [['watch', 'Watch'], ['support', 'Support'], ['oppose', 'Oppose']];
-
-const ADD_NEW_CLIENT_VALUE = '__add_new_client__';
-
-function clientOptionsHtml(available) {
-  const opts = (available || []).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
-  return opts + `<option value="${ADD_NEW_CLIENT_VALUE}">+ Add new client</option>`;
-}
-
-// { existingClients, onCreated, onCancel } while the quick-add panel is
-// open — null the rest of the time. existingClients is only used to
-// tell which row of the POST /api/clients response (the endpoint
-// returns the caller's whole client list, not just the new one) is the
-// one just created: whichever id wasn't already in existingClients.
-let quickAddClientState = null;
-
-function ensureQuickAddClientModal() {
-  if (document.getElementById('quick-add-client-backdrop')) return;
-  const backdrop = document.createElement('div');
-  backdrop.id = 'quick-add-client-backdrop';
-  backdrop.className = 'modal-backdrop';
-  backdrop.innerHTML = `
-    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="qac-title">
-      <div class="modal-head">
-        <div>
-          <div class="title" id="qac-title">Add new client</div>
-          <div class="sub">The rest of the form (effective date, agencies lobbied, etc.) can be filled in later on /clients.</div>
-        </div>
-        <button type="button" class="icon-btn" id="qac-close" aria-label="Close">×</button>
-      </div>
-      <form id="qac-form">
-        <label style="position:relative">
-          <div class="sub" style="margin:0 0 0.3rem">Client / employer name</div>
-          <input id="qac-name" required autocomplete="off">
-          <div id="qac-name-autofill-dropdown" class="autofill-dropdown" style="top:100%;left:0;right:0;width:auto"></div>
-        </label>
-        <p class="sub" id="qac-name-autofill-note" style="margin:0.2rem 0 0;display:none">Prefilled from CAL-ACCESS — edit anything below if it looks wrong.</p>
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
-          <input id="qac-bus_addr1" placeholder="Street address" style="flex:1 1 100%">
-          <input id="qac-bus_city" placeholder="City" style="flex:2">
-          <input id="qac-bus_st" placeholder="State" maxlength="2" style="flex:1;text-transform:uppercase">
-          <input id="qac-bus_zip4" placeholder="ZIP" style="flex:1">
-        </div>
-        <label>
-          <div class="sub" style="margin:0 0 0.3rem">Description of the client's industry or interests</div>
-          <textarea id="qac-interests" rows="2"></textarea>
-        </label>
-        <label>
-          <div class="sub" style="margin:0 0 0.3rem">California Secretary of State filer ID <span style="font-weight:400">(optional)</span></div>
-          <input id="qac-existing_filer_id" placeholder="e.g. 1486088">
-        </label>
-        <div id="qac-error" role="alert" aria-live="assertive"></div>
-        <div class="modal-actions">
-          <button type="submit" id="qac-submit">Add client →</button>
-          <button type="button" class="secondary" id="qac-cancel">Cancel</button>
-        </div>
-      </form>
-    </div>
-  `;
-  document.body.appendChild(backdrop);
-  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) cancelQuickAddClient(); });
-  document.getElementById('qac-close').addEventListener('click', cancelQuickAddClient);
-  document.getElementById('qac-cancel').addEventListener('click', cancelQuickAddClient);
-  document.getElementById('qac-form').addEventListener('submit', submitQuickAddClient);
-  wireQuickAddNameAutofill();
-}
-
-// Same live CAL-ACCESS name autofill as the full /clients form (see that
-// page's runNameAutofillSearch/applyEntityAutofill) — duplicated here
-// rather than shared because this modal's JS ships as its own constant,
-// included verbatim into other pages' <script> blocks that never load
-// the /clients page's script at all. Employer matches sort first and
-// firm/coalition matches render de-emphasized, same reasoning as there:
-// a "client" means an employer, but a de-emphasized match beats hiding
-// a name the user might actually have meant.
-let qacAutofillTimer = null;
-
-function wireQuickAddNameAutofill() {
-  const nameInput = document.getElementById('qac-name');
-  const dropdown = document.getElementById('qac-name-autofill-dropdown');
-  const note = document.getElementById('qac-name-autofill-note');
-
-  function closeDropdown() {
-    dropdown.classList.remove('show');
-    dropdown.innerHTML = '';
-  }
-
-  async function search(q) {
-    try {
-      const res = await fetch(`/api/lobbying/search?q=${encodeURIComponent(q)}`);
-      const data = await res.json();
-      if (!res.ok) return;
-      if (nameInput.value.trim() !== q) return;
-      const matches = (data.results || []).filter(r => r.kind === 'entity').slice(0, 6);
-      if (!matches.length) { closeDropdown(); return; }
-      const sorted = [...matches].sort((a, b) =>
-        (a.entity_type === 'employer' ? 0 : 1) - (b.entity_type === 'employer' ? 0 : 1));
-      dropdown.innerHTML = sorted.map(r => `
-        <button type="button" class="${r.entity_type === 'employer' ? '' : 'non-employer-match'}" data-id="${r.id}">
-          ${r.name}
-          ${r.entity_type && r.entity_type !== 'employer' ? ` <span class="tag">${r.entity_type}</span>` : ''}
-          ${r.city || r.state ? ` <span class="sub" style="margin:0">— ${[r.city, r.state].filter(Boolean).join(', ')}</span>` : ''}
-        </button>
-      `).join('');
-      dropdown.classList.add('show');
-    } catch (err) {
-      // A failed suggestion lookup shouldn't block typing a name by
-      // hand — just don't offer any suggestions this time.
-    }
-  }
-
-  dropdown.addEventListener('click', async (e) => {
-    const btn = e.target.closest('button[data-id]');
-    if (!btn) return;
-    closeDropdown();
-    try {
-      const res = await fetch(`/api/lobbying/detail?id=${encodeURIComponent(btn.dataset.id)}`);
-      const data = await res.json();
-      if (!res.ok || !data.entity) return;
-      const entity = data.entity;
-      nameInput.value = entity.name || nameInput.value;
-      document.getElementById('qac-bus_addr1').value = entity.address || '';
-      document.getElementById('qac-bus_city').value = entity.city || '';
-      document.getElementById('qac-bus_st').value = entity.state || '';
-      document.getElementById('qac-bus_zip4').value = entity.zip || '';
-      if (entity.filer_id) document.getElementById('qac-existing_filer_id').value = entity.filer_id;
-      note.style.display = '';
-    } catch (err) {
-      // Same reasoning as search()'s catch — leave the name as typed
-      // rather than blocking on this.
-    }
-  });
-
-  nameInput.addEventListener('input', () => {
-    note.style.display = 'none';
-    clearTimeout(qacAutofillTimer);
-    const q = nameInput.value.trim();
-    if (q.length < 2) { closeDropdown(); return; }
-    qacAutofillTimer = setTimeout(() => search(q), 300);
-  });
-  document.addEventListener('click', (e) => {
-    if (!dropdown.contains(e.target) && e.target !== nameInput) closeDropdown();
-  });
-  nameInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeDropdown();
-  });
-}
-
-function openQuickAddClient(existingClients, onCreated, onCancel) {
-  ensureQuickAddClientModal();
-  quickAddClientState = { existingClients: existingClients || [], onCreated, onCancel };
-  document.getElementById('qac-form').reset();
-  document.getElementById('qac-error').className = '';
-  document.getElementById('qac-name-autofill-note').style.display = 'none';
-  document.getElementById('qac-name-autofill-dropdown').classList.remove('show');
-  document.getElementById('quick-add-client-backdrop').classList.add('show');
-  document.getElementById('qac-name').focus();
-}
-
-function closeQuickAddClientModal() {
-  const backdrop = document.getElementById('quick-add-client-backdrop');
-  if (backdrop) backdrop.classList.remove('show');
-}
-
-function cancelQuickAddClient() {
-  const state = quickAddClientState;
-  quickAddClientState = null;
-  closeQuickAddClientModal();
-  if (state && state.onCancel) state.onCancel();
-}
-
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  const backdrop = document.getElementById('quick-add-client-backdrop');
-  if (backdrop && backdrop.classList.contains('show')) cancelQuickAddClient();
-});
-
-async function submitQuickAddClient(e) {
-  e.preventDefault();
-  const state = quickAddClientState;
-  if (!state) return;
-  const errorEl = document.getElementById('qac-error');
-  errorEl.className = '';
-  const name = document.getElementById('qac-name').value.trim();
-  if (!name) {
-    errorEl.textContent = 'Client / employer name is required.';
-    errorEl.className = 'show';
-    return;
-  }
-  const body = {
-    name,
-    bus_addr1: document.getElementById('qac-bus_addr1').value.trim(),
-    bus_city: document.getElementById('qac-bus_city').value.trim(),
-    bus_st: document.getElementById('qac-bus_st').value.trim(),
-    bus_zip4: document.getElementById('qac-bus_zip4').value.trim(),
-    interests: document.getElementById('qac-interests').value.trim(),
-    existing_filer_id: document.getElementById('qac-existing_filer_id').value.trim(),
-  };
-  const submitBtn = document.getElementById('qac-submit');
-  submitBtn.disabled = true;
-  try {
-    const beforeIds = new Set(state.existingClients.map(c => c.id));
-    const res = await fetch('/api/clients', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const rows = await res.json();
-    if (!res.ok) throw new Error((rows && rows.error) || 'Could not add client');
-    const created = rows.find(c => !beforeIds.has(c.id)) || rows[rows.length - 1];
-    quickAddClientState = null;
-    closeQuickAddClientModal();
-    if (state.onCreated) state.onCreated(rows, created);
-  } catch (err) {
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
-  } finally {
-    submitBtn.disabled = false;
-  }
-}
-"""
-
-
-# Shared "are you sure?" dialog for destructive actions — styled with
-# the same .modal-backdrop/.modal-panel CLIENT_QUICKADD_JS's modal above
-# uses, rather than the browser's own native confirm() (which both
-# CLIENTS_BODY's and CLIENT_DETAIL_BODY's removeClient() called before
-# this existed). confirmDelete(title, message) returns a Promise<bool>,
-# so a caller just does `if (!await confirmDelete(...)) return;` in
-# place of the old `if (!confirm(...)) return;` line — same control
-# flow, just awaited. Built once and reused (not recreated per call)
-# the same way ensureQuickAddClientModal() above reuses its backdrop.
-CONFIRM_DELETE_JS = """
-function confirmDelete(title, message) {
-  return new Promise((resolve) => {
-    let backdrop = document.getElementById('confirm-delete-backdrop');
-    if (!backdrop) {
-      backdrop = document.createElement('div');
-      backdrop.id = 'confirm-delete-backdrop';
-      backdrop.className = 'modal-backdrop';
-      backdrop.innerHTML = `
-        <div class="modal-panel" role="alertdialog" aria-modal="true" aria-labelledby="cd-title" aria-describedby="cd-message">
-          <div class="modal-head">
-            <div>
-              <div class="title" id="cd-title"></div>
-              <div class="sub" id="cd-message"></div>
-            </div>
-          </div>
-          <div class="modal-actions">
-            <button type="button" class="danger" id="cd-confirm">Remove</button>
-            <button type="button" class="secondary" id="cd-cancel">Cancel</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(backdrop);
-    }
-    backdrop.querySelector('#cd-title').textContent = title;
-    backdrop.querySelector('#cd-message').textContent = message;
-    const confirmBtn = backdrop.querySelector('#cd-confirm');
-    const cancelBtn = backdrop.querySelector('#cd-cancel');
-    const finish = (result) => {
-      backdrop.classList.remove('show');
-      confirmBtn.removeEventListener('click', onConfirm);
-      cancelBtn.removeEventListener('click', onCancel);
-      backdrop.removeEventListener('click', onBackdropClick);
-      resolve(result);
-    };
-    const onConfirm = () => finish(true);
-    const onCancel = () => finish(false);
-    const onBackdropClick = (e) => { if (e.target === backdrop) finish(false); };
-    confirmBtn.addEventListener('click', onConfirm);
-    cancelBtn.addEventListener('click', onCancel);
-    backdrop.addEventListener('click', onBackdropClick);
-    backdrop.classList.add('show');
-  });
-}
-"""
-
-
-# Small display-only helper for showing client/org names consistently.
-# c.name (or b.name — same field, different call sites) holds two very
-# different kinds of value with nothing in the data telling them apart:
-# a name typed in by hand, already well-cased ("Anthropic PBC",
-# "O'Brien Consulting"), and a name autofilled from CAL-ACCESS, which
-# comes through exactly as the source record has it — typically
-# ALL-CAPS ("BRICKLAYERS, TILESETTERS & ALLIED CRAFTWORKERS LOCAL 3
-# UNION"). Reshaping every name unconditionally would fix the second
-# case but wreck the first ("O'Brien" -> "O'brien", "McDonald Group" ->
-# "Mcdonald Group"), so titleCaseName() gates the whole transform on
-# the input being ALL-CAPS already (letters only — digits/punctuation/
-# whitespace have no case to check); anything not already shouting —
-# including a name that's merely got a lowercase letter somewhere in
-# it — passes through completely untouched. This is deliberately a
-# display-only cosmetic fix: call it only where a name is rendered as
-# a label, never on the stored value, an editable field's value, or
-# anything used as a lookup/link key (see each call site's own comment
-# for why that spot is safe).
-TITLE_CASE_JS = """
-const TITLE_CASE_LOWER = new Set(['AND', 'OF', 'THE']);
-const TITLE_CASE_KEEP_UPPER = new Set(['LLC', 'PBC', 'LLP', 'LLLP', 'INC', 'CORP', 'CO', 'LP', 'PAC', 'USA']);
-
-// Title-cases one "word" — really just a whitespace-delimited chunk,
-// so it may carry attached punctuation like the comma in
-// "BRICKLAYERS," or the ampersand standing alone as "&". `core` strips
-// that off (letters only) so it can be checked against the acronym
-// and connector-word lists without the punctuation getting in the
-// way, but the transform itself runs on `raw` so anything non-letter
-// stays exactly where it was — toUpperCase()/toLowerCase() are no-ops
-// on digits/punctuation, which is what makes "LOCAL 3 UNION" ->
-// "Local 3 Union" and "&" -> "&" work with no special-casing. Hyphens
-// split into their own segments ("SMITH-JONES" -> "Smith-Jones");
-// apostrophes deliberately do NOT ("O'BRIEN" -> "O'brien", not
-// "O'Brien" — there's no reliable way to tell a name-particle
-// apostrophe from any other kind without a name-specific exception
-// list, so this keeps the simple, safe rule instead of guessing).
-function titleCaseWord(raw, isEdgeWord) {
-  const core = raw.replace(/[^A-Za-z]/g, '');
-  if (TITLE_CASE_KEEP_UPPER.has(core)) return raw.toUpperCase();
-  if (!isEdgeWord && TITLE_CASE_LOWER.has(core)) return raw.toLowerCase();
-  return raw.split('-').map((segment) => {
-    let seenLetter = false;
-    return segment.replace(/[A-Za-z]/g, (ch) => {
-      if (seenLetter) return ch.toLowerCase();
-      seenLetter = true;
-      return ch.toUpperCase();
-    });
-  }).join('-');
-}
-
-// See the comment above this block's own TITLE_CASE_JS constant for
-// why this only touches a name that's ALL-CAPS already, and only ever
-// as a display label.
-function titleCaseName(name) {
-  if (!name) return name;
-  // Any lowercase letter at all means this isn't a shouting
-  // CAL-ACCESS name to begin with (or already got fixed by hand) —
-  // leave it alone. No uppercase letter either means there's nothing
-  // with a case to reshape (pure digits/punctuation, or empty).
-  if (!/[A-Z]/.test(name) || /[a-z]/.test(name)) return name;
-  // Split on whitespace but keep the whitespace runs themselves (the
-  // odd-indexed entries) so original spacing survives exactly, rather
-  // than being normalized to single spaces.
-  const tokens = name.split(/(\\s+)/);
-  const wordIdxs = [];
-  tokens.forEach((t, i) => { if (i % 2 === 0 && t !== '') wordIdxs.push(i); });
-  const firstIdx = wordIdxs[0];
-  const lastIdx = wordIdxs[wordIdxs.length - 1];
-  return tokens.map((t, i) => {
-    if (i % 2 !== 0 || t === '') return t;
-    return titleCaseWord(t, i === firstIdx || i === lastIdx);
-  }).join('');
-}
-"""
-
-
-# Shared "⋮" row-menu behavior (open/close/Escape/click-outside) for
-# every row-menu-dropdown in the app (Flagged Bills, Clients, Client
-# detail, Disclosures — each has a table of rows plus, on Client
-# detail, one menu that isn't in a table at all). Used to be pasted
-# four times, byte-for-byte identical, one copy per page body — the
-# same "same shared page-chrome behavior, one definition" reasoning
-# CONFIRM_DELETE_JS above and account_widget()/app_shell() already
-# follow, just not applied here until now.
-#
-# A tempting-looking "fix" was tried and deliberately reverted here: on
-# a very short table (as few as one row), flipping .open-up can push
-# the menu above the table's own top edge, floating it over the
-# panel-head — misplaced-looking, but still fully visible/clickable
-# (confirmed: .panel's overflow:hidden never actually clips it, it just
-# renders above the header row instead of below it). Adding a check to
-# fall back to opening downward instead, whenever upward would do that,
-# seemed like the fix — but downward is exactly what triggered the
-# upward flip in the first place, so falling back to it doesn't avoid a
-# problem, it un-avoids the ORIGINAL one: the table's overflow-x:auto
-# wrapper clips overflow-y too (see .row-menu-dropdown.open-up in
-# STYLE), and reverting to "down" on a table too short to clear either
-# direction lands the menu fully outside the wrapper's clipped box —
-# invisible and unusable, confirmed by screenshot. Misplaced-but-usable
-# beats invisible, so the flip stays unconditional on bottom-overflow.
-ROW_MENU_JS = """
-function closeRowMenus() {
-  document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {
-    m.classList.remove('show', 'open-up');
-    const openBtn = document.querySelector(`[aria-controls="${m.id}"]`);
-    if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
-  });
-}
-function toggleRowMenu(e, key) {
-  e.stopPropagation();
-  const menu = document.getElementById(`row-menu-${key}`);
-  const wasOpen = menu.classList.contains('show');
-  closeRowMenus();
-  if (!wasOpen) {
-    menu.classList.add('show');
-    e.currentTarget.setAttribute('aria-expanded', 'true');
-    // See .row-menu-dropdown.open-up in STYLE — flip upward instead of
-    // down whenever opening downward would get clipped by the table's
-    // own overflow-x:auto wrapper, which the last row always would.
-    const table = e.currentTarget.closest('table');
-    if (table && menu.getBoundingClientRect().bottom > table.getBoundingClientRect().bottom) {
-      menu.classList.add('open-up');
-    }
-  }
-}
-document.addEventListener('click', closeRowMenus);
-// Escape closes whichever row menu is open and returns focus to its
-// trigger, matching the standard disclosure-menu keyboard pattern.
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  const openMenu = document.querySelector('.row-menu-dropdown.show');
-  if (!openMenu) return;
-  const openBtn = document.querySelector(`[aria-controls="${openMenu.id}"]`);
-  closeRowMenus();
-  if (openBtn) openBtn.focus();
-});
-"""
-
-
 # The body for /lookup, wrapped in app_shell() below rather than
 # top_nav()+.wrap — this is one of the two pages (with /lobbying) that
 # render the full signed-in shell without requiring a session, so it
@@ -1659,13 +1189,12 @@ LOBBYING_BODY = f"""
 <div id="error" role="alert" aria-live="assertive"></div>
 <div id="results"></div>
 
+<script src="{TITLE_CASE_SRC}"></script>
 <script>
 const form = document.getElementById('f');
 const resultsEl = document.getElementById('results');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
-
-{TITLE_CASE_JS}
 
 form.addEventListener('submit', async (e) => {{
   e.preventDefault();
@@ -2414,10 +1943,11 @@ FLAGGED_BODY = f"""
   <div id="list"></div>
 </div>
 
+<script src="{CLIENT_QUICKADD_SRC}"></script>
+<script src="{CONFIRM_DELETE_SRC}"></script>
+<script src="{TITLE_CASE_SRC}"></script>
+<script src="{ROW_MENU_SRC}"></script>
 <script>
-{CLIENT_QUICKADD_JS}
-{CONFIRM_DELETE_JS}
-{TITLE_CASE_JS}
 const listEl = document.getElementById('list');
 const loadingEl = document.getElementById('loading');
 const errorEl = document.getElementById('error');
@@ -2590,8 +2120,6 @@ function fmtDateTime(iso) {{
   if (isNaN(d)) return iso;
   return d.toLocaleString('en-US', {{ month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }});
 }}
-
-{ROW_MENU_JS}
 
 async function unflag(billId) {{
   // Unflagging drops the bill's tracked position/client context with no
@@ -3078,9 +2606,10 @@ CLIENTS_BODY = f"""
   <div id="list"></div>
 </div>
 
+<script src="{CONFIRM_DELETE_SRC}"></script>
+<script src="{TITLE_CASE_SRC}"></script>
+<script src="{ROW_MENU_SRC}"></script>
 <script>
-{CONFIRM_DELETE_JS}
-{TITLE_CASE_JS}
 // bus_phone is stored exactly as typed, with no format enforced on
 // entry — this only reformats a clean 10-digit US number for display,
 // e.g. "5082157570" -> "(508) 215-7570". Anything else (an extension,
@@ -3412,8 +2941,6 @@ function render(rows) {{
   `;
 }}
 
-{ROW_MENU_JS}
-
 load();
 applyPrefill();
 </script>
@@ -3455,9 +2982,10 @@ CLIENT_DETAIL_BODY = f"""
   <div id="bills"></div>
 </div>
 
+<script src="{CONFIRM_DELETE_SRC}"></script>
+<script src="{TITLE_CASE_SRC}"></script>
+<script src="{ROW_MENU_SRC}"></script>
 <script>
-{CONFIRM_DELETE_JS}
-{TITLE_CASE_JS}
 // bus_phone is stored exactly as typed, with no format enforced on
 // entry — this only reformats a clean 10-digit US number for display,
 // e.g. "5082157570" -> "(508) 215-7570". Anything else (an extension,
@@ -3573,8 +3101,6 @@ function renderBills(bills) {{
   `;
 }}
 
-{ROW_MENU_JS}
-
 async function load() {{
   try {{
     const res = await fetch(`/api/clients/detail?id=${{clientId}}`);
@@ -3684,9 +3210,9 @@ REPORT_BODY = f"""
 <div id="loading" class="show"><span class="spinner"></span>Loading…</div>
 <div id="report"></div>
 
+<script src="{BILL_TABLES_SRC}"></script>
+<script src="{CLIENT_QUICKADD_SRC}"></script>
 <script>
-{BILL_TABLES_JS}
-{CLIENT_QUICKADD_JS}
 const reportEl = document.getElementById('report');
 const errorEl = document.getElementById('error');
 const billId = new URLSearchParams(window.location.search).get('bill_id');
@@ -4124,8 +3650,9 @@ DISCLOSURES_BODY = f"""
   <div id="list"></div>
 </div>
 
+<script src="{CONFIRM_DELETE_SRC}"></script>
+<script src="{ROW_MENU_SRC}"></script>
 <script>
-{CONFIRM_DELETE_JS}
 // A friendly "Aug 21, 2:03 PM" instead of the raw
 // "2026-08-21T14:03:00" ISO string the API returns.
 function fmtDateTime(iso) {{
@@ -4293,8 +3820,6 @@ async function removeFiling(id) {{
   }}
 }}
 
-{ROW_MENU_JS}
-
 load();
 </script>
 """
@@ -4308,8 +3833,8 @@ DISCLOSURE_REVIEW_BODY = f"""
 <div id="loading" class="show"><span class="spinner"></span>Loading…</div>
 <div id="content"></div>
 
+<script src="{CONFIRM_DELETE_SRC}"></script>
 <script>
-{CONFIRM_DELETE_JS}
 // A friendly "Aug 21, 2:03 PM" instead of the raw
 // "2026-08-21T14:03:00" ISO string the API returns.
 function fmtDateTime(iso) {{
