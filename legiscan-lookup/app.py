@@ -74,6 +74,7 @@ back to reading the `export LEGISCAN_API_KEY=...` line out of ~/.zshrc.
 
 import base64
 import datetime
+import hashlib
 import hmac
 import json
 import os
@@ -98,6 +99,33 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import refresh_calaccess  # noqa: E402 — must follow the sys.path insert above
 
 PORT = config.PORT
+
+# Where the CSS/JS extracted out of this module live. Resolved off
+# __file__ rather than the working directory so `python3 app.py` from
+# anywhere (and Render's own start command) finds them the same way.
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+
+def _read_static_text(name):
+    """Read one static asset into a string, at import time.
+
+    Deliberately not re-read per request: these change when the app is
+    deployed, not while it runs, and a per-request read would put a disk
+    hit in front of every page load to save an edit-time restart — the
+    same tradeoff the rest of this module already makes by holding its
+    pages in module-level constants."""
+    with open(os.path.join(STATIC_DIR, name), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _asset_url(name):
+    """/static/<name> plus a short content hash, e.g. style.css?v=1a2b3c4d.
+
+    The hash is what makes _send_static's year-long Cache-Control safe:
+    the URL changes whenever the bytes do, so nobody gets served a stale
+    stylesheet after a deploy, and nobody re-downloads an unchanged one."""
+    body = STATIC_ASSETS[name][0]
+    return f"/static/{name}?v={hashlib.sha256(body).hexdigest()[:8]}"
 
 # Gates the two /internal/refresh-* routes. Unset locally on purpose —
 # see the module docstring above.
@@ -170,873 +198,17 @@ def _login_lockout_remaining_minutes(email):
         return max(1, int(remaining.total_seconds() // 60) + 1)
 
 
-STYLE = """
-  :root {
-    /* Rotunda visual redesign (2026-08) — replaces the monochrome
-       palette that itself replaced an earlier indigo/Linear one (see
-       git history: #27 tried reintroducing color on secondary buttons,
-       #30 reverted it). This is a deliberate, larger reversal of that
-       revert, built from a Claude Design mockup the team approved —
-       not a regression back to #27's version. Same token *names* as
-       before on purpose, so the hundreds of existing rules below that
-       reference --ink/--paper/--slate/etc. by name pick up the new
-       values for free; only the values themselves, plus a handful of
-       new tokens (--bg, --gold, --warn, --info, --radius-lg), change
-       here. --content-bg is the sidebar-shell (app_shell()) page
-       background — in this design it's intentionally the SAME value as
-       --paper (the chrome bg), since the mockup has no separate "bar"
-       color at all: sidebar/topbar/content all sit on one flat --bg,
-       divided only by 1px hairlines (--rule). --surface is the one
-       token that still reads as a distinct "raised" tone (cards/panels/
-       dropdowns/modals) — the mockup's own cards are actually
-       transparent+border, but keeping --surface non-transparent for
-       now avoids relitigating every .card/.panel rule in this pass;
-       see the redesign follow-up for per-page component work. */
-    --bg: #FAF8F3; --ink: #111111; --paper: #FAF8F3; --content-bg: #FAF8F3; --surface: #FFFFFF;
-    --gold: #8A6A18;
-    --slate: color-mix(in srgb, var(--ink) 65%, transparent);
-    --rule: color-mix(in srgb, var(--ink) 14%, transparent);
-    --accent: var(--slate);
-    /* --accent-solid/--accent-solid-text are the button-fill pair — in
-       dark mode the fill inverts (light pill, dark text) while --accent
-       above stays a light-on-dark *text* color, so one variable can't
-       do both. --accent-solid-hover is the mockup's own style-hover
-       swap (a solid near-black/near-white pill goes fully black/white
-       on hover) — real buttons below now use this instead of a generic
-       opacity fade. */
-    --accent-solid: #141414; --accent-solid-text: #F7F5F0; --accent-solid-hover: #000000;
-    --accent-soft: color-mix(in srgb, var(--ink) 8%, transparent);
-    /* Status/position color system: one hue per meaning (early=blue,
-       active/watch=amber, passed/support=green, failed/oppose=red),
-       fixed lightness+chroma per theme so only the hue varies — ported
-       directly from the mockup's own hue()/statusColor()/rag() JS
-       (same H values: 245/85/145/25). --good/--error keep their
-       existing names (passed/failed) since dozens of rules already
-       reference them; --warn/--info are new (active-or-watch /
-       introduced-or-in-committee). *-soft variants are translucent
-       tints of the hue itself now, not independent flat colors, so a
-       badge's soft background always stays in the same family as its
-       own text/dot color. */
-    --good: oklch(0.48 0.13 145); --good-soft: color-mix(in srgb, var(--good) 16%, transparent);
-    --error: oklch(0.48 0.13 25); --error-soft: color-mix(in srgb, var(--error) 16%, transparent);
-    --warn: oklch(0.48 0.13 85); --warn-soft: color-mix(in srgb, var(--warn) 16%, transparent);
-    --info: oklch(0.48 0.13 245); --info-soft: color-mix(in srgb, var(--info) 16%, transparent);
-    --shadow-rest: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.03);
-    --shadow-hover: 0 8px 24px rgba(0,0,0,0.10);
-    /* The handful of border-radius values actually used below (4-8px)
-       collapse into these two tokens; 999px pills get their own, and
-       --radius-lg (new) is the mockup's card/panel/search-bar radius —
-       not consumed anywhere yet in this pass (existing .card/.panel/
-       .stat-card keep their own hardcoded 18px for now), just defined
-       early for the per-page redesign work that follows this one. Left
-       alone on purpose: 50% and the two circular dots (.step-dot,
-       .status-badge::before) that use a fixed pixel radius instead of
-       50% only because their box is sized in rem, not px — those are
-       circles, not rounded rectangles, so they're not part of this
-       scale. */
-    --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px; --radius-pill: 999px;
-    /* Not redeclared in the dark :root below — unlike color/radius,
-       spacing doesn't change between themes, so one definition here
-       covers both. Values below that already land on a 4px step
-       (0.5rem, 0.75rem, 1rem, 1.25rem, 1.5rem, 2.5rem, 4rem, ...) were
-       left as plain rem rather than forced onto one of these six
-       tokens — this scale is for the ones that were off-grid
-       (0.6rem/9.6px, 0.35rem/5.6px, 1.1rem/17.6px, etc.), not a
-       wholesale rewrite of every dimension in the file. */
-    --space-1: 4px; --space-2: 8px; --space-3: 12px;
-    --space-4: 16px; --space-5: 24px; --space-6: 32px;
-    /* Body copy is now Poppins (see FONT_LINKS) rather than the system
-       stack — the mockup's own declared stack is "Garet, Poppins,
-       system-ui, sans-serif"; Garet is a paid font whose web-embedding
-       license isn't confirmed yet (see redesign notes), so it's
-       omitted here and the stack falls through to Poppins, which reads
-       close to Garet (both rounded/geometric) and needs no licensing
-       decision since it's a free Google Font. --font-serif is the
-       mockup's one deliberate exception (Instrument Serif, for an
-       editorial-style headline) — also not consumed by anything in
-       this pass, defined for the page-level work that uses it. --mono
-       is unchanged; bill IDs/dates keep using it for now. */
-    --font-sans: Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    --font-serif: "Instrument Serif", Georgia, serif;
-    --mono: ui-monospace, monospace;
-    /* One definition covers both themes — .brand-mark masks this
-       shape and fills it with --ink, which already flips per theme on
-       its own, so this doesn't need the redefine-in-three-places
-       pattern every actual *color* above uses. */
-    --brand-mark: url("data:image/svg+xml;base64,__BRAND_MARK_SVG_B64__");
-  }
-  /* :not([data-theme="light"]) so an explicit light choice (the
-     manual toggle below, see account_widget()) beats the OS
-     preference — without that guard, someone on a dark-mode OS who
-     explicitly picks "light" here would still get this block's
-     values, since a media query alone can't know about the toggle. */
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --bg: #000000; --ink: #ffffff; --paper: #000000; --content-bg: #000000; --surface: #0C0C0C;
-      --gold: #C9B27A;
-      --accent-solid: #F4EFE4; --accent-solid-text: #0A0A0A; --accent-solid-hover: #ffffff;
-      --good: oklch(0.76 0.12 145); --error: oklch(0.76 0.12 25);
-      --warn: oklch(0.76 0.12 85); --info: oklch(0.76 0.12 245);
-      --shadow-rest: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
-      --shadow-hover: 0 18px 40px rgba(0,0,0,0.35);
-    }
-  }
-  /* The other half of the manual override: an explicit dark choice
-     wins regardless of OS preference. Same values as the media-query
-     block above, kept as its own always-applies rule (not folded into
-     it) since [data-theme="dark"] needs to win even on a light-mode
-     OS, where that media query never matches at all. */
-  :root[data-theme="dark"] {
-    --bg: #000000; --ink: #ffffff; --paper: #000000; --content-bg: #000000; --surface: #0C0C0C;
-    --gold: #C9B27A;
-    --accent-solid: #F4EFE4; --accent-solid-text: #0A0A0A; --accent-solid-hover: #ffffff;
-    --good: oklch(0.76 0.12 145); --error: oklch(0.76 0.12 25);
-    --warn: oklch(0.76 0.12 85); --info: oklch(0.76 0.12 245);
-    --shadow-rest: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
-    --shadow-hover: 0 18px 40px rgba(0,0,0,0.35);
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--content-bg); color: var(--ink);
-    font: 16px/1.5 var(--font-sans);
-    -webkit-font-smoothing: antialiased;
-  }
-  /* A handful of plain, unclassed <a> tags (e.g. a client's name in the
-     flagged-bills list) had no color rule anywhere, so they fell back to
-     the browser's own default link blue instead of the app's palette —
-     this is the one place that acts as a fallback for those. Anywhere
-     that already sets its own color (.secondary, .primary, .panel-link,
-     etc.) keeps doing so — a class selector beats this bare-tag one. */
-  a { color: var(--accent); text-decoration: none; }
-  /* Matches the mockup's a:hover — every plain link warms to --gold on
-     hover instead of the browser default underline-only treatment. */
-  a:hover { color: var(--gold); }
-  a:focus-visible, button:focus-visible, input:focus-visible,
-  select:focus-visible, summary:focus-visible {
-    outline: 2px solid var(--gold); outline-offset: 2px; border-radius: var(--radius-sm);
-  }
-  ::selection { background: var(--accent-solid); color: var(--accent-solid-text); }
-  .wrap { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
-  /* A full-width bar, same grammar as the signed-in shell's .app-topbar
-     (fixed height, border-bottom, solid --paper against the page's
-     --content-bg) — public pages don't get the sidebar, but the top
-     chrome should still read as "this app's header," not a different
-     product's thin link row. The inner div re-centers content at the
-     same width as .wrap so the bar's contents still line up with the
-     page below it. */
-  .top-nav {
-    height: 4rem; display: flex; align-items: center; background: var(--paper);
-    border-bottom: 1px solid var(--rule);
-  }
-  .top-nav-inner {
-    width: 100%; max-width: 46rem; margin: 0 auto; padding: 0 1.5rem;
-    display: flex; gap: var(--space-4); align-items: center; position: relative;
-  }
-  /* Wraps nav_links()/left_extra + the account widget (see top_nav()).
-     display:contents at desktop widths means this introduces no box of
-     its own — its children lay out directly in .top-nav-inner's flex
-     row, identical to before this element existed. Only the ≤640px
-     media query below turns it into an actual box (a dropdown panel). */
-  .top-nav-links { display: contents; }
-  /* Hidden until the ≤640px media query below shows it — nothing for
-     it to open above that width, since .top-nav-links is still just
-     the plain inline row. Two classes (.icon-btn.top-nav-menu-btn), not
-     one — .icon-btn's own `display: flex` (defined later in this file)
-     would otherwise win the display property on source order alone,
-     since a single-class selector here ties with it on specificity. */
-  .icon-btn.top-nav-menu-btn { display: none; flex: none; margin-left: auto; }
-  @media (max-width: 640px) {
-    .icon-btn.top-nav-menu-btn { display: flex; }
-    .top-nav-links {
-      display: none; position: absolute; top: 100%; left: 0; right: 0; flex-direction: column;
-      align-items: stretch; background: var(--paper); border-bottom: 1px solid var(--rule);
-      padding: 1rem 1.5rem; gap: 0.75rem; box-shadow: 0 8px 20px rgba(0,0,0,0.08); z-index: 30;
-    }
-    .top-nav-links.show { display: flex; }
-    /* The account widget's own wrapper (see top_nav()'s `account`
-       variable) carries margin-left:auto and a max-width inline —
-       exactly what's needed to push it to the far right of a
-       horizontal row, but meaningless (and, for max-width, actively
-       cramping) once .top-nav-links switches to a stacked column
-       above. !important earns its keep here overriding an inline
-       style for a genuinely different layout context, not routine
-       specificity-fighting. */
-    .top-nav-links.show > div { margin-left: 0 !important; max-width: none !important; }
-  }
-  .top-nav a { color: var(--accent); font-size: 0.85rem; text-decoration: none; }
-  .top-nav a:hover { text-decoration: underline; }
-  /* .top-brand is a real <a> now (links home) — .top-nav a above would
-     otherwise win on color/font-size since element+class ties with
-     class-only on specificity's middle term; .top-nav .top-brand (two
-     classes) reliably beats it instead of relying on source order. */
-  .top-nav .top-brand {
-    display: flex; align-items: center; gap: 0.5rem; font-weight: 600; font-size: 0.9rem;
-    color: var(--ink); margin-right: 0.4rem;
-  }
-  .top-nav .top-brand:hover { text-decoration: none; }
-  /* Shared by every usage of the real Rotunda logo (TOP_BRAND, the
-     sidebar's .app-brand-mark, the landing page's .frame-brand mockup)
-     — a sized, empty element masked to --brand-mark's shape and
-     filled with --ink, which already recolors per theme on its own
-     (see --brand-mark's single definition in :root). A mask, not
-     background-image, so one SVG asset can serve both themes instead
-     of needing separate light/dark exports. Each usage sets its own
-     width/height inline, since the three contexts need different
-     sizes. */
-  .brand-mark {
-    display: inline-block; flex: none; background-color: var(--ink);
-    -webkit-mask-image: var(--brand-mark); mask-image: var(--brand-mark);
-    -webkit-mask-size: contain; mask-size: contain;
-    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
-    -webkit-mask-position: center; mask-position: center;
-  }
-  h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
-  .sub { color: var(--slate); margin: 0 0 2rem; font-size: 0.92rem; }
-  /* Signup's own 2-step progress — two dots rather than a full wizard
-     bar, since it's only ever these two steps (account, then profile
-     details). Sits inline with the existing "Step 1 of 2" copy rather
-     than replacing it. */
-  .step-indicator { display: flex; align-items: flex-start; gap: 0.5rem; margin: 0 0 2rem; }
-  .step-indicator .sub { margin: 0.1rem 0 0; }
-  .step-dot { width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--rule); flex: none; margin-top: 0.3rem; }
-  .step-dot.filled { background: var(--ink); }
-  form {
-    display: flex; gap: var(--space-2); margin-bottom: 2rem; flex-wrap: wrap;
-  }
-  input, select, textarea {
-    font: inherit; padding: var(--space-2) 0.75rem; border: 1px solid var(--rule);
-    border-radius: var(--radius-md); background: var(--surface); color: var(--ink);
-  }
-  select { cursor: pointer; }
-  input#bill { flex: 1; min-width: 8rem; }
-  /* Solid actions are full pills now (not var(--radius-md)'s 8px) with
-     a real hover color swap (--accent-solid-hover) instead of a generic
-     opacity fade — matches the mockup's "Confirm"/"Bill report" pill
-     buttons and their own style-hover="background: var(--accent-hover)". */
-  button {
-    font: inherit; font-weight: 600; padding: var(--space-2) var(--space-4); border: none;
-    border-radius: var(--radius-pill); background: var(--accent-solid); color: var(--accent-solid-text); cursor: pointer;
-    transition: background .12s ease;
-  }
-  button:hover { background: var(--accent-solid-hover); }
-  button:disabled { opacity: 0.5; cursor: default; }
-  /* Secondary/danger actions are outlined pills (transparent fill, a
-     border that deepens on hover) rather than the old soft-filled
-     background — matches the mockup's "Flag this bill"/"Cancel"
-     treatment, where the only solid-filled pill on a page is the one
-     primary action. */
-  button.secondary, button.danger {
-    background: transparent; border: 1px solid var(--rule); color: var(--ink);
-  }
-  button.danger { color: var(--error); }
-  button.secondary:hover { border-color: var(--ink); }
-  button.danger:hover { border-color: var(--error); }
-  /* Same button look for plain <a> links used as actions (e.g. "View"
-     on LegiScan, "Report" to the action-report page) — button's base
-     rule only targets <button>, so links need their own copy of the
-     same properties plus the anchor-specific reset. */
-  a.secondary, a.danger {
-    display: inline-flex; align-items: center; gap: var(--space-2); font: inherit; font-weight: 600;
-    padding: var(--space-2) var(--space-4); border-radius: var(--radius-pill); text-decoration: none;
-    background: transparent; border: 1px solid var(--rule); color: var(--ink); transition: border-color .12s ease, color .12s ease;
-  }
-  a.danger { color: var(--error); }
-  a.secondary svg, a.danger svg { width: 0.85rem; height: 0.85rem; flex: none; }
-  /* Solid-fill counterpart to a.secondary/a.danger above, same reasoning
-     — an <a> styled to look like the app's solid dark <button>. */
-  a.primary {
-    display: inline-flex; align-items: center; gap: var(--space-2); font: inherit; font-weight: 600;
-    padding: 0.5rem var(--space-4); border-radius: var(--radius-pill); text-decoration: none;
-    background: var(--accent-solid); color: var(--accent-solid-text); transition: background .12s ease;
-  }
-  a.primary:hover { background: var(--accent-solid-hover); }
-  a.primary svg { width: 0.85rem; height: 0.85rem; }
-  a.secondary:hover { border-color: var(--ink); color: var(--ink); }
-  a.danger:hover { border-color: var(--error); }
-  #result { display: none; }
-  #result.show { display: block; }
-  .card {
-    background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-rest);
-    border-radius: 18px; padding: 1.25rem var(--space-5); margin-bottom: 1rem;
-  }
-  .bill-id { font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--accent); margin-bottom: 0.4rem; }
-  .bill-title { font-size: 1.15rem; font-weight: 700; margin: 0 0 0.3rem; }
-  .bill-desc { color: var(--slate); font-size: 0.9rem; }
-  .bill-link { display: inline-block; margin-top: 0.6rem; font-size: 0.85rem; }
-  /* Just a neutral dot, not color-varied by status text — LegiScan's
-     status_label is a freeform string (dozens of possible values across
-     bills), and guessing which ones are "good" vs "bad" well enough to
-     color them confidently isn't a call this restyle should make. */
-  .status-badge {
-    display: inline-flex; align-items: center; gap: var(--space-1); background: var(--accent-soft); color: var(--accent);
-    font-size: 0.75rem; font-weight: 700; padding: var(--space-1) var(--space-2); border-radius: var(--radius-pill);
-    margin-bottom: 0.5rem;
-  }
-  .status-badge::before { content: ""; width: 0.4rem; height: 0.4rem; border-radius: 999px; background: currentColor; flex: none; }
-  /* Unlike the base rule above (deliberately neutral because LegiScan's
-     own status_label is a freeform string not worth guessing at — see
-     that rule's comment), a caller that owns its own small, known status
-     enum (e.g. disclosure filings' draft/ready_to_file) can opt into a
-     real color here instead of reaching for .position-badge, a
-     different component meant for a client's stance on a bill. */
-  .status-badge.good { background: var(--good-soft); color: var(--good); }
-  .card-actions { margin-top: 0.9rem; display: flex; gap: 0.5rem; }
-  h2.section { font-size: 0.95rem; margin: 1.6rem 0 0.6rem; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
-  td, th { padding: var(--space-2) 0.5rem; border-bottom: 1px solid var(--rule); vertical-align: top; text-align: left; }
-  td.date { font-family: ui-monospace, monospace; white-space: nowrap; color: var(--slate); }
-  /* Milestone left-edge on a history row (see milestoneClass() in
-     LOOKUP_BODY / REPORT_BODY) — an inset box-shadow rather than a
-     border, since a real border on a <td> inside a border-collapse
-     table shifts column width by its own thickness; inset paints
-     without taking any layout space. */
-  tr.milestone-intro td:first-child { box-shadow: inset 3px 0 0 0 var(--slate); }
-  tr.milestone-passed td:first-child { box-shadow: inset 3px 0 0 0 var(--good); }
-  tr.milestone-amended td:first-child { box-shadow: inset 3px 0 0 0 var(--ink); }
-  /* /report's "Current Status" callout (see REPORT_BODY) — the single
-     most recent bill_status_history row, called out above the full
-     history table below it rather than making someone read down to
-     the last row to find "where things stand right now." A bold
-     border for standout weight (not a colored fill — same restraint
-     .status-badge's own comment explains: LegiScan's action text is
-     freeform, so this isn't the place to guess "good" vs "bad" news).
-     The left-edge accent reuses milestoneClass()'s own three
-     categories (same function that colors history rows below it) so
-     this card's accent means the same thing the table already
-     established, not a new color vocabulary. */
-  .current-status-card {
-    border: 2px solid var(--ink); border-radius: 18px; padding: 1.25rem var(--space-5);
-    margin-top: 1rem; background: var(--accent-soft);
-  }
-  .current-status-card.milestone-intro { border-left: 4px solid var(--slate); }
-  .current-status-card.milestone-passed { border-left: 4px solid var(--good); }
-  .current-status-card.milestone-amended { border-left: 4px solid var(--ink); }
-  .current-status-card .current-status-label {
-    font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
-    color: var(--slate); margin-bottom: 0.4rem;
-  }
-  .current-status-card .current-status-action { font-size: 1.05rem; font-weight: 700; }
-  .current-status-card .current-status-meta { font-size: 0.82rem; color: var(--slate); margin-top: 0.35rem; }
-  /* "When does this need to be amended by?" — manually entered (see
-     bills.amend_by_date in schema.sql; LegiScan has no such field),
-     so it lives as a small editable row inside the same callout rather
-     than its own panel — one more fact about where things stand right
-     now, not a separate concept. */
-  .current-status-card .current-status-amend-by {
-    display: flex; align-items: center; gap: 0.5rem; margin-top: 0.7rem;
-    padding-top: 0.7rem; border-top: 1px solid var(--rule);
-  }
-  .current-status-card .current-status-amend-by label {
-    font-size: 0.78rem; font-weight: 600; color: var(--slate);
-  }
-  .current-status-card .current-status-amend-by input[type="date"] {
-    font-size: 0.82rem; padding: 0.3rem 0.5rem; width: auto;
-  }
-  td.chamber {
-    white-space: nowrap; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
-    color: var(--accent);
-  }
-  .sponsor-list { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .sponsor {
-    background: var(--accent-soft); color: var(--accent); font-size: 0.8rem;
-    padding: 0.25rem var(--space-2); border-radius: var(--radius-pill);
-  }
-  #error {
-    display: none; background: var(--error-soft); color: var(--error);
-    padding: var(--space-3) 1rem; border-radius: var(--radius-md); font-size: 0.88rem; margin-bottom: 1.5rem;
-  }
-  #error.show { display: block; }
-  #loading { display: none; align-items: center; gap: 0.5rem; color: var(--slate); font-size: 0.9rem; }
-  #loading.show { display: flex; }
-  #loading.skeleton.show { display: block; }
-  .spinner {
-    display: inline-block; width: 0.9rem; height: 0.9rem; border-radius: 50%; flex: none;
-    border: 2px solid var(--rule); border-top-color: var(--slate); animation: spin 0.6s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  /* Organization Search's own loading state — 3 rows shaped like the
-     real results table (see LOBBYING_BODY) instead of plain "Searching…"
-     text, so the layout doesn't jump when real rows replace it. */
-  .skeleton-row { display: flex; align-items: center; gap: 1rem; padding: 0.75rem var(--space-4); border-bottom: 1px solid var(--rule); }
-  .skeleton-row:last-child { border-bottom: none; }
-  .skeleton-bar { height: 0.8rem; border-radius: var(--radius-sm); background: var(--accent-soft); animation: skeleton-pulse 1.2s ease-in-out infinite; }
-  @keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-  .empty { color: var(--slate); font-size: 0.9rem; }
-  /* Small centered dialog, used by the flag-confirmation modal (see
-     openFlagModal() in REPORT_BODY) and the "+ Add new client"
-     quick-add panel shared between it and clientCell() (see
-     CLIENT_QUICKADD_JS) — the app's only two true modals, everything
-     else (row menus, the account menu) is an anchored dropdown instead.
-     z-index comfortably clears .row-menu-dropdown/.app-account-menu's
-     own z-index: 20 above, since a modal has to sit above any dropdown
-     left open behind it. */
-  .modal-backdrop {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100;
-    display: none; align-items: center; justify-content: center; padding: var(--space-4);
-  }
-  .modal-backdrop.show { display: flex; }
-  .modal-panel {
-    background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-hover);
-    border-radius: 18px; padding: var(--space-5); width: 100%; max-width: 26rem; max-height: 90vh; overflow-y: auto;
-  }
-  .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-4); }
-  .modal-head .title { font-size: 1.05rem; font-weight: 700; }
-  .modal-head .sub { font-size: 0.82rem; color: var(--slate); margin-top: 0.2rem; }
-  .modal-panel form { margin: 0; flex-direction: column; gap: var(--space-3); }
-  .modal-panel label { display: block; }
-  .modal-panel input, .modal-panel select, .modal-panel textarea { width: 100%; }
-  .modal-actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
-  tr.row-link { cursor: pointer; }
-  tr.row-link:hover { background: var(--accent-soft); }
-  .tag { display: inline-block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
-    color: var(--slate); background: var(--accent-soft); padding: var(--space-1) 0.5rem; border-radius: var(--radius-pill);
-    text-decoration: none; }
-  /* .tag doubles as a link when it's a bill-number pill inside free
-     text (see billPills() in LOBBYING_DETAIL_BODY) — everywhere else
-     it's a plain, non-interactive span, so this hover rule only ever
-     shows up where it's actually clickable. */
-  a.tag:hover { background: var(--accent-solid); color: var(--accent-solid-text); }
-  /* A client's stance on a bill — same three values everywhere (the
-     /flagged position selector and the /report page's read-only badge),
-     colored consistently: support=good, oppose=error, watch=neutral. */
-  .position-badge { display: inline-block; font-size: 0.75rem; font-weight: 700;
-    padding: var(--space-1) var(--space-2); border-radius: var(--radius-pill); }
-  .position-badge.support { background: var(--good-soft); color: var(--good); }
-  .position-badge.oppose { background: var(--error-soft); color: var(--error); }
-  .position-badge.watch { background: var(--accent-soft); color: var(--accent); }
-  select.position-select.support { border-color: var(--good); color: var(--good); }
-  select.position-select.oppose { border-color: var(--error); color: var(--error); }
-  select.position-select.watch { border-color: var(--accent); color: var(--accent); }
-  /* clientCell()'s per-row assignment, grouped into one pill-shaped unit
-     (name + position-select + remove ×) instead of a loose flex row —
-     the container itself carries the pill styling so it visually reads
-     as "one client, assigned" the same way .tag/.position-badge already
-     read as one thing elsewhere, rather than three independent controls
-     sitting next to each other. */
-  .client-chip {
-    display: flex; align-items: center; gap: 0.4rem; background: var(--content-bg);
-    border-radius: var(--radius-pill); padding: 0.15rem 0.3rem 0.15rem 0.65rem; margin-bottom: 0.4rem; width: fit-content;
-  }
-  .client-chip select.position-select { border: none; background: none; padding: 0.1rem 1.2rem 0.1rem 0.1rem; }
-  /* The "add a new client to this bill" control below the chips above —
-     deliberately NOT styled like a position-select (those change an
-     *existing* assignment; this one adds a new one), so a dashed
-     outline + plain "+ Add client" wording reads as its own distinct
-     affordance rather than a second, competing way to do what the chips
-     above already do. */
-  .add-client-select {
-    font-size: 0.78rem; font-weight: 600; color: var(--slate); background: none;
-    border: 1px dashed var(--rule); border-radius: var(--radius-pill); padding: 0.25rem 0.6rem;
-  }
-  .add-client-select:hover { border-color: var(--accent); color: var(--accent); }
-  /* Filter tabs above a flagged/client-position list — same All/Support/
-     Oppose/Watch vocabulary as the position badges above, just as a
-     filter instead of a per-row value. */
-  .filter-tabs { display: flex; gap: var(--space-2); margin-bottom: 1.1rem; }
-  .filter-tab {
-    font: inherit; font-size: 0.82rem; font-weight: 600; color: var(--slate);
-    background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-pill);
-    padding: var(--space-1) 0.75rem; cursor: pointer;
-  }
-  .filter-tab:hover { border-color: var(--ink); }
-  .filter-tab.active {
-    background: var(--accent-solid); color: var(--accent-solid-text); border-color: var(--accent-solid);
-  }
-  .filter-tab .n { font-family: ui-monospace, monospace; font-size: 0.75rem; opacity: 0.7; margin-left: 0.35rem; }
-
-  /* ── Sidebar app shell (app_shell()) ──────────────────────────────
-     Only for signed-in pages, rolled out one page at a time — see
-     app_shell()'s own docstring. Public pages keep the plain .wrap
-     single-column layout above and just inherit the new tokens. */
-  .app-shell { display: flex; min-height: 100vh; }
-  .app-sidebar {
-    width: 14rem; flex: none; background: var(--paper); border-right: 1px solid var(--rule);
-    display: flex; flex-direction: column; height: 100vh; position: sticky; top: 0;
-  }
-  /* Hidden on desktop — the hamburger next to it exists only for the
-     ≤900px drawer version of the sidebar below (see that media query),
-     so there's nothing for it to open until then. Two classes
-     (.icon-btn.app-topbar-menu-btn), not one — .icon-btn's own
-     `display: flex` (defined later in this file) would otherwise win
-     the display property on source order alone, since a single-class
-     selector here ties with it on specificity. */
-  .icon-btn.app-topbar-menu-btn { display: none; flex: none; }
-  /* Full-screen scrim behind the mobile sidebar drawer, closing it on
-     click same as .row-menu-dropdown/.autofill-dropdown close on
-     click-outside elsewhere in this file. Hidden/display:none outside
-     the ≤900px drawer state so it never intercepts clicks on desktop,
-     where the sidebar is always visible and never "open" in this sense. */
-  .app-sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 39; }
-  .app-sidebar-backdrop.show { display: block; }
-  .app-brand {
-    display: flex; align-items: center; gap: 0.5rem; height: 4rem; padding: 0 1.25rem;
-    border-bottom: 1px solid var(--rule); font-weight: 600; font-size: 0.9rem; flex: none;
-  }
-  /* No square badge — just the mark itself, colored like the rest of
-     the app's text (--ink), sitting directly on --paper. Light mode:
-     dark mark on white. Dark mode: white mark on black. */
-  .app-brand-mark { display: flex; align-items: center; flex: none; }
-  nav.app-nav { padding: 1rem 0.75rem; flex: 1; overflow-y: auto; }
-  /* gap: 2px, not a --space-* token — matches the mockup's own
-     `<nav style="gap: 2px">` between top-level groups exactly; every
-     other value in this file that's off the 4px spacing scale gets a
-     literal value rather than forcing it onto the nearest token (see
-     STYLE's own --space-* comment). */
-  .app-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-  .side-nav-item {
-    height: 2rem; display: flex; align-items: center; gap: var(--space-2); border-radius: var(--radius-md); padding: 0 0.75rem;
-    font-size: 0.82rem; font-weight: 500; color: var(--slate); text-decoration: none;
-    transition: background .12s ease, color .12s ease;
-  }
-  .side-nav-item svg { width: 0.9rem; height: 0.9rem; flex: none; }
-  .side-nav-item:hover { background: var(--accent-soft); color: var(--ink); }
-  .side-nav-item.active { background: var(--accent-soft); color: var(--ink); }
-  /* Grouped/accordion nav (matches the mockup's Bills / Lobbying
-     Activity / Draft groups, each expanding to its own children) —
-     .side-nav-parent is a <button>, not an <a> (it toggles, it doesn't
-     navigate), styled identically to .side-nav-item plus its own
-     caret. .nav-subitems is display:none until its <li> gets .open
-     (added at render time for whichever group contains `current`, and
-     by REPORT_BODY's own script — see its data-nav re-targeting — when
-     a page navigated to from elsewhere needs its ancestor group
-     revealed too). */
-  .side-nav-parent {
-    /* font-family: inherit, NOT the `font` shorthand — `font: inherit`
-       resets font-SIZE (and weight/line-height) too, which clobbered
-       .side-nav-item's own 0.82rem here (same specificity, later in
-       source) and silently rendered every group button at the
-       browser's default 16px instead — enough to wrap two-word labels
-       like "Lobbying Activity" onto a second line and throw off the
-       whole sidebar's vertical rhythm. */
-    width: 100%; background: none; border: none; font-family: inherit; cursor: pointer; text-align: left;
-  }
-  .nav-caret { display: inline-flex; margin-left: auto; flex: none; opacity: 0.5; transition: transform .16s ease; }
-  .nav-group.open .nav-caret { transform: rotate(90deg); }
-  /* .app-nav ul.nav-subitems, not just .nav-subitems — .app-nav ul's own
-     display:flex (STYLE, above) is one class + one element ((0,1,1)),
-     which would otherwise beat a single-class .nav-subitems ((0,1,0))
-     and leave every group's children visible regardless of .open. */
-  /* No gap at all — the mockup's own children wrapper
-     (`padding: 4px 0 8px 32px`) doesn't set one either; consecutive
-     children are separated only by their own height, same as this
-     rule's 0 gap plus each .child link's own height below. */
-  .app-nav ul.nav-subitems { display: none; flex-direction: column; gap: 0; padding: 4px 0 8px 2rem; }
-  .nav-group.open .nav-subitems { display: flex; }
-  /* .side-nav-item.child, not .side-nav-item.sub — "sub" collided
-     with the pre-existing generic `.sub` utility (subtitle text,
-     margin: 0 0 2rem — see that rule above) since a bare class
-     selector matches regardless of what else is on the element. That
-     leaked a 2rem bottom margin onto every child nav link, which is
-     what actually read as "too much space" between Bill lookup/
-     Flagged bills and Search/Clients — not the group-to-group gap. */
-  .side-nav-item.child { height: 1.85rem; font-size: 0.8rem; margin: 0; }
-  .side-nav-label {
-    font-size: 0.68rem; font-weight: 600; color: var(--slate); letter-spacing: .05em;
-    text-transform: uppercase; margin: 1.25rem 0.75rem 0.5rem;
-  }
-  .app-sidebar-foot { padding: 0.75rem; border-top: 1px solid var(--rule); flex: none; position: relative; }
-  .app-account {
-    display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) 0.5rem; border-radius: var(--radius-md);
-    cursor: pointer; transition: background .12s ease; background: none; border: none; width: 100%;
-    text-align: left; color: var(--ink); /* button's own base rule sets color: var(--accent-solid-text) —
-    white-on-white in light mode, dark-on-dark in dark — this overrides it back to the real text color. */
-  }
-  .app-account:hover { background: var(--accent-soft); }
-  .app-avatar {
-    height: 1.75rem; width: 1.75rem; border-radius: var(--radius-pill); background: var(--ink); color: var(--paper);
-    font-size: 0.7rem; font-weight: 600; display: flex; align-items: center; justify-content: center; flex: none;
-  }
-  .app-account-email {
-    font-size: 0.8rem; font-weight: 500; white-space: nowrap; overflow: hidden;
-    text-overflow: ellipsis; flex: 1; min-width: 0;
-  }
-  .app-account-menu {
-    position: absolute; left: 0.75rem; right: 0.75rem; bottom: 3.75rem; background: var(--surface);
-    border: 1px solid var(--rule); border-radius: var(--radius-md); padding: var(--space-2); box-shadow: 0 4px 14px rgba(0,0,0,0.16);
-    display: none; flex-direction: column; gap: var(--space-1); z-index: 20;
-  }
-  /* account_widget()'s dropdown on a public page (top_nav()'s call
-     passes this) sits in a top bar, not a bottom-anchored sidebar
-     footer — opens downward from the account button instead of
-     upward, and isn't stretched to a sidebar-footer's own width. */
-  .app-account-menu.top-anchored { left: auto; right: 0; bottom: auto; top: 100%; margin-top: var(--space-2); min-width: 11rem; }
-  .app-account-menu.show { display: flex; }
-  .app-account-menu button, .app-account-menu a {
-    display: block; background: none; border: none; color: var(--ink); font: inherit; font-weight: 500; font-size: 0.82rem;
-    text-align: left; padding: var(--space-2) 0.5rem; border-radius: var(--radius-sm); cursor: pointer; text-decoration: none;
-  }
-  .app-account-menu button:hover, .app-account-menu a:hover { background: var(--accent-soft); }
-  /* The dark-mode toggle row inside account_widget()'s dropdown, right
-     above Sign out. .app-account-menu button already sets display:
-     block for a plain full-width label — this needs display:flex
-     instead to lay the "Dark mode" label and the switch out side by
-     side, hence the extra class in the selector for enough specificity
-     to actually win over that rule rather than just losing quietly. */
-  .app-account-menu button.theme-toggle-row {
-    display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); cursor: pointer;
-  }
-  .theme-toggle-track {
-    position: relative; width: 1.9rem; height: 1.05rem; border-radius: var(--radius-pill);
-    background: var(--rule); flex: none; transition: background .15s ease;
-  }
-  .theme-toggle-row[aria-checked="true"] .theme-toggle-track { background: var(--ink); }
-  .theme-toggle-thumb {
-    position: absolute; top: 0.1rem; left: 0.1rem; width: 0.85rem; height: 0.85rem;
-    border-radius: 50%; background: var(--surface); transition: transform .15s ease;
-  }
-  .theme-toggle-row[aria-checked="true"] .theme-toggle-thumb { transform: translateX(0.85rem); }
-  /* Shown instead of the avatar/email button when /api/me says no one's
-     signed in — /lookup and /lobbying are the two pages that render this
-     shell without requiring a session (see the module docstring's "no
-     account needed to look up a bill" promise), so the sidebar footer
-     needs an honest logged-out state rather than a blank avatar next to
-     a "Sign out" button that wouldn't do anything. */
-  .app-account-guest { display: none; gap: 0.5rem; }
-  /* white-space: nowrap matters once this renders inside top_nav()'s
-     own width-capped wrapper (see .app-account-menu.top-anchored's own
-     comment) — without it, "Sign up" wrapped onto its own line inside
-     its own button instead of the two flex:1 buttons just sizing down
-     evenly, since nothing was forcing the browser to treat the label's
-     natural single-line width as this button's minimum. */
-  .app-account-guest a { flex: 1; justify-content: center; text-align: center; padding: 0.5rem 0; font-size: 0.8rem; white-space: nowrap; }
-  /* top_nav()'s call (account_widget(..., guest_plain=True)) — undoes
-     the sidebar's button-pair treatment above for two plain, unclassed
-     <a> tags instead, which already pick up .top-nav a's color/size/
-     underline-on-hover on their own. Matches how "Sign in"/"Sign up"
-     always looked on a public page before this shared component
-     existed — two solid pill buttons read as too heavy sitting next
-     to the rest of the top bar's plain text links. */
-  .app-account-guest.plain-links a { flex: none; padding: 0; font-size: 0.85rem; }
-  .app-body { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .app-topbar {
-    height: 4rem; flex: none; display: flex; align-items: center; justify-content: space-between;
-    padding: 0 1.5rem; border-bottom: 1px solid var(--rule); background: var(--paper); gap: 1rem;
-  }
-  .app-topbar-sub { font-size: 0.78rem; color: var(--slate); }
-  /* Was shared topbar chrome on every page (a global "search LegiScan"
-     box + a persistent "Flag a bill" shortcut) until both were removed
-     as redundant — /lookup (linked from the sidebar) already covers
-     both a real search and flagging. Now just FLAGGED_BODY's own local
-     filter-as-you-type box for the list already loaded on that page —
-     a different job (filtering, not searching LegiScan), which is why
-     it survived while the shared version didn't. */
-  .search-box {
-    display: flex; align-items: center; gap: 0.5rem; height: 2rem; width: 12.5rem; border-radius: var(--radius-md);
-    background: var(--accent-soft); border: 1px solid var(--rule); padding: 0 var(--space-2); font-size: 0.8rem; color: var(--slate);
-  }
-  .search-box svg { width: 0.75rem; height: 0.75rem; flex: none; }
-  .search-box input {
-    background: none; border: none; outline: none; color: var(--ink); font-size: 0.8rem;
-    width: 100%; font-family: inherit;
-  }
-  .search-box input::placeholder { color: var(--slate); }
-  .icon-btn {
-    height: 2rem; width: 2rem; border-radius: var(--radius-md); border: 1px solid var(--rule); background: var(--paper);
-    display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s ease;
-  }
-  .icon-btn:hover { background: var(--accent-soft); }
-  /* flex: none matters here, not just as a style preference — without
-     it this is the one svg-in-a-flex-row rule in the whole file that
-     omits it (compare .side-nav-item/.search-box/.frame-nav-item svg
-     above), and the default flex-shrink:1 collapses an <svg> with no
-     width/height HTML attributes down to 0 width in a flex container,
-     even with an explicit CSS width set. Confirmed via
-     getComputedStyle() — this button's bell icon was genuinely
-     rendering at 0x14px, not just a design nitpick. */
-  .icon-btn svg { width: 0.85rem; height: 0.85rem; color: var(--slate); flex: none; }
-  /* Used to be `display: none` below 700px — FLAGGED_BODY renders this
-     inside a `display:flex;flex-wrap:wrap` panel-head row alongside the
-     "Sort by" select (see that call site), so instead of removing the
-     filter-as-you-type box outright (leaving mobile users with no way
-     to filter their flagged list at all), give it width:100% — the
-     flex-wrap parent already drops it to its own full-width row once it
-     no longer fits next to Sort-by, same as any other wrapped flex
-     item. */
-  @media (max-width: 700px) { .search-box { width: 100%; } }
-  .app-main { flex: 1; overflow-y: auto; padding: 1.5rem; background: var(--content-bg); }
-  /* The page's own big heading + description + right-aligned controls
-     (e.g. filter tabs), living inside .app-main — distinct from the
-     small, generic "Overview" label in .app-topbar above it. */
-  .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
-  .page-head h1 { font-size: 1.3rem; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
-  .page-head .sub { font-size: 0.82rem; color: var(--slate); margin: 0.15rem 0 0; }
-  .page-head .filter-tabs { margin-bottom: 0; }
-  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: var(--space-3); margin-bottom: 1rem; }
-  .stat-card {
-    background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-rest);
-    border-radius: 18px; padding: var(--space-4); transition: box-shadow .15s ease;
-  }
-  .stat-card:hover { box-shadow: var(--shadow-hover); }
-  .stat-icon {
-    height: 2.1rem; width: 2.1rem; border-radius: var(--radius-md); background: var(--accent-soft);
-    display: flex; align-items: center; justify-content: center; color: var(--slate); margin-bottom: 0.85rem;
-  }
-  .stat-icon svg { width: 1rem; height: 1rem; }
-  .stat-label { font-size: 0.78rem; font-weight: 500; color: var(--slate); margin-bottom: 0.25rem; }
-  .stat-value { font-size: 1.7rem; font-weight: 600; letter-spacing: -0.01em; line-height: 1.1; }
-  .stat-foot { font-size: 0.72rem; color: var(--slate); margin-top: 0.5rem; }
-  /* A card meant to hold a whole list/table, with its own header row —
-     same visual family as .card, just with a title/subtitle slot. */
-  .panel {
-    background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-rest);
-    border-radius: 18px; overflow: hidden;
-  }
-  .panel-head {
-    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-    padding: 1rem var(--space-4); border-bottom: 1px solid var(--rule);
-  }
-  .panel-head .title { font-size: 0.95rem; font-weight: 600; letter-spacing: -0.005em; }
-  .panel-head .sub { font-size: 0.75rem; color: var(--slate); margin-top: 0.15rem; }
-  .panel-link {
-    height: 1.75rem; display: flex; align-items: center; gap: var(--space-1); border-radius: var(--radius-md);
-    border: 1px solid var(--rule); background: var(--accent-soft); color: var(--slate);
-    font: inherit; font-size: 0.72rem; font-weight: 500; padding: 0 var(--space-2); cursor: pointer; flex: none;
-  }
-  .panel-link:hover:not(:disabled) { background: var(--content-bg); }
-  .panel-link:disabled { cursor: not-allowed; opacity: 0.6; }
-  .panel table { margin: 0; }
-  .panel th { padding: var(--space-2) var(--space-4); }
-  .panel td { padding: 0.75rem var(--space-4); }
-  .panel tbody tr:hover { background: var(--content-bg); }
-  /* Organization Search's "+ N other filing variants" disclosure — a
-     native <details> rather than a JS-driven toggle, and nothing in it
-     is actually hidden data, just collapsed by default (see
-     app.py's _cluster_client_mentions). */
-  .variants-row:hover { background: none !important; }
-  .variants-row td { padding: 0; }
-  .variants-row details { padding: var(--space-2) var(--space-4); }
-  .variants-row summary {
-    cursor: pointer; font-size: 0.82rem; color: var(--slate); font-weight: 500;
-    list-style: none; display: flex; align-items: center; gap: var(--space-2);
-  }
-  .variants-row summary::-webkit-details-marker { display: none; }
-  .variants-row summary::before { content: '▸'; display: inline-block; transition: transform .15s ease; }
-  .variants-row details[open] summary::before { transform: rotate(90deg); }
-  .variant-row {
-    display: flex; justify-content: space-between; gap: 1rem; padding: 0.5rem 0 0.5rem var(--space-5);
-    font-size: 0.82rem; border-top: 1px solid var(--rule); margin-top: 0.5rem;
-  }
-  /* A bill row's icon+title+id block — same .bill-title/.bill-id classes
-     the /report page's big card already uses, just sized down here via
-     the .bill-row scope rather than given new parallel class names. */
-  .bill-row { display: flex; align-items: center; gap: var(--space-2); }
-  .bill-row .bill-icon {
-    height: 1.75rem; width: 1.75rem; border-radius: var(--radius-md); background: var(--accent-soft);
-    display: flex; align-items: center; justify-content: center; flex: none;
-  }
-  .bill-row .bill-icon svg { width: 0.75rem; height: 0.75rem; color: var(--slate); }
-  .bill-row .bill-title { font-size: 0.85rem; font-weight: 500; margin: 0; }
-  .bill-row .bill-id { font-size: 0.72rem; margin: 0.1rem 0 0; }
-  /* /flagged/calendar's per-day groups of hearing rows — same
-     .bill-row shape as the flagged-bills list, just given its own
-     border/padding since it's a plain stacked list here, not table
-     rows a table's own td/tr rules already handle. */
-  .hearing-row { display: flex; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--rule); }
-  .hearing-row:last-child { border-bottom: none; }
-  .row-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: 0.35rem; }
-  .row-actions a { font-size: 0.78rem; padding: var(--space-1) var(--space-2); }
-  /* A "..." overflow menu for row actions that are real but shouldn't
-     shout — a bright red button on every row was too loud for
-     something you do occasionally, not the primary action of the row. */
-  .row-menu { position: relative; text-align: right; }
-  .row-menu-btn {
-    height: 1.75rem; width: 1.75rem; border-radius: var(--radius-md); border: 1px solid var(--rule); background: var(--surface);
-    color: var(--slate); display: inline-flex; align-items: center; justify-content: center;
-    cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease;
-  }
-  .row-menu-btn:hover { background: var(--accent-soft); color: var(--ink); border-color: var(--ink); }
-  /* flex: none for the same reason .icon-btn svg (above) needs it — an
-     <svg> with no width/height HTML attributes collapses to 0 width in
-     a flex container's default flex-shrink:1, even with this explicit
-     CSS width set. Confirmed via getComputedStyle(): this "..." button
-     was rendering the icon at 0px wide, an empty-looking button. */
-  .row-menu-btn svg { width: 1rem; height: 1rem; flex: none; }
-  /* Touch targets under the ~44px guideline (Apple HIG / WCAG 2.5.5) —
-     fine with a mouse pointer's precision, but risky to tap accurately
-     with a finger, especially .row-menu-btn sitting right next to other
-     row content. Scoped to (pointer: coarse) rather than a width
-     breakpoint since the risk is about input precision, not viewport
-     size — a touch laptop at desktop width has the same problem, and a
-     mouse-driven narrow window doesn't.
-     Placed here, after .icon-btn/.panel-link/.row-menu-btn's own base
-     rules, on purpose — not just for proximity to .row-menu-btn. All
-     four selectors here tie with their unconditional base rule on
-     specificity (one class each), so the later rule in source order
-     wins regardless of whether this media query matches. .icon-btn
-     (defined above, ~line 728) and .side-nav-item (~line 620) happen to
-     sit before their base rule either way, but .panel-link (~line 797)
-     and .row-menu-btn (directly above) don't — this block used to sit
-     above both of those, silently losing the cascade and leaving those
-     two buttons stuck at their small desktop size under a coarse
-     pointer. Same tie-breaking issue .icon-btn.app-topbar-menu-btn's
-     own comment (see STYLE, app-topbar section) works around with an
-     extra class instead; source-order suffices here since every base
-     rule this needs to beat is already above this point. */
-  @media (pointer: coarse) {
-    .icon-btn, .row-menu-btn { height: 2.75rem; width: 2.75rem; }
-    .panel-link { height: 2.75rem; padding: 0 1rem; }
-    .side-nav-item { height: 2.75rem; }
-  }
-  .row-menu-dropdown {
-    position: absolute; right: 0; top: calc(100% + 0.25rem); background: var(--surface);
-    border: 1px solid var(--rule); border-radius: var(--radius-md); padding: var(--space-1); min-width: 9rem;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.16); z-index: 20; display: none; flex-direction: column; gap: var(--space-1);
-  }
-  .row-menu-dropdown.show { display: flex; }
-  /* Opens upward instead of down — set by toggleRowMenu() when the table's
-     own overflow-x:auto wrapper (which clips overflow-y too, per the CSS
-     spec, once overflow-x is anything but visible) would otherwise cut
-     the menu off. Hits the last row in the table hardest, since there's
-     no more table content below it to grow the wrapper's height for. */
-  .row-menu-dropdown.open-up { top: auto; bottom: calc(100% + 0.25rem); }
-  .row-menu-dropdown button {
-    background: none; border: none; color: var(--error); font: inherit; font-weight: 500; font-size: 0.82rem;
-    text-align: left; padding: var(--space-2) var(--space-2); border-radius: var(--radius-sm); cursor: pointer;
-  }
-  .row-menu-dropdown button:hover { background: var(--error-soft); }
-  /* Same anchored-dropdown shape as .row-menu-dropdown (position,
-     border, shadow, z-index), but plain neutral rows instead of that
-     one's red "destructive action" styling — this is a list of name
-     suggestions to pick from (see the Add Client form's live
-     CAL-ACCESS autofill), not a menu of things to delete. */
-  .autofill-dropdown {
-    position: absolute; background: var(--surface); border: 1px solid var(--rule);
-    border-radius: var(--radius-md); padding: var(--space-1); box-shadow: 0 4px 14px rgba(0,0,0,0.16);
-    z-index: 20; display: none; flex-direction: column; gap: var(--space-1); max-height: 14rem; overflow-y: auto;
-  }
-  .autofill-dropdown.show { display: flex; }
-  .autofill-dropdown button {
-    background: none; border: none; color: var(--ink); font: inherit; font-size: 0.85rem;
-    text-align: left; padding: var(--space-2); border-radius: var(--radius-sm); cursor: pointer;
-  }
-  .autofill-dropdown button:hover { background: var(--accent-soft); }
-  /* Firms/coalitions still show up when a typed name matches one (still
-     useful to see), but visually recede behind employer matches — an
-     employer is what this app means by "client", so it's the one match
-     type that should look like the obvious pick. */
-  .autofill-dropdown button.non-employer-match { opacity: 0.6; }
-  th {
-    background: var(--content-bg); font-size: 0.68rem; font-weight: 600; color: var(--slate);
-    text-transform: uppercase; letter-spacing: 0.04em;
-  }
-  @media (max-width: 900px) {
-    /* Used to be `display: none` — the sidebar (and everything only it
-       held: section nav, Profile, account menu, sign-out, dark-mode
-       toggle) just vanished below 900px with no replacement, leaving
-       every app_shell() page with zero navigation on a phone. Now it's
-       an off-canvas drawer instead: same markup, positioned fixed and
-       slid off-screen by default, brought on-screen by adding .show
-       (see app_shell()'s own script for the hamburger button that
-       toggles it plus the backdrop/Escape/outside-click handling). */
-    .app-sidebar {
-      position: fixed; top: 0; left: 0; z-index: 40; transform: translateX(-100%);
-      transition: transform .2s ease; box-shadow: 0 0 40px rgba(0,0,0,0.25);
-    }
-    .app-sidebar.show { transform: translateX(0); }
-    .icon-btn.app-topbar-menu-btn { display: flex; }
-    .stat-grid { grid-template-columns: 1fr 1fr; }
-  }
-"""
+# The app's one stylesheet, now static/style.css rather than ~865 lines
+# of CSS inside this module. Read once at import (not per request) and
+# served at /static/style.css by _send_static below, so a browser fetches
+# it once for a whole session instead of re-reading an identical copy
+# inlined into every single page response.
+#
+# Still a module-level constant under the name STYLE because comments
+# throughout this file cross-reference "STYLE" as the place a given rule
+# lives — those now mean static/style.css — and because the route above
+# serves this exact string.
+STYLE = _read_static_text("style.css")
 
 
 # Deliberately NOT HttpOnly (unlike accounts.SESSION_COOKIE) — see
@@ -1279,6 +451,16 @@ BRAND_MARK_SVG_B64 = base64.b64encode(BRAND_MARK_SVG.encode("utf-8")).decode("as
 # f-string interpolation. Has to happen down here, after the constant
 # above exists, not right after STYLE's own definition.
 STYLE = STYLE.replace("__BRAND_MARK_SVG_B64__", BRAND_MARK_SVG_B64)
+
+# Every file the /static/ route will serve, name -> (bytes, content type),
+# built once at import rather than read per request. STYLE has to be in
+# here below the .replace() above, not next to its own load, so the bytes
+# served are the ones with the brand mark already substituted in.
+STATIC_ASSETS = {
+    "style.css": (STYLE.encode("utf-8"), "text/css; charset=utf-8"),
+}
+
+STYLE_HREF = _asset_url("style.css")
 
 TOP_BRAND = """<a href="/" class="top-brand">
   <span class="brand-mark" style="width:17px;height:17px"></span>
@@ -1578,7 +760,7 @@ def app_shell(current, body):
 
 
 def page(title, path, body):
-    """The 13-line <!doctype html>...<style>{STYLE}</style>...<body>
+    """The 13-line <!doctype html>...<link rel="stylesheet" href="{STYLE_HREF}">...<body>
     {app_shell(path, body)}...</html> skeleton every signed-in-shell
     page below used to repeat verbatim — only title/path/body ever
     differed between them. One place to edit the skeleton itself (a
@@ -1599,7 +781,7 @@ def page(title, path, body):
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
-<style>{STYLE}</style>
+<link rel="stylesheet" href="{STYLE_HREF}">
 {FONT_LINKS}
 {THEME_INIT_SCRIPT}
 </head>
@@ -1696,7 +878,8 @@ LANDING_PAGE = f"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rotunda</title>
-<style>{STYLE}{LANDING_STYLE}</style>
+<link rel="stylesheet" href="{STYLE_HREF}">
+<style>{LANDING_STYLE}</style>
 {FONT_LINKS}
 </head>
 <body>
@@ -2748,7 +1931,7 @@ SIGNUP_PAGE = f"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign up — Rotunda</title>
-<style>{STYLE}</style>
+<link rel="stylesheet" href="{STYLE_HREF}">
 {FONT_LINKS}
 {THEME_INIT_SCRIPT}
 </head>
@@ -2834,7 +2017,7 @@ LOGIN_PAGE = f"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Log in — Rotunda</title>
-<style>{STYLE}</style>
+<link rel="stylesheet" href="{STYLE_HREF}">
 {FONT_LINKS}
 {THEME_INIT_SCRIPT}
 </head>
@@ -2923,7 +2106,7 @@ PROFILE_PAGE = f"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Registration details — Rotunda</title>
-<style>{STYLE}</style>
+<link rel="stylesheet" href="{STYLE_HREF}">
 {FONT_LINKS}
 {THEME_INIT_SCRIPT}
 </head>
@@ -5786,6 +4969,31 @@ class Handler(BaseHTTPRequestHandler):
         for cookie in cookies:
             self.send_header("Set-Cookie", cookie)
 
+    def _send_static(self, name):
+        """Serve one file out of static/ — the app's own CSS and JS,
+        extracted (2026-09) out of the page constants in this module.
+
+        `name` comes straight off the URL, so it's looked up in an
+        explicit dict rather than joined onto a directory path: there's
+        no "../" handling to get subtly wrong, and an asset that isn't
+        one of ours 404s here without ever reaching the filesystem.
+        """
+        asset = STATIC_ASSETS.get(name)
+        if asset is None:
+            self.send_response(404)
+            self.end_headers()
+            return
+        body, content_type = asset
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        # Safe to cache this hard because every reference to these URLs
+        # carries ?v=<content hash> (see _asset_url): the URL changes the
+        # moment the file does, so a stale copy can't outlive an edit.
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _send_bytes(self, status, content_type, body, filename=None):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
@@ -5955,6 +5163,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def _do_GET(self):
         parsed = urlparse(self.path)
+
+        if parsed.path.startswith("/static/"):
+            # Ahead of every other route and of any session check on
+            # purpose: these are the app's own CSS/JS, identical bytes
+            # for signed-in and signed-out visitors, and they'd otherwise
+            # sit behind the session lookup every page does.
+            self._send_static(parsed.path[len("/static/"):])
+            return
 
         if parsed.path == "/internal/status":
             # Same secret-gate as the two POST refresh routes, not the
