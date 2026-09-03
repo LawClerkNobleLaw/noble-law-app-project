@@ -42,10 +42,12 @@ const billId = new URLSearchParams(window.location.search).get('bill_id');
   if (navItem) {
     document.querySelectorAll('.side-nav-item.active').forEach(a => a.classList.remove('active'));
     navItem.classList.add('active');
-    // navItem now sits inside a (possibly collapsed) Bills/Lobbying
-    // Activity/Draft group — see render_group() in app_shell() — so
-    // open its ancestor .nav-group too, or the newly-active item would
-    // be marked correctly but stay visually hidden.
+    // If navItem sits inside a (possibly collapsed) Bills/Lobbying
+    // Activity/Draft group — see render_group() in app_shell() — open
+    // its ancestor .nav-group too, or the newly-active item would be
+    // marked correctly but stay visually hidden. Flat top-level items
+    // (Dashboard) have no such ancestor and need no unfolding, hence
+    // the guard rather than an unconditional classList.add.
     const group = navItem.closest('.nav-group');
     if (group) {
       group.classList.add('open');

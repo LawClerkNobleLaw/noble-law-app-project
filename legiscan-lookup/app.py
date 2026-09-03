@@ -666,6 +666,18 @@ def top_nav(current, left_extra="", show_account_menu=True):
 # (Disclosures/Form 601 prep) until position letters becomes a real
 # feature.
 SHELL_NAV_ITEMS = [
+    # Each entry is (label, icon, target). A target that's a *list* is a
+    # collapsible group of children, which is what every entry was until
+    # now; a target that's a plain *string* is a flat top-level link with
+    # no children (see app_shell's render_item). Dashboard is the only
+    # flat one — it has nothing to group under it, and burying the app's
+    # landing page one click inside an accordion would defeat the point
+    # of making it the landing page.
+    ("Dashboard",
+     '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+     '<rect x="1.75" y="1.75" width="4.5" height="5.5" rx="1"/><rect x="7.75" y="1.75" width="4.5" height="3.5" rx="1"/>'
+     '<rect x="1.75" y="8.75" width="4.5" height="3.5" rx="1"/><rect x="7.75" y="6.75" width="4.5" height="5.5" rx="1"/></svg>',
+     "/dashboard"),
     ("Bills",
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
      '<rect x="3" y="1.5" width="8" height="11" rx="1"/><path d="M5 4.5h4M5 7h4M5 9.5h2.5" stroke-linecap="round"/></svg>',
@@ -749,7 +761,18 @@ def app_shell(current, body):
             f'{icon}<span>{label}</span>{caret}</button>'
             f'<ul class="nav-subitems">{child_html}</ul></li>'
         )
-    nav_html = "".join(render_group(label, icon, children) for label, icon, children in SHELL_NAV_ITEMS)
+    def render_item(label, icon, target):
+        """A flat link (string target) or a collapsible group (list of
+        children) — see SHELL_NAV_ITEMS. The flat branch needs no CSS of
+        its own: .side-nav-item without .child is already the top-level
+        row shape .side-nav-parent borrows, minus the caret."""
+        if isinstance(target, str):
+            active = " active" if target == current else ""
+            return (f'<li><a href="{target}" data-nav="{target}" class="side-nav-item{active}">'
+                    f'{icon}<span>{label}</span></a></li>')
+        return render_group(label, icon, target)
+
+    nav_html = "".join(render_item(label, icon, target) for label, icon, target in SHELL_NAV_ITEMS)
     profile_active = " active" if current == "/profile" else ""
     return f"""
 <div class="app-shell">
@@ -1084,13 +1107,28 @@ PROFILE_PAGE = _render_template(
     STYLE_HREF=STYLE_HREF,
     FONT_LINKS=FONT_LINKS,
     THEME_INIT_SCRIPT=THEME_INIT_SCRIPT,
-    top_nav=top_nav('/signup/profile', left_extra='<a href="/flagged">Skip for now →</a>'),
+    top_nav=top_nav('/signup/profile', left_extra='<a href="/dashboard">Skip for now →</a>'),
 )
 
 
 PROFILE_BODY = _render_template("profile_body.html")
 
 PROFILE_VIEW_PAGE = page("Your profile — Rotunda", "/profile", PROFILE_BODY)
+
+
+# The signed-in landing page (see the "/" route, which sends a logged-in
+# visitor here). Everything on it is a view onto data other pages already
+# own — flagged bills, hearings, prepared filings, clients — pulled
+# together so the three separate deadlines this app tracks can finally be
+# compared against each other in one place. One fetch, /api/dashboard;
+# see db.dashboard_summary for why the aggregation is server-side.
+DASHBOARD_BODY = _render_template(
+    "dashboard_body.html",
+    HEARING_TIME_SRC=HEARING_TIME_SRC,
+    TITLE_CASE_SRC=TITLE_CASE_SRC,
+)
+
+DASHBOARD_PAGE = page("Dashboard — Rotunda", "/dashboard", DASHBOARD_BODY)
 
 
 FLAGGED_BODY = _render_template(
@@ -1649,7 +1687,7 @@ class Handler(BaseHTTPRequestHandler):
         logged-out click on e.g. "+ Add as client" or a bookmarked
         /flagged link doesn't just dead-end at a blank login form —
         LOGIN_PAGE's own JS reads this back and returns them there
-        after a successful sign-in (falling back to /flagged if it's
+        after a successful sign-in (falling back to /dashboard if it's
         missing or doesn't look like a same-site path)."""
         self.send_response(302)
         self.send_header("Location", "/login?next=" + quote(self.path, safe=""))
@@ -1809,10 +1847,13 @@ class Handler(BaseHTTPRequestHandler):
             # both of which keep pointing here on purpose) would just
             # see the marketing page again instead of their own app.
             # Same short-lived-connection pattern as
-            # _require_user_for_page(); /flagged is the same fallback
-            # destination _redirect_to_login()/the retired /watchlist
-            # route already use for "somewhere real, now that you're
-            # signed in."
+            # _require_user_for_page(). /dashboard is the shared
+            # "somewhere real, now that you're signed in" destination —
+            # LOGIN_PAGE's post-sign-in fallback and the signup flow's
+            # "Skip for now" land there too. (The retired /watchlist
+            # route below is the one exception: it redirects to /flagged
+            # specifically, because that page is what it was retired
+            # *into*, not just wherever a signed-in visitor belongs.)
             conn = db.get_connection()
             try:
                 logged_in = bool(self._current_user_id(conn))
@@ -1820,7 +1861,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             if logged_in:
                 self.send_response(302)
-                self.send_header("Location", "/flagged")
+                self.send_header("Location", "/dashboard")
                 self.end_headers()
                 return
             self._send_html(200, LANDING_PAGE)
@@ -1899,6 +1940,23 @@ class Handler(BaseHTTPRequestHandler):
             if not self._require_user_for_page():
                 return
             self._send_html(200, PROFILE_VIEW_PAGE)
+            return
+
+        if parsed.path == "/dashboard":
+            if not self._require_user_for_page():
+                return
+            self._send_html(200, DASHBOARD_PAGE)
+            return
+
+        if parsed.path == "/api/dashboard":
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to view your dashboard.")
+                if not user_id:
+                    return
+                self._send_json(200, db.dashboard_summary(conn, user_id))
+            finally:
+                conn.close()
             return
 
         if parsed.path == "/flagged":

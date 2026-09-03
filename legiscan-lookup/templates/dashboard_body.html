@@ -1,0 +1,281 @@
+<div class="page-head">
+  <div>
+    <h1>Dashboard</h1>
+    <p class="sub">Everything across your flagged bills, clients and prepared filings — one read, built from what the daily refresh already found.</p>
+  </div>
+  <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+    <a href="/flagged" class="secondary">Flagged bills →</a>
+    <a href="/flagged/calendar" class="secondary">Hearing calendar →</a>
+  </div>
+</div>
+<div id="error" role="alert" aria-live="assertive"></div>
+<div class="stat-grid" id="stats"></div>
+
+<div id="loading" class="show" style="padding:1rem 0"><span class="spinner"></span>Loading…</div>
+
+<div class="dash-grid" id="grid" hidden>
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <div class="title">Needs your attention</div>
+        <div class="sub">Filings, hearings and unassigned bills, soonest first</div>
+      </div>
+    </div>
+    <div id="attention"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <div class="title">Recent activity</div>
+        <div class="sub">What the daily refresh saw move</div>
+      </div>
+    </div>
+    <div id="recent"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <div class="title">Upcoming hearings</div>
+        <div class="sub">All times California</div>
+      </div>
+      <a href="/flagged/calendar" class="secondary">Full calendar →</a>
+    </div>
+    <div id="hearings"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <div class="title">By client</div>
+        <div class="sub">Flagged bills and the position you took</div>
+      </div>
+      <a href="/clients" class="secondary">Clients →</a>
+    </div>
+    <div id="by-client"></div>
+  </div>
+</div>
+
+<script src="{{HEARING_TIME_SRC}}"></script>
+<script src="{{TITLE_CASE_SRC}}"></script>
+<script>
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+const gridEl = document.getElementById('grid');
+const statsEl = document.getElementById('stats');
+
+const ICON_FLAG = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 1v12M2 2h8l-2 2.5L10 7H2" stroke-linejoin="round"/></svg>';
+const ICON_CALENDAR = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="10.5" height="9.5" rx="1"/><path d="M1.75 5.75h10.5M4.5 1.5v2M9.5 1.5v2" stroke-linecap="round"/></svg>';
+const ICON_ALERT = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M7 4.5v3" stroke-linecap="round"/><circle cx="7" cy="9.8" r="0.6" fill="currentColor" stroke="none"/></svg>';
+const ICON_DISCLOSURE = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="1.5" width="8" height="11" rx="1"/><path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+// Every countdown on this page is already measured in California days by
+// the server (see db.dashboard_summary) — this only puts words on it. A
+// negative number is overdue, which is why "ago" is a separate branch
+// rather than an absolute value with a sign stuck on the front.
+function dayLabel(days) {
+  if (days === null || days === undefined) return '';
+  if (days < 0) return `${-days} day${days === -1 ? '' : 's'} overdue`;
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  return `In ${days} days`;
+}
+
+// Dates arrive as ISO 'YYYY-MM-DD' California dates. Parsed field by
+// field rather than with new Date(iso), which reads a bare ISO date as
+// UTC midnight and so prints the previous day for anyone west of
+// Greenwich — which is every user of this app.
+function dateLabel(iso) {
+  if (!iso) return 'Date TBA';
+  const parts = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!parts) return iso;
+  const d = new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+// detected_at is a UTC 'YYYY-MM-DD HH:MM:SS' from SQLite's datetime('now'),
+// so it gets the 'Z' it never carried before being handed to Date.
+function agoLabel(stamp) {
+  if (!stamp) return '';
+  const then = new Date(stamp.replace(' ', 'T') + 'Z');
+  if (isNaN(then)) return '';
+  const days = Math.floor((Date.now() - then.getTime()) / 86400000);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 30) return `${days} days ago`;
+  return then.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function renderStats(s) {
+  let hearingFoot;
+  if (!s.hearings_soon) hearingFoot = `Nothing in the next ${s.hearing_horizon_days} days`;
+  else hearingFoot = `Across your flagged bills, next ${s.hearing_horizon_days} days`;
+
+  // Same reasoning as the tile this one is modelled on over on /flagged:
+  // the nearest deadline outranks the draft count, because a filing date
+  // is the one deadline here with a statutory consequence.
+  const due = s.nearest_due_days;
+  let filingFoot;
+  if (due !== null && due !== undefined && due < 0) filingFoot = `Overdue by ${-due} day${due === -1 ? '' : 's'}`;
+  else if (due === 0) filingFoot = 'One is due today';
+  else if (due !== null && due !== undefined) filingFoot = `Next due in ${due} day${due === 1 ? '' : 's'}`;
+  else filingFoot = s.filing_drafts ? 'Drafted, awaiting your sign-off' : 'None waiting on you';
+
+  statsEl.innerHTML = `
+    <a class="stat-card" href="/flagged">
+      <div class="stat-icon">${ICON_FLAG}</div>
+      <div class="stat-label">Flagged bills</div>
+      <div class="stat-value">${s.flagged}</div>
+      <div class="stat-foot">Across ${s.clients} client${s.clients === 1 ? '' : 's'}</div>
+    </a>
+    <a class="stat-card" href="/flagged/calendar">
+      <div class="stat-icon">${ICON_CALENDAR}</div>
+      <div class="stat-label">Hearings coming up</div>
+      <div class="stat-value">${s.hearings_soon}</div>
+      <div class="stat-foot">${hearingFoot}</div>
+    </a>
+    <a class="stat-card" href="/flagged">
+      <div class="stat-icon">${ICON_ALERT}</div>
+      <div class="stat-label">Needs a client</div>
+      <div class="stat-value">${s.unassigned}</div>
+      <div class="stat-foot">Flagged bills with no client assigned</div>
+    </a>
+    <a class="stat-card" href="/disclosures">
+      <div class="stat-icon">${ICON_DISCLOSURE}</div>
+      <div class="stat-label">Disclosures</div>
+      <div class="stat-value">${s.filing_drafts}</div>
+      <div class="stat-foot">${filingFoot}</div>
+    </a>
+  `;
+}
+
+function emptyState(text) {
+  return `<p class="empty" style="padding:1.1rem var(--space-4);margin:0">${esc(text)}</p>`;
+}
+
+function renderAttention(items) {
+  const el = document.getElementById('attention');
+  if (!items.length) {
+    el.innerHTML = emptyState('Nothing with a deadline on it right now.');
+    return;
+  }
+  // Capped rather than scrolled: a queue you have to scroll stops being a
+  // summary. The links out of each row are where the full lists live.
+  el.innerHTML = items.slice(0, 6).map(i => {
+    const dated = i.days !== null && i.days !== undefined;
+    // Today and tomorrow read as error rather than warning — same
+    // distinction .next-chip.now already draws on the flagged table.
+    const urgent = dated && i.days <= 1;
+    const chip = dated
+      ? `<span class="due-chip ${i.days < 0 || urgent ? 'over' : 'soon'}">${esc(dayLabel(i.days))}</span>`
+      : '';
+    let detail = esc(i.detail);
+    if (i.kind === 'hearing') {
+      const where = [dateLabel(i.date), hearingTimeLabel(i.time), i.location].filter(Boolean);
+      detail = esc(where.join(' · '));
+    }
+    return `
+      <a class="dash-row" href="${esc(i.href)}">
+        <span class="dash-row-main">
+          <span class="dash-row-title">${esc(i.title)}</span>
+          <span class="dash-row-sub">${detail}</span>
+        </span>
+        ${chip}
+      </a>`;
+  }).join('');
+}
+
+function renderRecent(rows) {
+  const el = document.getElementById('recent');
+  if (!rows.length) {
+    el.innerHTML = emptyState('No changes recorded yet — the refresh job reports here once it sees a flagged bill move.');
+    return;
+  }
+  el.innerHTML = rows.map(r => `
+    <a class="dash-row" href="/report?bill_id=${encodeURIComponent(r.bill_id)}">
+      <span class="dash-row-main">
+        <span class="dash-row-title">${esc(r.state)} ${esc(r.bill_number)}</span>
+        <span class="dash-row-sub">${esc(r.summary)}</span>
+      </span>
+      <span class="dash-row-when">${esc(agoLabel(r.detected_at))}</span>
+    </a>`).join('');
+}
+
+function renderHearings(rows) {
+  const el = document.getElementById('hearings');
+  if (!rows.length) {
+    el.innerHTML = emptyState('Nothing scheduled on your flagged bills.');
+    return;
+  }
+  el.innerHTML = rows.map(h => `
+    <a class="dash-row" href="/report?bill_id=${encodeURIComponent(h.bill_id)}">
+      <span class="dash-row-main">
+        <span class="dash-row-title">${esc(h.state)} ${esc(h.bill_number)}</span>
+        <span class="dash-row-sub">${esc([hearingTimeLabel(h.time), h.location].filter(Boolean).join(' · '))}</span>
+      </span>
+      <span class="dash-row-when">${esc(dateLabel(h.date))}</span>
+    </a>`).join('');
+}
+
+function renderByClient(rows, unassigned) {
+  const el = document.getElementById('by-client');
+  if (!rows.length && !unassigned) {
+    el.innerHTML = emptyState('No clients yet — add one to start assigning bills.');
+    return;
+  }
+  const clientRows = rows.map(c => {
+    const badges = [
+      c.support ? `<span class="position-badge support">${c.support} support</span>` : '',
+      c.oppose ? `<span class="position-badge oppose">${c.oppose} oppose</span>` : '',
+      c.watch ? `<span class="position-badge watch">${c.watch} watch</span>` : '',
+    ].filter(Boolean).join(' ');
+    return `
+      <a class="dash-row" href="/clients/detail?id=${encodeURIComponent(c.client_id)}">
+        <span class="dash-row-main">
+          <span class="dash-row-title">${esc(titleCaseName(c.name))}</span>
+          <span class="dash-row-sub">${badges || 'No bills assigned yet'}</span>
+        </span>
+        <span class="dash-row-when">${c.total}</span>
+      </a>`;
+  }).join('');
+  // Not a client, so not a link to one — it's the same gap the "Needs a
+  // client" tile counts, listed here where the comparison is.
+  const unassignedRow = unassigned ? `
+    <div class="dash-row">
+      <span class="dash-row-main">
+        <span class="dash-row-title">Unassigned</span>
+        <span class="dash-row-sub">Flagged bills not linked to any client</span>
+      </span>
+      <span class="dash-row-when">${unassigned}</span>
+    </div>` : '';
+  el.innerHTML = clientRows + unassignedRow;
+}
+
+async function load() {
+  try {
+    const res = await fetch('/api/dashboard');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load your dashboard.');
+    renderStats(data.stats);
+    renderAttention(data.attention);
+    renderRecent(data.recent);
+    renderHearings(data.hearings);
+    renderByClient(data.by_client, data.unassigned);
+    gridEl.hidden = false;
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.classList.add('show');
+  } finally {
+    loadingEl.classList.remove('show');
+  }
+}
+
+load();
+</script>

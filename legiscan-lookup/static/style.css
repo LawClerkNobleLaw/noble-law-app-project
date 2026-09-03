@@ -838,6 +838,46 @@
      apart from a real observation instead of looking identical to one. */
   .change-what.none { font-style: italic; }
 
+  /* ── Dashboard ──
+     The signed-in landing page. Deliberately introduces almost nothing:
+     its tiles are .stat-card, its four boxes are .panel, its badges are
+     .position-badge and .due-chip, all unchanged. What it does need is a
+     two-up layout for the panels and one row shape the four lists share,
+     since none of the existing row styles fit — .bill-row assumes a bill
+     (icon, identifier, title) and .hearing-row assumes a calendar day
+     group, while these rows are "one thing, one detail, one number on
+     the right" regardless of whether the thing is a bill, a filing or a
+     client. */
+  .dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); align-items: start; }
+  /* Most rows are links to the thing they describe; the one that isn't
+     (the synthetic "Unassigned" client tally) is a <div> and gets the
+     same geometry without the hover affordance, hence :is(a) below. */
+  .dash-row {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+    padding: 0.7rem var(--space-4); border-bottom: 1px solid var(--rule);
+    color: var(--ink);
+  }
+  .dash-row:last-child { border-bottom: none; }
+  a.dash-row:hover { background: var(--content-bg); color: var(--ink); }
+  .dash-row-main { min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+  .dash-row-title { font-size: 0.85rem; font-weight: 600; }
+  /* One line then ellipsis: these are summaries, and a wrapping hearing
+     location turned a five-row panel into a nine-row one. */
+  .dash-row-sub {
+    font-size: 0.75rem; color: var(--slate);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .dash-row-when { font-size: 0.75rem; color: var(--slate); flex: none; }
+  /* The tiles are links here (unlike on /flagged, where they're inert
+     summaries of the table right below them) — on a landing page a
+     number is the natural way in to the page behind it. Only the link
+     chrome needs resetting; everything else is .stat-card as-is. */
+  a.stat-card { display: block; color: inherit; }
+  a.stat-card:hover { color: inherit; }
+  @media (max-width: 900px) {
+    .dash-grid { grid-template-columns: 1fr; }
+  }
+
   /* The flagged table gained Next action and already scrolled sideways on
      a phone, where the position dropdown ends up past the right edge.
      Last change is the column to drop there: Next action answers the

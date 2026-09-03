@@ -63,7 +63,7 @@ def test_signed_out_visit_to_root_still_shows_landing_page(live_server):
     assert b"everything under the dome" in body
 
 
-def test_signed_in_visit_to_root_redirects_to_flagged_without_rendering_landing_page(live_server):
+def test_signed_in_visit_to_root_redirects_to_dashboard_without_rendering_landing_page(live_server):
     conn = db.get_connection()
     try:
         user_id = accounts.create_user(conn, "roottest@example.com", "TestPassword123!")
@@ -74,7 +74,7 @@ def test_signed_in_visit_to_root_redirects_to_flagged_without_rendering_landing_
     status, location, body = _get(live_server, "/", cookie=f"{accounts.SESSION_COOKIE}={token}")
 
     assert status == 302
-    assert location == "/flagged"
+    assert location == "/dashboard"
     # No landing-page HTML was ever sent — not even accidentally
     # alongside the redirect.
     assert body == b""
