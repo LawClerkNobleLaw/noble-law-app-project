@@ -50,8 +50,10 @@ def build_user_digest(conn, user_id, changes_by_bill):
             # One line per bill, even if multiple change types fired —
             # each individual change from diff_bill_state() is already a
             # full sentence, so joining with a space reads as continuous
-            # prose rather than a run-on.
-            "summary": " ".join(changes_by_bill[bill_id]),
+            # prose rather than a run-on. Those changes are dicts now (the
+            # flagged list needs the parts separately); the email still
+            # only wants the sentence.
+            "summary": " ".join(c["description"] for c in changes_by_bill[bill_id]),
             "url": _report_url(bill_id),
         })
     if not rows:

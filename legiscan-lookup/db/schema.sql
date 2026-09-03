@@ -100,6 +100,38 @@ CREATE TABLE IF NOT EXISTS votes (
 );
 CREATE INDEX IF NOT EXISTS idx_votes_bill_id ON votes(bill_id);
 
+-- What the daily refresh actually observed change on a bill: one row per
+-- change, appended, never updated.
+--
+-- This table exists because nothing else in the schema can answer "what
+-- moved since yesterday" after the fact. upsert_bill() replaces a bill's
+-- status history, amendments, hearings and votes wholesale on every run,
+-- so the comparison is only possible in the moment refresh_one() makes
+-- it, between snapshot_bill_state() and upsert_bill(). Once that call
+-- returns, the previous state is gone.
+--
+-- Consequence worth knowing: there is no back-fill. This starts empty on
+-- an existing database and only fills from the first refresh after it
+-- ships, so the flagged list's "Last change" column falls back to the
+-- bill's own latest recorded action until real history accumulates.
+--
+-- `summary` is the short chip label ("Enrolled", "Amended"); `description`
+-- is the full sentence the digest email already sends. `event_date` is
+-- the date the change itself carries (a hearing's date, an amendment's
+-- date), which is not the same as detected_at — LegiScan often reports an
+-- action days after it happened.
+CREATE TABLE IF NOT EXISTS bill_change_events (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  bill_id      INTEGER NOT NULL REFERENCES bills(id),
+  detected_at  TEXT NOT NULL,
+  change_type  TEXT NOT NULL,            -- status | amendment | hearing | vote
+  summary      TEXT NOT NULL,
+  description  TEXT NOT NULL,
+  event_date   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_bill_change_events_bill_id
+  ON bill_change_events(bill_id, detected_at DESC);
+
 -- The stored watch-list. One shared list (no accounts system exists yet) —
 -- one row per bill someone's added. `last_checked_at` is what the daily
 -- job updates whether or not anything actually changed on the bill.
@@ -216,6 +248,11 @@ CREATE TABLE IF NOT EXISTS flagged_bills (
   user_id    INTEGER NOT NULL REFERENCES users(id),
   bill_id    INTEGER NOT NULL REFERENCES bills(id),
   flagged_at TEXT,
+  -- The lobbyist's own free-text note on this bill. Per user, not per
+  -- bill: two firms tracking the same bill have nothing to say to each
+  -- other, and this sits alongside their flag rather than on the shared
+  -- `bills` row the refresh job overwrites.
+  notes      TEXT,
   UNIQUE(user_id, bill_id)
 );
 CREATE INDEX IF NOT EXISTS idx_flagged_bills_user_id ON flagged_bills(user_id);
@@ -300,5 +337,14 @@ CREATE TABLE IF NOT EXISTS prepared_filings (
   -- filing model was PDF-preview-only.
   pdf_field_data_hash TEXT,                    -- sha256 of field_data as of the last "generate PDF" click; NULL or mismatched vs the CURRENT field_data means the PDF on hand is stale and sign-off is blocked (see db.sign_off_prepared_filing / db._hash_field_data)
   client_row_ids     TEXT,                     -- JSON array of client ids, in order, currently filling the (up to 9) client rows — lets the editor show/reorder them when a firm has more than 9 clients
-  created_at         TEXT
+  created_at         TEXT,
+  -- The filing deadline, and the real-world event it's counted from.
+  -- Both entered/derived, never inferred from created_at: when a draft
+  -- was opened says nothing about when the state needs the filing. The
+  -- lobbyist supplies trigger_date (for a 601, the date the firm
+  -- qualified); due_date is derived from it by
+  -- disclosure_fields.due_date_for and stays editable, since the
+  -- statutory reading is theirs to make, not this app's.
+  trigger_date       TEXT,
+  due_date           TEXT
 );

@@ -813,14 +813,38 @@
      hue, since red/amber is a pair some users can't separate. */
   .next-chip.now { background: var(--error-soft); color: var(--error); }
 
-  /* Adding Next action pushed the flagged table wider, and it already
-     scrolled sideways on a phone (the position dropdown ends up past the
-     right edge). Last checked is the column to give up for it: every row
-     holds the same batch-job timestamp, so it's the least informative
-     thing competing for the width. Narrow screens only — there's room
-     for all five on a laptop. */
+  /* A filing's deadline on the Disclosures list. Filing dates are the
+     hardest deadline these users have and the one place being late has a
+     statutory consequence rather than a client-relations one, so overdue
+     is styled as an error rather than a warning, and carries its own
+     wording ("3 days overdue") instead of leaning on colour to say it. */
+  td.col-due { white-space: normal; min-width: 8rem; }
+  .due-when { font-weight: 600; font-size: 0.82rem; }
+  .due-none { font-size: 0.82rem; color: var(--slate); font-style: italic; }
+  .due-chip {
+    display: inline-block; margin-top: 0.25rem; font-size: 0.68rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em; padding: 0.1rem 0.4rem;
+    border-radius: var(--radius-pill); border: 1px solid currentColor;
+  }
+  .due-chip.soon { background: var(--warn-soft); color: var(--warn); }
+  .due-chip.over { background: var(--error-soft); color: var(--error); }
+
+  /* What the daily refresh saw move on this bill, and when. */
+  td.col-change { white-space: normal; min-width: 7rem; }
+  .change-when { font-weight: 600; font-size: 0.82rem; }
+  .change-what { font-size: 0.74rem; color: var(--slate); margin-top: 0.1rem; }
+  /* The fallback reading (the bill's own last recorded action rather than
+     a change this app watched happen) is a weaker claim, so it's set
+     apart from a real observation instead of looking identical to one. */
+  .change-what.none { font-style: italic; }
+
+  /* The flagged table gained Next action and already scrolled sideways on
+     a phone, where the position dropdown ends up past the right edge.
+     Last change is the column to drop there: Next action answers the
+     more urgent question, and Status still says where the bill is.
+     Narrow screens only — there's room for all five on a laptop. */
   @media (max-width: 900px) {
-    .col-checked { display: none; }
+    .col-change { display: none; }
   }
 
   .row-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: 0.35rem; }

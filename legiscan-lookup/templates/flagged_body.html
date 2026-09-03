@@ -15,7 +15,10 @@
 
 <div class="panel">
   <div class="panel-head">
-    <div class="title">Flagged Bills</div>
+    <div>
+      <div class="title">Flagged Bills</div>
+      <div class="sub" id="freshness"></div>
+    </div>
     <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
       <div class="search-box">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="5" r="3.5"/><path d="M8 8l2 2" stroke-linecap="round"/></svg>
@@ -43,6 +46,7 @@
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script src="{{TITLE_CASE_SRC}}"></script>
 <script src="{{ROW_MENU_SRC}}"></script>
+<script src="{{BILL_CLIENTS_SRC}}"></script>
 <script>
 const listEl = document.getElementById('list');
 const loadingEl = document.getElementById('loading');
@@ -73,6 +77,25 @@ let activeFilter = 'all';
 const SORT_STORAGE_KEY = 'flaggedBills.sortBy';
 let sortBy = localStorage.getItem(SORT_STORAGE_KEY) || 'next_action';
 if (sortSelectEl) sortSelectEl.value = sortBy;
+
+// The client chips / position selects / add-client picker are shared
+// with the bill report (see bill_clients.js); this page supplies where
+// its own copy of that state lives.
+initBillClients({
+  allClients: () => allClients,
+  assignedClients: (billId) => {
+    const row = currentRows.find(r => r.bill_id === billId);
+    return row ? (row.assigned_clients || []) : [];
+  },
+  onError: (message) => {
+    errorEl.textContent = message || '';
+    errorEl.className = message ? 'show' : '';
+  },
+  onChanged: (updatedClients) => {
+    if (updatedClients) allClients = updatedClients;
+    load();
+  },
+});
 
 function firstClientName(r) {
   const names = (r.assigned_clients || []).map(c => c.name).sort((a, b) => a.localeCompare(b));
@@ -143,6 +166,18 @@ function renderStats() {
   if (!currentRows.length) { statsEl.innerHTML = ''; return; }
   const unassigned = currentRows.filter(r => !(r.assigned_clients || []).length).length;
   const pending = preparedFilings.filter(f => f.status === 'draft').length;
+  // The nearest filing deadline outranks the draft count on this tile: a
+  // filing date is the one deadline here with a statutory consequence,
+  // and until now it appeared nowhere outside the filing itself. Only
+  // filings that actually carry a due date can be nearest — days_until_due
+  // is null until a qualifying date is entered.
+  const dated = preparedFilings.filter(f => f.days_until_due !== null && f.days_until_due !== undefined);
+  const nearest = dated.sort((a, b) => a.days_until_due - b.days_until_due)[0];
+  let filingFoot;
+  if (nearest && nearest.days_until_due < 0) filingFoot = `Overdue by ${-nearest.days_until_due} day${nearest.days_until_due === -1 ? '' : 's'}`;
+  else if (nearest && nearest.days_until_due === 0) filingFoot = 'One is due today';
+  else if (nearest) filingFoot = `Next due in ${nearest.days_until_due} day${nearest.days_until_due === 1 ? '' : 's'}`;
+  else filingFoot = pending ? 'Drafted, awaiting your sign-off' : 'None waiting on you';
   statsEl.innerHTML = `
     <div class="stat-card">
       <div class="stat-icon">${ICON_FLAG}</div>
@@ -166,7 +201,7 @@ function renderStats() {
       <div class="stat-icon">${ICON_DISCLOSURE}</div>
       <div class="stat-label">Disclosures</div>
       <div class="stat-value">${pending}</div>
-      <div class="stat-foot">${pending ? 'Drafted, awaiting your sign-off' : 'None waiting on you'}</div>
+      <div class="stat-foot">${filingFoot}</div>
     </div>
   `;
 }
@@ -228,6 +263,7 @@ async function load() {
     currentRows = await flaggedRes.json();
     preparedFilings = filingsRes.ok ? await filingsRes.json() : [];
     renderStats();
+    renderFreshness();
     renderTabs();
     applyFilters();
   } catch (err) {
@@ -236,6 +272,21 @@ async function load() {
   } finally {
     loadingEl.className = '';
   }
+}
+
+// When the refresh job last ran, said once here instead of repeated down
+// a column. It was the same value on every row by construction —
+// touch_watchlist() stamps every bill on every run whether or not
+// anything changed — so as a column it trained the reader to ignore the
+// one place a date could have carried urgency. The row-level question is
+// "what changed", which is a different field entirely (see
+// lastChangeCell).
+function renderFreshness() {
+  const el = document.getElementById('freshness');
+  if (!el) return;
+  const stamps = currentRows.map(r => r.last_checked_at).filter(Boolean).sort();
+  const latest = stamps[stamps.length - 1];
+  el.textContent = latest ? `Checked ${fmtDateTime(latest)}` : '';
 }
 
 // A friendly "Aug 24, 2:03 PM" instead of the raw
@@ -255,6 +306,41 @@ function fmtShortDate(dateStr) {
   const opts = { month: 'short', day: 'numeric' };
   if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
   return d.toLocaleDateString('en-US', opts);
+}
+
+// What actually moved on this bill, and when.
+//
+// last_change is the app's own observation, recorded by the refresh job
+// (see bill_change_events) — precise, and the only thing that can say a
+// bill was *amended* without its status having changed. It only exists
+// from the first refresh after that table shipped, so there's a fallback:
+// latest_activity_date, the newest date in the bill's own recorded
+// history. That's a weaker claim — it's the date of the bill's last
+// action, not something we watched happen — so it's labelled as such
+// rather than dressed up as a detected change.
+function lastChangeCell(r) {
+  const change = r.last_change;
+  if (change) {
+    // event_date is the date the change *carries*, which is only the date
+    // it happened for things that already happened. A newly scheduled
+    // hearing carries a future date — printing that under "Last change"
+    // claimed the bill changed next month. So a future event_date falls
+    // back to when the refresh actually saw it.
+    const detected = (change.detected_at || '').slice(0, 10);
+    const when = (change.event_date && change.event_date <= detected) ? change.event_date : detected;
+    const also = change.also_count ? ` +${change.also_count} more` : '';
+    return `
+      <div class="change-when">${fmtShortDate(when)}</div>
+      <div class="change-what" title="${(change.description || '').replace(/"/g, '&quot;')}">${change.summary || ''}${also}</div>
+    `;
+  }
+  if (r.latest_activity_date) {
+    return `
+      <div class="change-when">${fmtShortDate(r.latest_activity_date)}</div>
+      <div class="change-what none">Last recorded action</div>
+    `;
+  }
+  return '<div class="change-what none">No activity recorded</div>';
 }
 
 // Statuses where the bill has stopped moving, so there is no next date
@@ -325,162 +411,6 @@ async function unflag(billId) {
   }
 }
 
-async function assignClient(billId, selectEl) {
-  const clientId = selectEl.value;
-  if (!clientId) return;
-  errorEl.className = '';
-  selectEl.disabled = true;
-  try {
-    const res = await fetch('/api/bill-clients', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bill_id: billId, client_id: Number(clientId) }),
-    });
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || 'Could not assign client');
-    }
-    load();
-  } catch (err) {
-    selectEl.disabled = false;
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
-  }
-}
-
-async function unassignClient(billId, clientId, btnEl) {
-  // Same confirmDelete() dialog as removeClient() (see CONFIRM_DELETE_JS).
-  const r = currentRows.find(x => x.bill_id === billId);
-  const c = r && (r.assigned_clients || []).find(x => x.id === clientId);
-  const ok = await confirmDelete('Remove client?', `Remove ${c ? c.name : 'this client'} from this bill? This can't be undone.`);
-  if (!ok) return;
-  errorEl.className = '';
-  btnEl.disabled = true;
-  try {
-    const res = await fetch(`/api/bill-clients?bill_id=${billId}&client_id=${clientId}`, { method: 'DELETE' });
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || 'Could not remove assignment');
-    }
-    load();
-  } catch (err) {
-    btnEl.disabled = false;
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
-  }
-}
-
-async function setPosition(billId, clientId, selectEl) {
-  const newPosition = selectEl.value;
-  const savedPosition = selectEl.dataset.saved;
-  errorEl.className = '';
-  // Optimistic repaint so the picked color shows right away — reverted
-  // in the catch below if the server rejects the change, so a failed
-  // save can no longer look identical to a successful one.
-  selectEl.className = 'position-select ' + newPosition;
-  selectEl.disabled = true;
-  try {
-    const res = await fetch('/api/bill-clients', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bill_id: billId, client_id: clientId, position: newPosition }),
-    });
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || 'Could not update position');
-    }
-    selectEl.dataset.saved = newPosition;
-    load();
-  } catch (err) {
-    selectEl.value = savedPosition;
-    selectEl.className = 'position-select ' + savedPosition;
-    selectEl.disabled = false;
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
-  }
-}
-
-function positionSelect(r, c) {
-  const position = c.position || 'watch';
-  const options = POSITIONS.map(([value, label]) =>
-    `<option value="${value}" ${position === value ? 'selected' : ''}>${label}</option>`
-  ).join('');
-  return `<select class="position-select ${position}" data-saved="${position}" onchange="setPosition(${r.bill_id}, ${c.id}, this)" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${options}</select>`;
-}
-
-// Two different jobs live in this cell: the chips change an *existing*
-// assignment's position (or remove it); the select below them *adds a
-// new* client. They used to look like two competing ways to do the same
-// thing — see .client-chip/.add-client-select in STYLE for the visual
-// fix (behavior/handlers here are unchanged).
-function clientCell(r) {
-  const chips = (r.assigned_clients || []).map(c => `
-    <div class="client-chip">
-      <a href="/clients/detail?id=${c.id}">${titleCaseName(c.name)}</a>
-      ${positionSelect(r, c)}
-      <button type="button" class="icon-btn" onclick="unassignClient(${r.bill_id}, ${c.id}, this)" aria-label="Remove client from this bill" title="Remove client" style="height:1.5rem;width:1.5rem;color:var(--slate)">×</button>
-    </div>
-  `).join('');
-
-  const assignedIds = new Set((r.assigned_clients || []).map(c => c.id));
-  const available = allClients.filter(c => !assignedIds.has(c.id));
-  const placeholder = allClients.length ? (available.length ? '+ Add client' : 'All clients assigned') : 'No clients yet…';
-  return `
-    <div>${chips}</div>
-    <select class="add-client-select" onchange="handleClientCellSelect(${r.bill_id}, this)" style="margin-top:0.2rem">
-      <option value="">${placeholder}</option>
-      ${clientOptionsHtml(available)}
-    </select>
-  `;
-}
-
-// Selecting an existing client assigns it right away, same as before —
-// selecting "+ Add new client" (always the last option, see
-// clientOptionsHtml() in CLIENT_QUICKADD_JS) opens the quick-add panel
-// instead, then assigns whatever it creates to this row's bill, since
-// that's the whole reason to reach the quick-add form from here rather
-// than from /clients directly.
-function handleClientCellSelect(billId, selectEl) {
-  const value = selectEl.value;
-  if (value !== ADD_NEW_CLIENT_VALUE) {
-    // Same "reset right away, don't wait for the network round trip"
-    // behavior the old inline onchange="assignClient(...); this.value=''"
-    // had — assignClient() below is async and doesn't await here.
-    assignClient(billId, selectEl);
-    selectEl.value = '';
-    return;
-  }
-  openQuickAddClient(allClients, (updatedClients, created) => {
-    allClients = updatedClients;
-    assignNewClientToBill(billId, created.id);
-  }, () => {
-    selectEl.value = '';
-  });
-}
-
-async function assignNewClientToBill(billId, clientId) {
-  errorEl.className = '';
-  try {
-    const res = await fetch('/api/bill-clients', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bill_id: billId, client_id: clientId }),
-    });
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || 'Client was added, but could not be assigned to this bill.');
-    }
-  } catch (err) {
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
-  } finally {
-    // Refresh either way — the new client should show up in every
-    // row's dropdown from here on even if assigning it to *this* bill
-    // just failed.
-    load();
-  }
-}
-
 function render(rows) {
   if (!currentRows.length) {
     listEl.innerHTML = '<p class="empty">Nothing flagged yet — look up a bill and click "Flag this bill" from there.</p>';
@@ -497,7 +427,7 @@ function render(rows) {
   listEl.innerHTML = `
     <div style="overflow-x:auto">
     <table>
-      <thead><tr><th>Bill</th><th>Next action</th><th>Status</th><th class="col-checked">Last checked</th><th>Clients &amp; positions</th></tr></thead>
+      <thead><tr><th>Bill</th><th>Next action</th><th>Status</th><th class="col-change">Last change</th><th>Clients &amp; positions</th></tr></thead>
       <tbody>
       ${rows.map(r => `
         <tr>
@@ -526,8 +456,8 @@ function render(rows) {
           </td>
           <td class="next-action">${nextActionCell(r)}</td>
           <td>${r.status_label ? `<span class="status-badge">${r.status_label}</span>` : ''}</td>
-          <td class="date col-checked">${fmtDateTime(r.last_checked_at)}</td>
-          <td>${clientCell(r)}</td>
+          <td class="col-change">${lastChangeCell(r)}</td>
+          <td>${billClientCellHtml(r.bill_id)}</td>
         </tr>
       `).join('')}
       </tbody>

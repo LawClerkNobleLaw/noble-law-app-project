@@ -228,6 +228,65 @@ function clientsSectionHtml() {
   return pickerHtml + rowsHtml;
 }
 
+// When this is due, and the date that starts the clock.
+//
+// The qualifying date is asked for rather than assumed: it's a fact about
+// the firm that this app has no way to know, and a deadline counted from
+// when someone happened to open a draft would be wrong while looking
+// authoritative. Same reasoning as the "Known gaps" card above — the due
+// date it derives is stated as derived, and stays editable, because the
+// statutory reading belongs to the lobbyist and not to this app.
+function deadlineCardHtml() {
+  const rule = filing.deadline_rule;
+  const triggerLabel = (rule && rule.trigger_label) || 'Date the clock starts';
+  const help = rule ? rule.trigger_help : 'Enter the date this filing is due.';
+  const derived = rule && filing.trigger_date && filing.due_date;
+  return `
+    <div class="card">
+      <h2 class="section" style="margin-top:0">Filing deadline</h2>
+      <div class="sub" style="margin:0 0 0.8rem">${help}</div>
+      <div style="display:flex;gap:1rem;flex-wrap:wrap">
+        <label style="flex:1;min-width:11rem">
+          <div class="sub" style="margin-bottom:0.25rem">${triggerLabel}</div>
+          <input type="date" id="trigger_date" value="${filing.trigger_date || ''}"
+                 style="width:100%" onchange="saveDeadline()">
+        </label>
+        <label style="flex:1;min-width:11rem">
+          <div class="sub" style="margin-bottom:0.25rem">Due date</div>
+          <input type="date" id="due_date" value="${filing.due_date || ''}"
+                 style="width:100%" onchange="saveDeadline(true)">
+        </label>
+      </div>
+      <div class="sub" id="deadline-note" style="margin-top:0.5rem">${
+        derived ? `Derived: ${rule.rule_label}. Edit the due date directly if your reading differs.`
+                : "No due date set, so this filing won't appear on any countdown."
+      }</div>
+    </div>
+  `;
+}
+
+// overrideDue=true means the user edited the due date itself, so it's
+// sent as-is instead of being recomputed out from under them.
+async function saveDeadline(overrideDue) {
+  const trigger = document.getElementById('trigger_date').value;
+  const due = document.getElementById('due_date').value;
+  errorEl.className = '';
+  try {
+    const res = await fetch('/api/prepared-filings/deadline', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: filingId, trigger_date: trigger, due_date: overrideDue ? due : '' }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save the deadline.');
+    filing = data;
+    render();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
 function render() {
   const pdfUrl = `/api/prepared-filings/pdf?id=${filing.id}`;
   const signed = filing.status === 'ready_to_file';
@@ -291,6 +350,8 @@ function render() {
         those in by hand on the printed form if they apply to you.
       </div>
     </div>
+
+    ${deadlineCardHtml()}
 
     <div class="card">
       <h2 class="section" style="margin-top:0">Business information</h2>
