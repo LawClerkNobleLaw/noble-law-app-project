@@ -361,16 +361,59 @@
      so it lives as a small editable row inside the same callout rather
      than its own panel — one more fact about where things stand right
      now, not a separate concept. */
+  /* Stacked, not a one-line flex row: this field used to be a bare
+     "Amend by" label beside a date input, which is a date field on a
+     compliance screen with no stated meaning — the kind users either
+     avoid or fill in believing it does something. It now carries a help
+     line saying what it is and where it shows up, and a save
+     confirmation under the input, and those need their own lines. */
   .current-status-card .current-status-amend-by {
-    display: flex; align-items: center; gap: 0.5rem; margin-top: 0.7rem;
-    padding-top: 0.7rem; border-top: 1px solid var(--rule);
+    margin-top: 0.7rem; padding-top: 0.7rem; border-top: 1px solid var(--rule);
   }
   .current-status-card .current-status-amend-by label {
-    font-size: 0.78rem; font-weight: 600; color: var(--slate);
+    display: block; font-size: 0.78rem; font-weight: 600; color: var(--slate);
+  }
+  .current-status-card .current-status-amend-by .sub {
+    font-size: 0.74rem; color: var(--slate); margin: 0.15rem 0 0.4rem;
   }
   .current-status-card .current-status-amend-by input[type="date"] {
     font-size: 0.82rem; padding: 0.3rem 0.5rem; width: auto;
   }
+  .current-status-card .current-status-amend-by #amend-by-status {
+    margin: 0.3rem 0 0; min-height: 1em;
+  }
+
+  /* The status pill's own line on a bill report: the pill says which
+     stage the bill is at, the date beside it says when that stage was
+     reached. They used to run together as "Enrolled — as of 2026-08-20"
+     directly above a Latest action block dated Aug 28, which read as the
+     page contradicting itself rather than as two different facts. */
+  .status-line { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+  .status-since { font-size: 0.78rem; color: var(--slate); margin-bottom: 0.5rem; }
+
+  /* A status the app worked out from the bill's last-action text rather
+     than read from a status field — search results, where LegiScan's
+     result rows carry no status code (see bill_status.js). Marked so an
+     inference never sits in the same visual register as a recorded fact;
+     the tooltip on the pill says so in words, since a dotted underline
+     on its own is decoration to anyone who doesn't already know. */
+  .status-badge.inferred { border: 1px dashed currentColor; font-weight: 600; }
+
+  /* Engrossed versus enrolled is a genuine trap even for people who work
+     in the building, and this app defines Firm / Employer / Coalition
+     inline on Organization Search while leaving these undefined. Same
+     treatment: a short glossary at the foot of any list that uses the
+     pills, listing only the statuses actually on screen. */
+  .status-legend {
+    border-top: 1px solid var(--rule); padding: 0.7rem 1.15rem 0.9rem;
+    display: flex; flex-wrap: wrap; gap: 0.3rem 1.25rem;
+  }
+  .status-legend-head {
+    flex-basis: 100%; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--slate); margin-bottom: 0.15rem;
+  }
+  .status-legend-item { font-size: 0.74rem; color: var(--slate); }
+  .status-legend-term { font-weight: 700; color: var(--ink); margin-right: 0.35rem; }
   td.chamber {
     white-space: nowrap; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
     color: var(--accent);

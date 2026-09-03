@@ -5,6 +5,7 @@
 <div id="report"></div>
 
 <script src="{{HEARING_TIME_SRC}}"></script>
+<script src="{{BILL_STATUS_SRC}}"></script>
 <script src="{{BILL_TABLES_SRC}}"></script>
 <script src="{{CLIENT_QUICKADD_SRC}}"></script>
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
@@ -124,28 +125,47 @@ function currentStatusCardHtml(history, amendByDate) {
   if (!latest) return '';
   return `
     <div class="current-status-card ${milestoneClass(latest.action)}">
-      <div class="current-status-label">Current Status</div>
+      <div class="current-status-label">Latest action</div>
       <div class="current-status-action">${latest.action || 'Unknown'}</div>
-      <div class="current-status-meta">${[latest.date, latest.chamber].filter(Boolean).join(' · ')}</div>
+      <div class="current-status-meta">${[fmtShortDate(latest.date), latest.chamber].filter(Boolean).join(' · ')}</div>
       <div class="current-status-amend-by">
-        <label for="amend-by-input">Amend by</label>
+        <label for="amend-by-input">Your amendment deadline</label>
+        <div class="sub">A reminder you set. Nothing is filed from it — it shows up in Next action on your flagged list.</div>
         <input type="date" id="amend-by-input" value="${amendByDate || ''}"
                onchange="saveAmendByDate(this)">
+        <div class="sub" id="amend-by-status" aria-live="polite"></div>
       </div>
     </div>
   `;
 }
 
+// "Aug 25" — same shape the flagged list prints dates in, so the header's
+// "since" date and this card's "Latest action" date can be read against
+// each other without one of them being an ISO string.
+function fmtShortDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d.getTime())) return dateStr;
+  const opts = { month: 'short', day: 'numeric' };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString('en-US', opts);
+}
+
 // Saves on change (no separate Save button — a date input's own picker
 // already commits the value with one action), same disable/revert/
 // reload-on-success shape as setPosition() above it in this same file.
+// It does say "Saved." underneath, though: this is a date field on a
+// compliance screen, and a value that vanishes into no confirmation is
+// one a user reasonably assumes didn't take.
 // Not synced from LegiScan — see bills.amend_by_date in schema.sql for
 // why this field exists at all only as a manual entry.
 async function saveAmendByDate(inputEl) {
   const newValue = inputEl.value;
   const savedValue = inputEl.defaultValue;
+  const statusEl = document.getElementById('amend-by-status');
   errorEl.className = '';
   inputEl.disabled = true;
+  if (statusEl) statusEl.textContent = 'Saving…';
   try {
     const res = await fetch('/api/bill-amend-by-date', {
       method: 'POST',
@@ -158,9 +178,11 @@ async function saveAmendByDate(inputEl) {
     }
     inputEl.defaultValue = newValue;
     inputEl.disabled = false;
+    if (statusEl) statusEl.textContent = newValue ? 'Saved.' : 'Cleared.';
   } catch (err) {
     inputEl.value = savedValue;
     inputEl.disabled = false;
+    if (statusEl) statusEl.textContent = '';
     errorEl.textContent = err.message;
     errorEl.className = 'show';
   }
@@ -242,7 +264,10 @@ function render(r) {
   reportEl.innerHTML = `
     <div class="card">
       <div class="bill-id">${r.state} ${r.bill_number}</div>
-      <div class="status-badge">${r.status_label || 'Unknown'}${r.status_date ? ` — as of ${r.status_date}` : ''}</div>
+      <div class="status-line">
+        ${statusBadgeHtml(r.status_label || 'In progress')}
+        ${r.status_date ? `<span class="status-since">since ${fmtShortDate(r.status_date)}</span>` : ''}
+      </div>
       <div class="bill-title">${r.title || ''}</div>
       ${r.description ? `<div class="bill-desc">${r.description}</div>` : ''}
       ${r.url ? `<a class="bill-link" href="${r.url}" target="_blank" rel="noopener">View on LegiScan →</a>` : ''}

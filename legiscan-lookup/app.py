@@ -512,7 +512,7 @@ STYLE = STYLE.replace("__BRAND_MARK_SVG_B64__", BRAND_MARK_SVG_B64)
 # comments stay a developer-facing thing on disk instead of shipping to
 # the browser inside every page response.
 #
-# Safe as separate classic scripts because all five are self-contained:
+# Safe as separate classic scripts because each one is self-contained:
 # top-level function/const declarations plus a couple of document-level
 # listeners, nothing that reads a page's own variables at load time. A
 # classic <script src> runs before the inline <script> that follows it,
@@ -526,6 +526,7 @@ STYLE = STYLE.replace("__BRAND_MARK_SVG_B64__", BRAND_MARK_SVG_B64)
 # Python's own interpolation. A file has no such rule.
 BILL_TABLES_JS = _read_static_text("js/bill_tables.js")
 HEARING_TIME_JS = _read_static_text("js/hearing_time.js")
+BILL_STATUS_JS = _read_static_text("js/bill_status.js")
 BILL_CLIENTS_JS = _read_static_text("js/bill_clients.js")
 CLIENT_QUICKADD_JS = _read_static_text("js/client_quickadd.js")
 CONFIRM_DELETE_JS = _read_static_text("js/confirm_delete.js")
@@ -541,6 +542,7 @@ STATIC_ASSETS = {
     "style.css": (STYLE.encode("utf-8"), "text/css; charset=utf-8"),
     "js/bill_tables.js": (BILL_TABLES_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/hearing_time.js": (HEARING_TIME_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/bill_status.js": (BILL_STATUS_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/bill_clients.js": (BILL_CLIENTS_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/client_quickadd.js": (CLIENT_QUICKADD_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/confirm_delete.js": (CONFIRM_DELETE_JS.encode("utf-8"), JS_CONTENT_TYPE),
@@ -551,6 +553,7 @@ STATIC_ASSETS = {
 STYLE_HREF = _asset_url("style.css")
 BILL_TABLES_SRC = _asset_url("js/bill_tables.js")
 HEARING_TIME_SRC = _asset_url("js/hearing_time.js")
+BILL_STATUS_SRC = _asset_url("js/bill_status.js")
 BILL_CLIENTS_SRC = _asset_url("js/bill_clients.js")
 CLIENT_QUICKADD_SRC = _asset_url("js/client_quickadd.js")
 CONFIRM_DELETE_SRC = _asset_url("js/confirm_delete.js")
@@ -1041,6 +1044,7 @@ LANDING_PAGE = _render_template(
 # stat-cards.
 LOOKUP_BODY = _render_template(
     "lookup_body.html",
+    BILL_STATUS_SRC=BILL_STATUS_SRC,
     top_nav=''.join(('<div class="skeleton-row">\n      <div class="skeleton-bar" style="width:10%"></div>\n      <div class="skeleton-bar" style="width:45%"></div>\n      <div class="skeleton-bar" style="width:14%"></div>\n      <div class="skeleton-bar" style="width:12%"></div>\n    </div>' for _ in range(3))),
 )
 
@@ -1134,6 +1138,7 @@ DASHBOARD_PAGE = page("Dashboard — Rotunda", "/dashboard", DASHBOARD_BODY)
 FLAGGED_BODY = _render_template(
     "flagged_body.html",
     HEARING_TIME_SRC=HEARING_TIME_SRC,
+    BILL_STATUS_SRC=BILL_STATUS_SRC,
     BILL_CLIENTS_SRC=BILL_CLIENTS_SRC,
     CLIENT_QUICKADD_SRC=CLIENT_QUICKADD_SRC,
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
@@ -1185,7 +1190,6 @@ CLIENTS_BODY = _render_template(
 CLIENTS_PAGE = page("Clients — Rotunda", "/clients", CLIENTS_BODY)
 
 
-# Action report — everything about one bill in one place: current
 # One client's own page: org info, every bill assigned to them with its
 # position, and a way to add a new bill starting from here rather than
 # only from /flagged — the reverse direction of the existing
@@ -1193,6 +1197,7 @@ CLIENTS_PAGE = page("Clients — Rotunda", "/clients", CLIENTS_BODY)
 # or Organization Search's "+ Add as client" link.
 CLIENT_DETAIL_BODY = _render_template(
     "client_detail_body.html",
+    BILL_STATUS_SRC=BILL_STATUS_SRC,
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
     TITLE_CASE_SRC=TITLE_CASE_SRC,
     ROW_MENU_SRC=ROW_MENU_SRC,
@@ -1201,23 +1206,29 @@ CLIENT_DETAIL_BODY = _render_template(
 CLIENT_DETAIL_PAGE = page("Client — Rotunda", "/clients", CLIENT_DETAIL_BODY)
 
 
-# Action report — everything about one bill in one place: current
+# Bill report — everything about one bill in one place: current
 # status, full status history, amendment history, upcoming hearings,
 # and (if this signed-in user has assigned it to one of their own
 # clients) that client's name and current position. Reached via
-# ?bill_id=... — e.g. linked from a "Report" link on /flagged — rather
-# than being a page anyone navigates to on its own.
+# ?bill_id=... — e.g. linked from the "Bill report" link on /flagged —
+# rather than being a page anyone navigates to on its own.
+#
+# Called "Bill report", not "Action report": the latter is already the
+# name of the generated one-page client deliverable in the product
+# spec, and spending it on this screen would leave the real feature
+# without a name when it ships.
 REPORT_BODY = _render_template(
     "report_body.html",
     BILL_TABLES_SRC=BILL_TABLES_SRC,
     HEARING_TIME_SRC=HEARING_TIME_SRC,
+    BILL_STATUS_SRC=BILL_STATUS_SRC,
     BILL_CLIENTS_SRC=BILL_CLIENTS_SRC,
     CLIENT_QUICKADD_SRC=CLIENT_QUICKADD_SRC,
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
     TITLE_CASE_SRC=TITLE_CASE_SRC,
 )
 
-REPORT_PAGE = page("Action Report — Rotunda", "/flagged", REPORT_BODY)
+REPORT_PAGE = page("Bill report — Rotunda", "/flagged", REPORT_BODY)
 
 
 # "Prepare my disclosure form" — /disclosures (pick a form, generate a

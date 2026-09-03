@@ -480,6 +480,7 @@ def list_flagged_bills(conn, user_id, today=None):
     rows = conn.execute(
         """SELECT f.bill_id, f.flagged_at, w.last_checked_at,
                   b.state, b.bill_number, b.title, b.status_label, b.status_date, b.url,
+                  b.amend_by_date,
                   (SELECT MAX(h.date) FROM bill_status_history h
                    WHERE h.bill_id = f.bill_id) AS latest_activity_date
            FROM flagged_bills f
@@ -492,7 +493,8 @@ def list_flagged_bills(conn, user_id, today=None):
     result = [dict(r) for r in rows]
     bill_ids = [r["bill_id"] for r in result]
     clients_by_bill = clients_for_bills(conn, user_id, bill_ids)
-    next_hearings = _next_hearings_for_bills(conn, bill_ids, today or today_in_california())
+    today = today or today_in_california()
+    next_hearings = _next_hearings_for_bills(conn, bill_ids, today)
     latest_changes = _latest_changes_for_bills(conn, bill_ids)
     for r in result:
         r["assigned_clients"] = clients_by_bill.get(r["bill_id"], [])
@@ -501,6 +503,17 @@ def list_flagged_bills(conn, user_id, today=None):
         r["next_hearing"] = next_hearings.get(r["bill_id"])
         # None until the refresh job has seen this bill move at least once.
         r["last_change"] = latest_changes.get(r["bill_id"])
+        # bills.amend_by_date is the user's own hand-entered amendment
+        # deadline (nothing to do with LegiScan). Counted here off the
+        # same California `today` the hearing countdown uses, rather than
+        # in the browser, so a reminder and a hearing on the same day
+        # can't disagree about how far away that day is. None when the
+        # field is empty or already past — the column only carries
+        # deadlines still ahead of the user.
+        r["amend_by_days_until"] = None
+        if r.get("amend_by_date"):
+            days = _days_between(today, r["amend_by_date"])
+            r["amend_by_days_until"] = days if days is not None and days >= 0 else None
     return result
 
 
