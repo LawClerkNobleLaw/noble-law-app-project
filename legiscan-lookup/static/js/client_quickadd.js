@@ -19,7 +19,21 @@
  *     /clients page — this is a quick add, not the whole form.
  */
 
-const POSITIONS = [['watch', 'Watch'], ['support', 'Support'], ['oppose', 'Oppose']];
+/* The glyph is the non-colour half of the cue (P2-31). Support and
+ * Oppose were separated by green and red text — every position is
+ * spelled out in words, so this was never colour ALONE, but reading a
+ * column of positions at a glance was a colour task, and red/green is
+ * the one pair a deuteranopic reader cannot separate. The + / \u2212 / \u25e6
+ * prefix survives greyscale, a monochrome print, and any form of colour
+ * blindness. It lives in the option text rather than in CSS because
+ * ::before does not render inside a native <select>, and this is the
+ * one cue that has to be visible both in the closed control and in the
+ * open dropdown. .position-badge carries the same glyphs from CSS (see
+ * STYLE) since a <span> can take a ::before.
+ *
+ * Duplicated in client_detail_body.html, which has its own copy of this
+ * list. */
+const POSITIONS = [['watch', '\u25e6 Watch'], ['support', '+ Support'], ['oppose', '\u2212 Oppose']];
 
 const ADD_NEW_CLIENT_VALUE = '__add_new_client__';
 

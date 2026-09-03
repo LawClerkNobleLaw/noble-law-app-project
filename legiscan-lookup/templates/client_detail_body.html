@@ -65,7 +65,9 @@ const clientEl = document.getElementById('client');
 const billsEl = document.getElementById('bills');
 const addBillForm = document.getElementById('add-bill-f');
 const addBillLoading = document.getElementById('add-bill-loading');
-const POSITIONS = [['watch', 'Watch'], ['support', 'Support'], ['oppose', 'Oppose']];
+// Same list, same reasoning as client_quickadd.js's copy — see the
+// note there on why the glyph is in the option text.
+const POSITIONS = [['watch', '\u25e6 Watch'], ['support', '+ Support'], ['oppose', '\u2212 Oppose']];
 
 function renderClient(d) {
   const c = d.client;
