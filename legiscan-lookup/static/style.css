@@ -1298,3 +1298,35 @@
       font-family: Georgia, 'Times New Roman', serif; height: auto;
     }
   }
+
+  /* ── Digest settings (P2-30) ──
+     The one settings form in this app, so it gets a shape rather than a
+     component library: a label column that lines up with the read-only
+     rows already on Profile, and checkbox rows that stay one tap target
+     each on a phone (the label wraps the input, so the caption is part
+     of the hit area, not decoration next to it). */
+  .pref-group { padding: var(--space-4) 1.15rem; border-bottom: 1px solid var(--rule); }
+  .pref-group:last-of-type { border-bottom: 0; }
+  .pref-group > .pref-label {
+    font-size: 0.74rem; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--slate); margin-bottom: var(--space-2);
+  }
+  .pref-hint { font-size: 0.78rem; color: var(--slate); margin-top: var(--space-2); }
+  .pref-check {
+    display: flex; align-items: baseline; gap: var(--space-2);
+    padding: var(--space-2) 0; cursor: pointer;
+  }
+  .pref-check input { margin: 0; flex: none; accent-color: var(--accent-solid); }
+  .pref-check .pref-check-text { font-size: 0.88rem; }
+  .pref-check .pref-check-sub { font-size: 0.76rem; color: var(--slate); margin-top: 0.1rem; }
+  /* Radios laid out as a column of rows rather than a segmented control:
+     each option needs a sentence of consequence under it ("Monday
+     mornings, covering the previous week"), and a segmented control has
+     nowhere to put one. */
+  .pref-radios { display: flex; flex-direction: column; gap: 0; }
+  .pref-checks { display: flex; flex-direction: column; gap: 0; }
+  .pref-group input[type="text"], .pref-group textarea { width: 100%; max-width: 30rem; }
+  /* "Saved" is stated where the change was made, not in a corner toast:
+     this form saves on submit, and the sentence has to be next to the
+     button that caused it. */
+  .pref-saved { font-size: 0.8rem; color: var(--good); margin-left: var(--space-3); }

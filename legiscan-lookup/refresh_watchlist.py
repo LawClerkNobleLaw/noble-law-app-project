@@ -181,6 +181,7 @@ def main():
             f"digest: {digest_summary['sent']} sent, "
             f"{digest_summary['not_configured']} not sent (SMTP unconfigured), "
             f"{digest_summary['skipped']} skipped (no changes), "
+            f"{digest_summary['off']} not a send day, "
             f"{digest_summary['errors']} error(s)"
         )
         return {

@@ -547,3 +547,56 @@ CREATE TABLE IF NOT EXISTS prepared_filings (
   trigger_date       TEXT,
   due_date           TEXT
 );
+
+-- ── What the digest is allowed to say, and to whom ────────────────────
+--
+-- The digest email was half the product and had no settings at all: it
+-- went out daily, to the account's own address, about every change on
+-- every flagged bill. These two tables are the user's side of that
+-- conversation.
+--
+-- Per PERSON, not per firm — unlike clients, flagged bills and filings,
+-- which belong to the organization. Where my mail lands and how often is
+-- mine; a colleague turning their own digest off must not turn off
+-- everyone's. Same reasoning as bill_views above.
+--
+-- A missing row means "the defaults", so nothing has to be backfilled
+-- and an account that never visits Profile keeps behaving exactly as it
+-- did before this table existed — see db.get_notification_prefs, which
+-- is the only thing that should ever read these columns directly.
+CREATE TABLE IF NOT EXISTS notification_prefs (
+  user_id          INTEGER PRIMARY KEY REFERENCES users(id),
+  -- daily | weekdays | weekly | off. The daily refresh job decides
+  -- whether today is a send day for this row (digest._is_send_day);
+  -- 'weekly' is the one value that changes what the email CONTAINS as
+  -- well as when it goes, since a Monday roll-up has to cover the six
+  -- days the job already ran and said nothing (see
+  -- db.changes_by_bill_since, reading bill_change_events).
+  frequency        TEXT NOT NULL DEFAULT 'daily',
+  -- Comma-separated subset of status,amendment,hearing,vote — the
+  -- change_type vocabulary diff_bill_state() emits and
+  -- bill_change_events stores. Empty string is a legal value and means
+  -- "no flagged-bill news"; that is not the same as frequency 'off',
+  -- because saved-search matches can still be wanted.
+  event_types      TEXT NOT NULL DEFAULT 'status,amendment,hearing,vote',
+  include_matches  INTEGER NOT NULL DEFAULT 1,   -- 0/1 — the saved-search half
+  -- Additional addresses, comma-separated, that get the same email: an
+  -- assistant, an associate, the client. Cc'd on one message rather than
+  -- sent their own copy, so "reply to all" reaches the same thread the
+  -- lobbyist is reading.
+  extra_recipients TEXT,
+  updated_at       TEXT
+);
+
+-- Bills this person does not want digest mail about. Per-user for the
+-- same reason the prefs are, and a separate table rather than a column
+-- on flagged_bills because that row is the firm's.
+--
+-- Muting is deliberately NOT unflagging: the bill stays tracked, stays
+-- on the flagged list, stays in the reports. It just stops sending mail.
+CREATE TABLE IF NOT EXISTS digest_mutes (
+  user_id    INTEGER NOT NULL REFERENCES users(id),
+  bill_id    INTEGER NOT NULL REFERENCES bills(id),
+  created_at TEXT,
+  PRIMARY KEY (user_id, bill_id)
+);

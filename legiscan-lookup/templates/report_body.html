@@ -283,6 +283,44 @@ async function saveNotes(textareaEl) {
 // Unflagging drops this user's positions and notes on the bill, so the
 // confirmation names what goes with it — same confirmDelete() the
 // flagged list uses, rather than the browser's own confirm().
+
+/* Muting is the small answer to "this bill is being tracked for the
+ * record and I do not need mail about it" — the answer that used to be
+ * unflagging, which loses the tracking too. Per person, not per firm:
+ * see digest_mutes in schema.sql. Settings live on Profile; this is the
+ * one place a bill can actually be muted, since it is the only screen
+ * where you are looking at the bill you are tired of hearing about.
+ */
+async function toggleMute() {
+  const btn = document.getElementById('mute-btn');
+  const r = currentReport;
+  if (!r) return;
+  const next = !r.digest_muted;
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/digest-mute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bill_id: r.bill_id, muted: next }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not change that');
+    r.digest_muted = data.muted;
+    btn.textContent = data.muted ? '\u{1F515} Muted in digest' : 'Mute in digest';
+    btn.title = data.muted
+      ? 'Start emailing me about this bill again'
+      : 'Stop emailing me about this bill — it stays flagged';
+    showToast(data.muted
+      ? 'Muted. This bill stays flagged; the digest just stops mentioning it.'
+      : 'Unmuted. The digest will mention this bill again.');
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function unflag() {
   const r = currentReport;
   const label = r ? `${r.state} ${r.bill_number}` : 'this bill';
@@ -335,6 +373,9 @@ function render(r) {
           ? `<span class="status-badge">🚩 Flagged</span>
              <button type="button" class="secondary" onclick="draftLetter()">Draft letter</button>
              <button type="button" class="secondary" onclick="window.print()">Print</button>
+             <button type="button" class="secondary" id="mute-btn" onclick="toggleMute()"
+                     title="${r.digest_muted ? 'Start emailing me about this bill again' : "Stop emailing me about this bill — it stays flagged"}">
+               ${r.digest_muted ? '\u{1F515} Muted in digest' : 'Mute in digest'}</button>
              <button type="button" class="danger" onclick="unflag()">Unflag</button>`
           : '<button id="flag-btn" class="secondary" onclick="openFlagModal()">Flag this bill</button>'}
       </div>

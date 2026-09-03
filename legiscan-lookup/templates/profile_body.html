@@ -28,6 +28,55 @@
   </div>
 </div>
 
+<div class="panel" style="margin-top:1rem" id="notifications">
+  <div class="panel-head">
+    <div>
+      <div class="title">Notifications</div>
+      <div class="sub">What the daily digest email covers, how often it goes out, and who else gets it.</div>
+    </div>
+  </div>
+  <form id="prefs-f">
+    <div class="pref-group">
+      <div class="pref-label">How often</div>
+      <div class="pref-radios" id="pref-frequency"></div>
+    </div>
+
+    <div class="pref-group">
+      <div class="pref-label">What counts as news</div>
+      <div class="pref-checks" id="pref-events"></div>
+      <p class="pref-hint">
+        Unchecking all four leaves the flagged-bill half of the email empty. That is not the
+        same as turning the digest off — new bills matching your saved searches can still arrive.
+      </p>
+    </div>
+
+    <div class="pref-group">
+      <div class="pref-label">Who else gets it</div>
+      <label for="pref-recipients" class="pref-check-text">Additional recipients</label>
+      <input id="pref-recipients" type="text" placeholder="assistant@firm.com, associate@firm.com"
+             autocomplete="off" style="margin-top:0.35rem">
+      <p class="pref-hint">
+        Up to five addresses, separated by commas. They are copied on the same email you get,
+        so a reply reaches everyone — not sent their own separate digest.
+      </p>
+    </div>
+
+    <div class="pref-group">
+      <div class="pref-label">Muted bills</div>
+      <div id="pref-mutes"></div>
+      <p class="pref-hint">
+        Muting stops the email about one bill. The bill stays flagged, stays on your flagged
+        list, and keeps its action report. Mute or unmute a bill from its report page.
+      </p>
+    </div>
+
+    <div class="card-actions" style="padding:1rem 1.15rem;align-items:center">
+      <button type="submit" id="prefs-save">Save notification settings</button>
+      <span class="pref-saved" id="prefs-saved" hidden>Saved</span>
+    </div>
+  </form>
+</div>
+
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script>
 const contentEl = document.getElementById('content');
@@ -187,6 +236,141 @@ async function removeLobbyist(id) {
   }
 }
 
+/* ── Notification settings ─────────────────────────────────────────────
+ *
+ * The digest was half this product and had no settings, so the whole
+ * email was take-it-or-leave-it: daily, every change type, to one
+ * address. This panel is the other side of that.
+ *
+ * Rendered from the server's copy of the prefs rather than from static
+ * markup with checked attributes, and re-rendered from the POST
+ * response, so what is on screen is always what is stored — including
+ * the normalising the server does (a duplicate cc dropped, an unknown
+ * change type ignored).
+ *
+ * The panel carries id="notifications" because every digest email links
+ * to /profile#notifications. That anchor is the only route a cc'd
+ * assistant has to these controls.
+ */
+const FREQUENCIES = [
+  ['daily', 'Every day', 'One email each morning, covering what moved overnight.'],
+  ['weekdays', 'Weekdays only', 'Monday to Friday. Nothing lands on a Saturday.'],
+  ['weekly', 'Weekly', 'Monday mornings, rolling up the previous seven days.'],
+  ['off', 'Paused', 'No digest email. Everything keeps being tracked.'],
+];
+
+const EVENT_TYPES = [
+  ['status', 'Status changes', 'Introduced, in committee, enrolled, chaptered.'],
+  ['amendment', 'Amendments', 'New or adopted amendments.'],
+  ['hearing', 'Hearings', 'A hearing being scheduled or moved.'],
+  ['vote', 'Votes', 'A recorded floor or committee vote.'],
+];
+
+let prefs = null;
+let mutedBills = [];
+
+async function loadPrefs() {
+  try {
+    const res = await fetch('/api/notification-prefs');
+    if (!res.ok) return;
+    const data = await res.json();
+    prefs = data.prefs;
+    mutedBills = data.muted_bills || [];
+    renderPrefs();
+  } catch (err) { /* The rest of the page is unaffected. */ }
+}
+
+function renderPrefs() {
+  if (!prefs) return;
+
+  document.getElementById('pref-frequency').innerHTML = FREQUENCIES.map(([value, label, sub]) => `
+    <label class="pref-check">
+      <input type="radio" name="frequency" value="${value}" ${prefs.frequency === value ? 'checked' : ''}>
+      <span><span class="pref-check-text">${label}</span><span class="pref-check-sub" style="display:block">${sub}</span></span>
+    </label>
+  `).join('');
+
+  const chosen = new Set(prefs.event_types || []);
+  document.getElementById('pref-events').innerHTML = EVENT_TYPES.map(([value, label, sub]) => `
+    <label class="pref-check">
+      <input type="checkbox" name="event_types" value="${value}" ${chosen.has(value) ? 'checked' : ''}>
+      <span><span class="pref-check-text">${label}</span><span class="pref-check-sub" style="display:block">${sub}</span></span>
+    </label>
+  `).join('') + `
+    <label class="pref-check" style="border-top:1px solid var(--rule);margin-top:0.4rem;padding-top:0.6rem">
+      <input type="checkbox" id="pref-matches" ${prefs.include_matches ? 'checked' : ''}>
+      <span><span class="pref-check-text">New bills matching my saved searches</span><span class="pref-check-sub" style="display:block">Bills nobody at the firm has flagged yet.</span></span>
+    </label>`;
+
+  document.getElementById('pref-recipients').value = (prefs.extra_recipients || []).join(', ');
+
+  const mutesEl = document.getElementById('pref-mutes');
+  if (!mutedBills.length) {
+    mutesEl.innerHTML = '<p class="empty" style="padding:0">Nothing muted.</p>';
+  } else {
+    mutesEl.innerHTML = mutedBills.map(b => `
+      <div class="saved-row" style="padding-left:0;padding-right:0">
+        <div class="saved-main">
+          <a class="saved-name" href="/report?bill_id=${b.bill_id}">${escapeText(b.state || '')} ${escapeText(b.bill_number || '')}</a>
+          <div class="saved-meta">${escapeText(b.title || '')}</div>
+        </div>
+        <button type="button" class="secondary" onclick="unmuteBill(${b.bill_id})">Unmute</button>
+      </div>
+    `).join('');
+  }
+}
+
+document.getElementById('prefs-f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorEl.className = '';
+  document.getElementById('prefs-saved').hidden = true;
+  const form = e.currentTarget;
+  const body = {
+    frequency: (form.querySelector('input[name="frequency"]:checked') || {}).value || 'daily',
+    event_types: [...form.querySelectorAll('input[name="event_types"]:checked')].map(i => i.value),
+    include_matches: document.getElementById('pref-matches').checked,
+    extra_recipients: document.getElementById('pref-recipients').value,
+  };
+  const btn = document.getElementById('prefs-save');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/notification-prefs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save those settings');
+    prefs = data.prefs;
+    renderPrefs();
+    document.getElementById('prefs-saved').hidden = false;
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function unmuteBill(billId) {
+  errorEl.className = '';
+  try {
+    const res = await fetch('/api/digest-mute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bill_id: billId, muted: false }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not unmute that bill');
+    mutedBills = mutedBills.filter(b => b.bill_id !== billId);
+    renderPrefs();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
 load();
 loadRoster();
+loadPrefs();
 </script>
