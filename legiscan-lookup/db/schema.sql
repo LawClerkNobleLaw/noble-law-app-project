@@ -248,6 +248,11 @@ CREATE TABLE IF NOT EXISTS flagged_bills (
   user_id    INTEGER NOT NULL REFERENCES users(id),
   bill_id    INTEGER NOT NULL REFERENCES bills(id),
   flagged_at TEXT,
+  -- The lobbyist's own free-text note on this bill. Per user, not per
+  -- bill: two firms tracking the same bill have nothing to say to each
+  -- other, and this sits alongside their flag rather than on the shared
+  -- `bills` row the refresh job overwrites.
+  notes      TEXT,
   UNIQUE(user_id, bill_id)
 );
 CREATE INDEX IF NOT EXISTS idx_flagged_bills_user_id ON flagged_bills(user_id);

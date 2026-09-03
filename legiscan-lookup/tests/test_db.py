@@ -390,6 +390,95 @@ def test_list_flagged_bills_latest_activity_date_is_none_without_history(conn):
     assert rows[0]["latest_activity_date"] is None
 
 
+# ── per-user notes on a flagged bill ────────────────────────────────
+
+def test_bill_notes_round_trip_through_the_report(conn):
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    conn.commit()
+
+    assert db.get_bill_report(conn, user_id, bill_id)["notes"] == ""
+
+    db.set_bill_notes(conn, user_id, bill_id, "Met with the author's office Tuesday.")
+    conn.commit()
+
+    assert db.get_bill_report(conn, user_id, bill_id)["notes"] == "Met with the author's office Tuesday."
+
+
+def test_bill_notes_are_private_to_each_user(conn):
+    # Stored against the flag, not the bill — two firms tracking the same
+    # bill must not see each other's working notes.
+    mine = insert_user(conn)
+    theirs = insert_user(conn, email="someone@example.com")
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, mine, bill_id)
+    db.flag_bill(conn, theirs, bill_id)
+    db.set_bill_notes(conn, mine, bill_id, "Ours: oppose unless amended.")
+    conn.commit()
+
+    assert db.get_bill_report(conn, mine, bill_id)["notes"] == "Ours: oppose unless amended."
+    assert db.get_bill_report(conn, theirs, bill_id)["notes"] == ""
+
+
+def test_bill_notes_require_the_bill_to_be_flagged(conn):
+    # There's no per-user row to hang a note on otherwise, and accepting
+    # the text just to drop it would be worse than refusing it.
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    conn.commit()
+
+    with pytest.raises(ValueError):
+        db.set_bill_notes(conn, user_id, bill_id, "Never saved.")
+
+
+def test_bill_notes_clear_back_to_empty(conn):
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    db.set_bill_notes(conn, user_id, bill_id, "Something.")
+    conn.commit()
+
+    db.set_bill_notes(conn, user_id, bill_id, "")
+    conn.commit()
+
+    assert db.get_bill_report(conn, user_id, bill_id)["notes"] == ""
+
+
+def test_unflagging_takes_the_notes_with_it(conn):
+    # The note lives on the flag, so re-flagging starts clean rather than
+    # resurrecting a note the user believed they had discarded.
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    db.set_bill_notes(conn, user_id, bill_id, "Working note.")
+    conn.commit()
+
+    db.unflag_bill(conn, user_id, bill_id)
+    db.flag_bill(conn, user_id, bill_id)
+    conn.commit()
+
+    assert db.get_bill_report(conn, user_id, bill_id)["notes"] == ""
+
+
+def test_report_upcoming_hearings_use_california_today(conn):
+    # Was date('now') — UTC, which rolls over mid-afternoon Pacific and
+    # dropped a hearing happening this afternoon out of "upcoming" while
+    # it was still ahead of the user. Must match the calendar's own cut.
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    today = db.today_in_california()
+    conn.execute(
+        "INSERT INTO bill_hearings (bill_id, event_type, date, time) VALUES (?, 'Hearing', ?, '13:30')",
+        (bill_id, today),
+    )
+    conn.commit()
+
+    report = db.get_bill_report(conn, user_id, bill_id)
+
+    assert [h["date"] for h in report["upcoming_hearings"]] == [today]
+
+
 # ── the hearing calendar's upcoming/past split ──────────────────────
 #
 # Every test here passes `today` explicitly rather than letting the

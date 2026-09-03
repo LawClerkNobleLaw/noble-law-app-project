@@ -97,6 +97,10 @@ def _migrate(conn):
     if "amend_by_date" not in bill_cols:
         conn.execute("ALTER TABLE bills ADD COLUMN amend_by_date TEXT")
 
+    flagged_cols = {row["name"] for row in conn.execute("PRAGMA table_info(flagged_bills)")}
+    if "notes" not in flagged_cols:
+        conn.execute("ALTER TABLE flagged_bills ADD COLUMN notes TEXT")
+
     filing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(prepared_filings)")}
     for col in ("pdf_field_data_hash", "client_row_ids", "trigger_date", "due_date"):
         if col not in filing_cols:
@@ -855,12 +859,17 @@ def get_bill_report(conn, user_id, bill_id):
     ]
     # "Upcoming" is applied here, not stored that way — bill_hearings
     # keeps past events too, this just filters what the report shows.
+    # Against California's date, not date('now')'s UTC — hosted on Render
+    # the latter rolls over mid-afternoon Pacific and would drop a hearing
+    # happening this afternoon out of "upcoming" while it's still ahead of
+    # the user. Same cut the calendar makes (list_hearings_for_flagged_bills),
+    # so the two screens can't disagree about what's still to come.
     result["upcoming_hearings"] = [
         dict(r) for r in conn.execute(
             """SELECT event_type, date, time, location, description
-               FROM bill_hearings WHERE bill_id = ? AND date >= date('now')
+               FROM bill_hearings WHERE bill_id = ? AND date >= ?
                ORDER BY date, time""",
-            (bill_id,),
+            (bill_id, today_in_california()),
         ).fetchall()
     ]
     result["votes"] = [
@@ -877,10 +886,30 @@ def get_bill_report(conn, user_id, bill_id):
     # explicit way to tell "not flagged yet" from "flagged, no client
     # assigned" instead of inferring it from assigned_clients being
     # empty either way.
-    result["flagged"] = bool(conn.execute(
-        "SELECT 1 FROM flagged_bills WHERE user_id = ? AND bill_id = ?", (user_id, bill_id)
-    ).fetchone())
+    flag_row = conn.execute(
+        "SELECT notes FROM flagged_bills WHERE user_id = ? AND bill_id = ?", (user_id, bill_id)
+    ).fetchone()
+    result["flagged"] = flag_row is not None
+    # Empty string rather than None so the textarea binds cleanly, and
+    # only ever this user's own note — see flagged_bills.notes.
+    result["notes"] = (flag_row["notes"] if flag_row else None) or ""
     return result
+
+
+def set_bill_notes(conn, user_id, bill_id, notes):
+    """Save this user's own note on a bill they've flagged.
+
+    Scoped to a flag rather than to the bill: unflagging drops the note
+    with the rest of that user's context, and a bill nobody has flagged
+    has nowhere to keep one — the route treats that as an error rather
+    than silently discarding what someone typed."""
+    cur = conn.execute(
+        "UPDATE flagged_bills SET notes = ? WHERE user_id = ? AND bill_id = ?",
+        (notes or None, user_id, bill_id),
+    )
+    if cur.rowcount == 0:
+        raise ValueError("Flag this bill before adding notes to it.")
+    return notes or ""
 
 
 def set_bill_amend_by_date(conn, bill_id, amend_by_date):
