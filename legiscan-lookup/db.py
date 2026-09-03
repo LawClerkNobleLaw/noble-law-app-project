@@ -514,6 +514,35 @@ def _unread_counts_for_bills(conn, user_id, bill_ids):
     return {row["bill_id"]: row["unread"] for row in rows}
 
 
+def tracking_for_bills(conn, user_id, bill_ids):
+    """bill_id -> {"flagged": True, "clients": [...]} for whichever of
+    these bills this user already tracks — what search results are
+    annotated with so a results page knows what the user has already
+    settled.
+
+    Takes LegiScan bill_ids (the same ids `bills.id` is keyed on) and
+    silently returns nothing for the ones this app has never seen, which
+    on a broad search is most of them. Cheap on purpose: two indexed
+    reads over the user's own rows, no LegiScan call, no per-row work —
+    a hundred-result page has to be able to afford this."""
+    if not bill_ids:
+        return {}
+    placeholders = ",".join("?" for _ in bill_ids)
+    flagged = {
+        row["bill_id"] for row in conn.execute(
+            f"""SELECT bill_id FROM flagged_bills
+                WHERE user_id = ? AND bill_id IN ({placeholders})""",
+            (user_id, *bill_ids),
+        )
+    }
+    if not flagged:
+        return {}
+    clients_by_bill = clients_for_bills(conn, user_id, sorted(flagged))
+    return {
+        bill_id: {"flagged": True, "clients": clients_by_bill.get(bill_id, [])}
+        for bill_id in flagged
+    }
+
 def list_flagged_bills(conn, user_id, today=None):
     rows = conn.execute(
         """SELECT f.bill_id, f.flagged_at, f.last_viewed_at, w.last_checked_at,

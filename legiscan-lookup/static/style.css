@@ -1127,3 +1127,33 @@
     .toast { animation: toast-in 140ms ease-out; }
   }
   @keyframes toast-in { from { transform: translateY(0.5rem); opacity: 0; } to { transform: none; opacity: 1; } }
+
+  /* ── Search results ──
+     The results table stopped being a read-only list: it now carries a
+     per-row flag control, a selection checkbox, and what the user has
+     already decided about each bill. */
+
+  /* Narrow, fixed columns for the two controls, so the title keeps the
+     slack the way it does on the flagged list. */
+  th.pick-cell, td.pick-cell { width: 1.8rem; padding-right: 0; }
+  td.flag-cell { white-space: nowrap; text-align: right; }
+
+  /* A bill the user already tracks: dimmed rather than hidden, since the
+     useful signal is "you settled this one", not "this isn't a result".
+     The checkbox column is empty on these rows — there's nothing to
+     flag — which is also what keeps "select all that's left" honest. */
+  tr.tracked-row { background: var(--content-bg); }
+  a.result-title { color: inherit; }
+  a.result-title:hover { color: var(--accent); }
+  .result-tracked { margin-top: 0.25rem; display: flex; flex-wrap: wrap; gap: 0.3rem; font-size: 0.72rem; color: var(--slate); }
+
+  /* The bulk-flag bar, above the table, present only while something is
+     selected — an empty "0 selected" toolbar would be permanent
+     furniture for an occasional action. */
+  .selection-bar {
+    display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+    background: var(--accent-soft); color: var(--accent);
+    border-radius: var(--radius-md); padding: var(--space-3) 0.9rem; margin-bottom: 0.75rem;
+  }
+  .selection-count { font-weight: 700; font-size: 0.85rem; }
+  .selection-bar select { font-size: 0.78rem; padding: 0.25rem 0.4rem; }

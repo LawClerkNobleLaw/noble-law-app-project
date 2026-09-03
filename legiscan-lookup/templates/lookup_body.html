@@ -23,6 +23,9 @@
 <div id="results"></div>
 
 <script src="{{BILL_STATUS_SRC}}"></script>
+<script src="{{TOAST_SRC}}"></script>
+<script src="{{POSITION_HISTORY_SRC}}"></script>
+<script src="{{TITLE_CASE_SRC}}"></script>
 <script>
 const form = document.getElementById('f');
 const resultsEl = document.getElementById('results');
@@ -30,6 +33,22 @@ const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
 let currentQuery = '';
 let currentPage = 1;
+// The rows as last rendered, so a flag toggle can repaint one row
+// without re-running the search (and spending another LegiScan call).
+let currentResults = [];
+// Bills picked for "flag selected". Kept across a page change within the
+// same search — someone paging through 119 results is doing one triage
+// pass, not three.
+let selectedBillIds = new Set();
+// "Hide bills I already track". Half a broad result set is usually
+// bills the user settled last week.
+let hideTracked = false;
+let allClients = [];
+
+// Only used by the "flag selected" bar's client picker. A signed-out
+// visitor gets an empty list and no picker, which is right — they can't
+// flag anything either.
+fetch('/api/clients').then(res => res.ok ? res.json() : []).then(list => { allClients = list || []; }).catch(() => {});
 
 form.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -88,38 +107,221 @@ function snippet(title) {
 // place (see REPORT_BODY, which now also has "Flag this bill" for a
 // bill that isn't flagged yet).
 function renderResults(data) {
-  const rows = data.results || [];
-  if (!rows.length) {
+  currentResults = data.results || [];
+  signedIn = !!data.signed_in;
+  renderRows(data);
+}
+
+let signedIn = false;
+
+// Everything below re-renders from currentResults rather than re-running
+// the search: a flag toggle, a selection, and the "hide tracked" filter
+// all change what's on screen without changing what LegiScan was asked,
+// and a second search would cost another API call for the same answer.
+function renderRows(meta) {
+  const all = currentResults;
+  if (!all.length) {
     resultsEl.innerHTML = '<p class="empty">No bills match that search. Try a broader term, check the spelling, or a different bill number.</p>';
     return;
   }
+  const rows = hideTracked ? all.filter(r => !r.flagged) : all;
+  const trackedCount = all.filter(r => r.flagged).length;
+
   // from_label/from_href tell /report where this click came from, so its
   // back link and sidebar highlight can point back to Lookup instead of
   // always assuming Flagged Bills (see REPORT_BODY's own script for the
-  // read side of this).
+  // read side of this). from_href carries the query itself now — the
+  // back link used to land on an empty search box, so returning from a
+  // bill meant retyping the search that found it.
+  const backHref = encodeURIComponent('/lookup?q=' + encodeURIComponent(currentQuery));
+  const reportHref = (billId) => `/report?bill_id=${billId}&from_label=Search&from_href=${backHref}`;
+
   const rowsHtml = rows.map(r => `
-    <tr class="row-link" onclick="window.location.href='/report?bill_id=${r.bill_id}&from_label=Lookup&from_href=%2Flookup'">
-      <td><a href="/report?bill_id=${r.bill_id}&from_label=Lookup&from_href=%2Flookup">${r.bill_number}</a></td>
-      <td>${snippet(r.title)}</td>
+    <tr class="${r.flagged ? 'tracked-row' : ''}">
+      <td class="pick-cell">
+        ${signedIn && !r.flagged
+          ? `<input type="checkbox" aria-label="Select ${r.bill_number}" ${selectedBillIds.has(r.bill_id) ? 'checked' : ''} onchange="toggleSelected(${r.bill_id}, this.checked)">`
+          : ''}
+      </td>
+      <td><a href="${reportHref(r.bill_id)}">${r.bill_number}</a></td>
+      <td>
+        <a class="result-title" href="${reportHref(r.bill_id)}">${snippet(r.title)}</a>
+        ${trackedChipsHtml(r)}
+      </td>
       <td>${statusBadgeHtml(billStatusFromAction(r.last_action).label, { inferred: true })}</td>
       <td class="date">${r.last_action_date || ''}</td>
+      <td class="flag-cell">${flagButtonHtml(r)}</td>
     </tr>
   `).join('');
-  const count = data.count || rows.length;
-  const hasMore = data.page_total && Number(data.page) < Number(data.page_total);
+
+  const count = meta && meta.count ? meta.count : all.length;
+  const page = (meta && meta.page) || currentPage;
+  const pageTotal = (meta && meta.page_total) || 1;
+  const hasMore = pageTotal && Number(page) < Number(pageTotal);
   const legend = statusLegendHtml(rows.map(r => billStatusFromAction(r.last_action).label));
+
   resultsEl.innerHTML = `
+    ${selectionBarHtml()}
     <div class="panel">
-      <div class="panel-head"><div class="sub" style="margin:0">${count.toLocaleString()} bill${count === 1 ? '' : 's'} match — showing page ${data.page || 1} of ${data.page_total || 1}</div></div>
-      <div style="overflow-x:auto">
-      <table><thead><tr><th>Bill</th><th>Title</th><th>Status</th><th>Last action</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+      <div class="panel-head">
+        <div class="sub" style="margin:0">${count.toLocaleString()} bill${count === 1 ? '' : 's'} match — showing page ${page} of ${pageTotal}</div>
+        ${trackedCount ? `
+        <label class="sub" style="display:flex;align-items:center;gap:0.35rem;margin:0">
+          <input type="checkbox" ${hideTracked ? 'checked' : ''} onchange="setHideTracked(this.checked)">
+          Hide the ${trackedCount} I already track
+        </label>` : ''}
       </div>
-      ${legend}
+      <div style="overflow-x:auto">
+      <table><thead><tr><th class="pick-cell"></th><th>Bill</th><th>Title</th><th>Status</th><th>Last action</th><th></th></tr></thead><tbody>${rowsHtml}</tbody></table>
+      </div>
+      ${rows.length ? legend : '<p class="empty" style="padding:1rem 1.15rem">Every bill on this page is one you already track.</p>'}
     </div>
     ${hasMore ? '<div style="text-align:center;margin-top:1rem"><button type="button" class="secondary" id="next-page-btn">Next page →</button></div>' : ''}
   `;
   if (hasMore) {
     document.getElementById('next-page-btn').addEventListener('click', () => runSearch(currentQuery, currentPage + 1));
+  }
+}
+
+// What the user has already decided about this bill, on the row where
+// they're deciding again. Without it a results page asks them to
+// re-evaluate bills they settled last week, and the answer was one join
+// away the whole time.
+function trackedChipsHtml(r) {
+  if (!r.flagged) return '';
+  const clients = r.clients || [];
+  if (!clients.length) return '<div class="result-tracked">Tracked · no client assigned</div>';
+  return `<div class="result-tracked">${clients.map(c =>
+    `<span class="position-badge ${c.position}">${titleCaseName(c.name)} · ${positionLabel(c.position)}</span>`
+  ).join(' ')}</div>`;
+}
+
+function flagButtonHtml(r) {
+  if (!signedIn) return '';
+  if (r.flagged) return '<span class="sub" title="Already on your flagged list">🚩 Flagged</span>';
+  return `<button type="button" class="secondary" onclick="flagOne(${r.bill_id})">Flag</button>`;
+}
+
+// One row's flag, without leaving the page. Flagging used to mean
+// opening the bill, pressing "Flag this bill", and coming back to an
+// empty search box.
+async function flagOne(billId) {
+  errorEl.className = '';
+  const row = currentResults.find(r => r.bill_id === billId);
+  try {
+    const res = await fetch('/api/flag', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bill_id: billId }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Could not flag that bill');
+    }
+    if (row) { row.flagged = true; row.clients = []; }
+    selectedBillIds.delete(billId);
+    renderRows();
+    showToast(`${row ? row.bill_number : 'Bill'} flagged. It's checked every morning from now on.`);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+function toggleSelected(billId, checked) {
+  if (checked) selectedBillIds.add(billId); else selectedBillIds.delete(billId);
+  renderRows();
+}
+
+function setHideTracked(checked) {
+  hideTracked = checked;
+  renderRows();
+}
+
+// The bar only exists while something is selected — an empty "0 selected"
+// toolbar is a permanent piece of furniture for an occasional action.
+function selectionBarHtml() {
+  const n = selectedBillIds.size;
+  if (!n) return '';
+  const clientOptions = allClients.map(c =>
+    `<option value="${c.id}">${titleCaseName(c.name)}</option>`
+  ).join('');
+  return `
+    <div class="selection-bar">
+      <span class="selection-count">${n} bill${n === 1 ? '' : 's'} selected</span>
+      ${allClients.length ? `
+        <label class="sub" style="margin:0">Assign to
+          <select id="bulk-client">
+            <option value="">no client yet</option>
+            ${clientOptions}
+          </select>
+        </label>
+        <label class="sub" style="margin:0">as
+          <select id="bulk-position">
+            <option value="watch">Watch</option>
+            <option value="support">Support</option>
+            <option value="oppose">Oppose</option>
+          </select>
+        </label>` : ''}
+      <button type="button" id="bulk-flag-btn" onclick="flagSelected()">Flag selected</button>
+      <button type="button" class="secondary" onclick="clearSelection()">Clear</button>
+    </div>
+  `;
+}
+
+function clearSelection() {
+  selectedBillIds.clear();
+  renderRows();
+}
+
+// "Flag these four for UCSA" in one request — see /api/flag-bulk, which
+// still makes one LegiScan call per bill but saves the four page round
+// trips and three re-searches doing it by hand used to cost.
+async function flagSelected() {
+  const ids = Array.from(selectedBillIds);
+  if (!ids.length) return;
+  errorEl.className = '';
+  const clientEl = document.getElementById('bulk-client');
+  const positionEl = document.getElementById('bulk-position');
+  const btn = document.getElementById('bulk-flag-btn');
+  btn.disabled = true;
+  btn.textContent = `Flagging ${ids.length}…`;
+  try {
+    const res = await fetch('/api/flag-bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bill_ids: ids,
+        client_id: clientEl && clientEl.value ? Number(clientEl.value) : null,
+        position: positionEl ? positionEl.value : 'watch',
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not flag those bills');
+    const clientName = clientEl && clientEl.value
+      ? (allClients.find(c => String(c.id) === clientEl.value) || {}).name : '';
+    for (const row of currentResults) {
+      if (!data.flagged.includes(row.bill_id)) continue;
+      row.flagged = true;
+      row.clients = clientName
+        ? [{ id: Number(clientEl.value), name: clientName, position: positionEl.value }] : [];
+      selectedBillIds.delete(row.bill_id);
+    }
+    renderRows();
+    // A bill LegiScan couldn't be reached for is named rather than
+    // silently left unflagged — the user picked it on purpose.
+    if (data.failed.length) {
+      errorEl.textContent = `Flagged ${data.flagged.length}. Couldn't reach LegiScan for ${data.failed.length} of them — try those again.`;
+      errorEl.className = 'show';
+    } else {
+      showToast(`${data.flagged.length} bill${data.flagged.length === 1 ? '' : 's'} flagged${clientName ? ' for ' + titleCaseName(clientName) : ''}.`);
+    }
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Flag selected';
   }
 }
 </script>
