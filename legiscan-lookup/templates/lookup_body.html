@@ -43,18 +43,66 @@ const resultsEl = document.getElementById('results');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
 let currentQuery = '';
-let currentPage = 1;
 // The rows as last rendered, so a flag toggle can repaint one row
 // without re-running the search (and spending another LegiScan call).
+// This now holds the WHOLE result set, not one page of it — /api/search
+// pulls up to SEARCH_PAGE_CAP pages concurrently, because a filter that
+// only covers the 50 rows LegiScan happened to put first reports "3
+// results" meaning "3 of the 50 I'm holding".
 let currentResults = [];
-// Bills picked for "flag selected". Kept across a page change within the
-// same search — someone paging through 119 results is doing one triage
+let searchMeta = {};
+// Bills picked for "flag selected". Kept across a filter change within
+// the same search — someone narrowing 150 results is doing one triage
 // pass, not three.
 let selectedBillIds = new Set();
 // "Hide bills I already track". Half a broad result set is usually
 // bills the user settled last week.
 let hideTracked = false;
 let allClients = [];
+
+/* ── Filters and sort (P1-11) ──────────────────────────────────────────
+ *
+ * The page used to be one text box: 119 results across 3 pages, no
+ * filter, no sort, and no way to tell why any row matched. Every
+ * dimension below is derived from a field getSearch already returns
+ * (see _shape_search_rows in legiscan_client.py), so narrowing a result
+ * set costs nothing.
+ *
+ * Two things the audit asked for are NOT here, because the data to
+ * build them honestly does not exist in a search response:
+ *
+ *   - Author. getSearch returns no sponsor at all. The only way to an
+ *     author is getBill, one call per row — 150 calls to draw one
+ *     column.
+ *   - Committee. Same; it is not in the row either.
+ *
+ * Rather than approximate either from the last-action text and present
+ * a guess as a fact, they are left out, and the match note below says
+ * plainly what the row does and doesn't know. Same rule the 601's
+ * "Known gaps in this draft" card follows.
+ */
+const FILTER_GROUPS = [
+  { key: 'chamber', label: 'Chamber', order: ['Assembly', 'Senate'],
+    valueOf: r => r.chamber },
+  { key: 'measure_type', label: 'Type', order: ['Bill', 'Constitutional amendment', 'Resolution'],
+    valueOf: r => r.measure_type },
+  { key: 'status', label: 'Status', order: BILL_STATUS_ORDER,
+    valueOf: r => billStatusFromAction(r.last_action).label },
+];
+// A bill that passed, failed or was vetoed is settled — the "half those
+// results are dead" the user is really trying to clear. Offered as a
+// one-click preset over the status filter rather than as a separate
+// toggle, so it can never contradict an explicit status pick.
+const ACTIVE_STATUSES = ['Prefiled', 'Introduced', 'Engrossed', 'Enrolled', 'In progress'];
+
+let filters = { chamber: new Set(), measure_type: new Set(), status: new Set() };
+let sortMode = 'relevance';
+// Server-side, unlike the rest: it changes what LegiScan is asked for
+// (its own `year` parameter), not what we do with the answer. Current
+// session is the default because a lobbyist's question is nearly always
+// about live bills — and because getSearch's own default already
+// behaves this way, so this makes an inherited behaviour a stated one.
+let sessionScope = 'current';
 
 // Only used by the "flag selected" bar's client picker. A signed-out
 // visitor gets an empty list and no picker, which is right — they can't
@@ -65,7 +113,7 @@ loadSavedSearches();
 form.addEventListener('submit', (e) => {
   e.preventDefault();
   const q = document.getElementById('q').value.trim();
-  if (q) runSearch(q, 1);
+  if (q) runSearch(q);
 });
 
 // Two different things prefill this page: the global header search
@@ -78,16 +126,23 @@ const urlParams = new URLSearchParams(window.location.search);
 const prefillQuery = urlParams.get('q') || urlParams.get('bill');
 if (prefillQuery) {
   document.getElementById('q').value = prefillQuery;
-  runSearch(prefillQuery, 1);
+  runSearch(prefillQuery);
 }
 
-async function runSearch(q, page) {
-  currentQuery = q; currentPage = page;
+// A new search clears the filters; changing the session scope keeps
+// them, since that is the same search asked over a wider range.
+async function runSearch(q, keepFilters) {
+  currentQuery = q;
+  if (!keepFilters) {
+    filters = { chamber: new Set(), measure_type: new Set(), status: new Set() };
+    sortMode = 'relevance';
+    selectedBillIds = new Set();
+  }
   errorEl.className = ''; loadingEl.className = 'skeleton show'; resultsEl.innerHTML = '';
   form.querySelector('button').disabled = true;
 
   try {
-    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&page=${page}`);
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&session=${sessionScope}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Search failed');
     renderResults(data);
@@ -98,6 +153,12 @@ async function runSearch(q, page) {
     loadingEl.className = 'skeleton';
     form.querySelector('button').disabled = false;
   }
+}
+
+function setSessionScope(scope) {
+  if (scope === sessionScope) return;
+  sessionScope = scope;
+  if (currentQuery) runSearch(currentQuery, true);
 }
 
 // LegiScan's search doesn't return a coded status the way getBill does
@@ -113,6 +174,47 @@ function snippet(title) {
   return title.length > 140 ? title.slice(0, 140).trim() + '…' : title;
 }
 
+/* ── Why did this row match? ───────────────────────────────────────────
+ *
+ * LegiScan searches the full text of a bill and returns none of it — no
+ * snippet field exists in the response (checked live). So a row like
+ * "AB2403 Income tax: credits: commercial production" can surface for
+ * "artificial intelligence" with nothing on screen explaining it. Live,
+ * about four rows in five share no query term with their own title.
+ *
+ * A snippet can't be built from what we're given. What CAN be said is
+ * which terms are in the title (marked, so the eye lands on them), and
+ * — where none are — that the match happened somewhere this row does
+ * not show. That last line is the useful half: it tells the user the
+ * title will not answer the question, so opening the bill is the only
+ * way, instead of leaving them to conclude the search is broken.
+ */
+const MATCH_STOPWORDS = new Set(['and', 'the', 'for', 'with', 'from', 'that', 'this', 'any', 'all']);
+
+function queryTermsOf(q) {
+  // A bill-number search has no free text to match on.
+  if (/^[a-z]*\s*\d+$/i.test((q || '').trim())) return [];
+  return (q || '').toLowerCase().match(/[a-z]{3,}/g)?.filter(t => !MATCH_STOPWORDS.has(t)) || [];
+}
+
+function highlightTerms(text, terms) {
+  const safe = escapeText(text);
+  if (!terms.length) return safe;
+  const pattern = new RegExp('(' + terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
+  return safe.replace(pattern, '<mark class="match-hit">$1</mark>');
+}
+
+function matchNoteHtml(row, terms) {
+  if (!terms.length) return '';
+  const title = (row.title || '').toLowerCase();
+  if (terms.some(t => title.includes(t))) return '';
+  const action = (row.last_action || '').toLowerCase();
+  if (terms.some(t => action.includes(t))) {
+    return '<div class="match-note">Matched in the latest action, not the title.</div>';
+  }
+  return '<div class="match-note">Matched somewhere in the bill text — open it to see where.</div>';
+}
+
 // Every search — one hit or a hundred — renders as this same row
 // list, one consistent UI regardless of result count. Clicking any
 // row goes to the full action report rather than expanding detail in
@@ -120,24 +222,160 @@ function snippet(title) {
 // bill that isn't flagged yet).
 function renderResults(data) {
   currentResults = data.results || [];
+  searchMeta = data;
   signedIn = !!data.signed_in;
-  renderRows(data);
+  renderRows();
 }
 
 let signedIn = false;
 
+/* ── Filtering ─────────────────────────────────────────────────────── */
+
+function rowPasses(row, exceptKey) {
+  if (hideTracked && row.flagged) return false;
+  for (const group of FILTER_GROUPS) {
+    if (group.key === exceptKey) continue;
+    const picked = filters[group.key];
+    if (picked.size && !picked.has(group.valueOf(row))) return false;
+  }
+  return true;
+}
+
+// Counts shown on each filter tab are faceted: a group's own selection
+// is excluded from its own counts, so "Senate 68" keeps saying 68 after
+// you click Assembly. Counting the already-filtered list instead would
+// make every unpicked option read 0 the moment one is picked.
+function facetCounts(group) {
+  const counts = new Map();
+  // Every value the unfiltered result set contains starts at zero, so a
+  // tab keeps its place — and shows its zero — instead of disappearing
+  // once another filter excludes it. A control that vanishes as you use
+  // it reads as the filter being unreliable; "Senate 0" is an answer.
+  for (const row of currentResults) {
+    const value = group.valueOf(row);
+    if (value) counts.set(value, 0);
+  }
+  for (const row of currentResults) {
+    if (!rowPasses(row, group.key)) continue;
+    const value = group.valueOf(row);
+    if (value) counts.set(value, counts.get(value) + 1);
+  }
+  return counts;
+}
+
+function visibleRows() {
+  const rows = currentResults.filter(r => rowPasses(r, null));
+  const by = {
+    relevance: (a, b) => (Number(b.relevance) || 0) - (Number(a.relevance) || 0),
+    action: (a, b) => String(b.last_action_date || '').localeCompare(String(a.last_action_date || '')),
+    number: (a, b) => String(a.bill_number || '').localeCompare(String(b.bill_number || ''), undefined, { numeric: true }),
+  };
+  return rows.slice().sort(by[sortMode] || by.relevance);
+}
+
+function toggleFilter(groupKey, value) {
+  const picked = filters[groupKey];
+  if (picked.has(value)) picked.delete(value); else picked.add(value);
+  renderRows();
+}
+
+function setActiveOnly() {
+  const present = new Set(currentResults.map(r => billStatusFromAction(r.last_action).label));
+  filters.status = new Set(ACTIVE_STATUSES.filter(s => present.has(s)));
+  renderRows();
+}
+
+function clearFilters() {
+  for (const group of FILTER_GROUPS) filters[group.key].clear();
+  renderRows();
+}
+
+function setSort(mode) {
+  sortMode = mode;
+  renderRows();
+}
+
+function activeFilterCount() {
+  return FILTER_GROUPS.reduce((n, g) => n + filters[g.key].size, 0);
+}
+
+function filterRailHtml() {
+  const groupsHtml = FILTER_GROUPS.map(group => {
+    const counts = facetCounts(group);
+    const values = group.order.filter(v => counts.has(v));
+    if (values.length < 2) return '';   // one option filters nothing
+    const tabs = values.map(value => {
+      const n = counts.get(value) || 0;
+      const on = filters[group.key].has(value);
+      return `<button type="button" class="filter-tab${on ? ' active' : ''}"
+        aria-pressed="${on}" ${n ? '' : 'disabled'}
+        onclick="toggleFilter('${group.key}', '${value}')">${escapeText(value)}<span class="n">${n}</span></button>`;
+    }).join('');
+    const preset = group.key === 'status'
+      ? `<button type="button" class="filter-chip" onclick="setActiveOnly()" title="Hide bills that passed, failed or were vetoed">Active only</button>`
+      : '';
+    return `<div class="filter-group"><span class="filter-group-label">${group.label}</span>${tabs}${preset}</div>`;
+  }).join('');
+
+  const sessionTabs = [['current', 'Current session'], ['all', 'All sessions']].map(([value, label]) =>
+    `<button type="button" class="filter-tab${sessionScope === value ? ' active' : ''}"
+       aria-pressed="${sessionScope === value}" onclick="setSessionScope('${value}')">${label}</button>`
+  ).join('');
+
+  const sortHtml = `
+    <div class="filter-sort">
+      <label class="filter-group-label" for="sort-mode" style="min-width:0">Sort</label>
+      <select id="sort-mode" onchange="setSort(this.value)">
+        <option value="relevance" ${sortMode === 'relevance' ? 'selected' : ''}>Relevance</option>
+        <option value="action" ${sortMode === 'action' ? 'selected' : ''}>Last action — newest</option>
+        <option value="number" ${sortMode === 'number' ? 'selected' : ''}>Bill number</option>
+      </select>
+    </div>`;
+
+  return `
+    <div class="search-filters">
+      <div class="filter-group"><span class="filter-group-label">Session</span>${sessionTabs}${sortHtml}</div>
+      ${groupsHtml}
+      ${activeChipsHtml()}
+    </div>`;
+}
+
+// The same state the tabs above already carry, restated as one line of
+// removable chips. Once three groups are set, that line is the only
+// place the whole narrowing is visible at a glance.
+function activeChipsHtml() {
+  if (!activeFilterCount()) return '';
+  const chips = FILTER_GROUPS.flatMap(group =>
+    Array.from(filters[group.key]).map(value =>
+      `<button type="button" class="filter-chip" onclick="toggleFilter('${group.key}', '${value}')"
+         aria-label="Remove filter ${escapeText(value)}">${escapeText(value)}<span class="x">×</span></button>`)
+  ).join('');
+  return `<div class="active-filters">${chips}
+    <button type="button" class="secondary filter-clear" onclick="clearFilters()">Clear all</button></div>`;
+}
+
+// California runs two-year sessions starting in odd years, and a
+// result's session is the year its LegiScan URL ends in — so 2025 means
+// the 2025-26 session whether the bill last moved in 2025 or 2026.
+function sessionLabel(year) {
+  if (!year) return '';
+  const start = year % 2 === 0 ? year - 1 : year;
+  return `${start}–${String(start + 1).slice(2)}`;
+}
+
 // Everything below re-renders from currentResults rather than re-running
-// the search: a flag toggle, a selection, and the "hide tracked" filter
-// all change what's on screen without changing what LegiScan was asked,
-// and a second search would cost another API call for the same answer.
-function renderRows(meta) {
+// the search: a flag toggle, a selection, a filter and a sort all change
+// what's on screen without changing what LegiScan was asked, and a
+// second search would cost another API call for the same answer.
+function renderRows() {
   const all = currentResults;
   if (!all.length) {
     resultsEl.innerHTML = '<p class="empty">No bills match that search. Try a broader term, check the spelling, or a different bill number.</p>';
     return;
   }
-  const rows = hideTracked ? all.filter(r => !r.flagged) : all;
+  const rows = visibleRows();
   const trackedCount = all.filter(r => r.flagged).length;
+  const terms = queryTermsOf(currentQuery);
 
   // from_label/from_href tell /report where this click came from, so its
   // back link and sidebar highlight can point back to Lookup instead of
@@ -152,38 +390,48 @@ function renderRows(meta) {
     <tr class="${r.flagged ? 'tracked-row' : ''}">
       <td class="pick-cell">
         ${signedIn && !r.flagged
-          ? `<input type="checkbox" aria-label="Select ${r.bill_number}" ${selectedBillIds.has(r.bill_id) ? 'checked' : ''} onchange="toggleSelected(${r.bill_id}, this.checked)">`
+          ? `<input type="checkbox" aria-label="Select ${escapeText(r.bill_number)}" ${selectedBillIds.has(r.bill_id) ? 'checked' : ''} onchange="toggleSelected(${r.bill_id}, this.checked)">`
           : ''}
       </td>
-      <td><a href="${reportHref(r.bill_id)}">${r.bill_number}</a></td>
       <td>
-        <a class="result-title" href="${reportHref(r.bill_id)}">${snippet(r.title)}</a>
+        <a href="${reportHref(r.bill_id)}">${escapeText(r.bill_number)}</a>
+        ${sessionScope === 'all' && r.session_year ? `<div class="sub" style="font-size:0.7rem">${sessionLabel(r.session_year)}</div>` : ''}
+      </td>
+      <td>
+        <a class="result-title" href="${reportHref(r.bill_id)}">${highlightTerms(snippet(r.title), terms)}</a>
+        ${matchNoteHtml(r, terms)}
         ${trackedChipsHtml(r)}
       </td>
       <td>${statusBadgeHtml(billStatusFromAction(r.last_action).label, { inferred: true })}</td>
-      <td class="date">${r.last_action_date || ''}</td>
+      <td class="date">${escapeText(r.last_action_date || '')}</td>
       <td class="flag-cell">${flagButtonHtml(r)}</td>
     </tr>
   `).join('');
 
-  const count = meta && meta.count ? meta.count : all.length;
-  const page = (meta && meta.page) || currentPage;
-  const pageTotal = (meta && meta.page_total) || 1;
-  const hasMore = pageTotal && Number(page) < Number(pageTotal);
   const legend = statusLegendHtml(rows.map(r => billStatusFromAction(r.last_action).label));
+  const filtered = rows.length !== all.length;
+  // The count is the number of rows actually in hand, not LegiScan's own
+  // summary figure — those disagree (live: it reports 119 for a search
+  // whose pages return 150 distinct bills), and this page used to print
+  // the smaller number above the longer list.
+  const countLine = filtered
+    ? `${rows.length.toLocaleString()} of ${all.length.toLocaleString()} bills`
+    : `${all.length.toLocaleString()} bill${all.length === 1 ? '' : 's'} match`;
 
   resultsEl.innerHTML = `
+    ${truncationHtml()}
+    ${filterRailHtml()}
     ${selectionBarHtml()}
     <div class="panel">
       <div class="panel-head">
-        <div class="sub" style="margin:0">${count.toLocaleString()} bill${count === 1 ? '' : 's'} match — showing page ${page} of ${pageTotal}</div>
+        <div class="sub" style="margin:0">${countLine}</div>
         <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
         ${signedIn ? `
         ${allClients.length ? `
         <label class="sub" style="margin:0">for
           <select id="save-search-client">
             <option value="">no client</option>
-            ${allClients.map(c => `<option value="${c.id}">${titleCaseName(c.name)}</option>`).join('')}
+            ${allClients.map(c => `<option value="${c.id}">${escapeText(titleCaseName(c.name))}</option>`).join('')}
           </select>
         </label>` : ''}
         <button type="button" class="secondary" onclick="saveCurrentSearch()">Save this search</button>` : ''}
@@ -197,13 +445,30 @@ function renderRows(meta) {
       <div style="overflow-x:auto">
       <table><thead><tr><th class="pick-cell"></th><th>Bill</th><th>Title</th><th>Status</th><th>Last action</th><th></th></tr></thead><tbody>${rowsHtml}</tbody></table>
       </div>
-      ${rows.length ? legend : '<p class="empty" style="padding:1rem 1.15rem">Every bill on this page is one you already track.</p>'}
+      ${rows.length ? legend : emptyFilterHtml()}
     </div>
-    ${hasMore ? '<div style="text-align:center;margin-top:1rem"><button type="button" class="secondary" id="next-page-btn">Next page →</button></div>' : ''}
   `;
-  if (hasMore) {
-    document.getElementById('next-page-btn').addEventListener('click', () => runSearch(currentQuery, currentPage + 1));
+}
+
+// A filter that hides everything says which filter did it and offers the
+// way back, rather than showing the same "no bills match that search"
+// an empty LegiScan response gives — the search worked; the narrowing
+// is what emptied the list.
+function emptyFilterHtml() {
+  if (hideTracked && !activeFilterCount()) {
+    return '<p class="empty" style="padding:1rem 1.15rem">Every bill in these results is one you already track.</p>';
   }
+  return `<p class="empty" style="padding:1rem 1.15rem">No bills left after these filters.
+    <button type="button" class="secondary" onclick="clearFilters()">Clear all</button></p>`;
+}
+
+// Said out loud, because a filter over the first 200 of 1,504 matches is
+// not the filter it appears to be.
+function truncationHtml() {
+  if (searchMeta.complete !== false) return '';
+  return `<div class="result-truncated">Filtering and sorting the first
+    ${(searchMeta.count || 0).toLocaleString()} matches — LegiScan reports about
+    ${(searchMeta.reported_count || 0).toLocaleString()} in total. Narrow the search terms to cover them all.</div>`;
 }
 
 // What the user has already decided about this bill, on the row where
@@ -215,7 +480,7 @@ function trackedChipsHtml(r) {
   const clients = r.clients || [];
   if (!clients.length) return '<div class="result-tracked">Tracked · no client assigned</div>';
   return `<div class="result-tracked">${clients.map(c =>
-    `<span class="position-badge ${c.position}">${titleCaseName(c.name)} · ${positionLabel(c.position)}</span>`
+    `<span class="position-badge ${c.position}">${escapeText(titleCaseName(c.name))} · ${positionLabel(c.position)}</span>`
   ).join(' ')}</div>`;
 }
 
@@ -396,7 +661,7 @@ function runSavedSearch(id) {
   const saved = savedSearches.find(s => s.id === id);
   if (!saved) return;
   document.getElementById('q').value = saved.query;
-  runSearch(saved.query, 1);
+  runSearch(saved.query);
   if (!saved.new_match_count) return;
   fetch('/api/saved-searches/seen', {
     method: 'POST',

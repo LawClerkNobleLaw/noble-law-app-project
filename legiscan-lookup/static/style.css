@@ -1158,6 +1158,74 @@
   .selection-count { font-weight: 700; font-size: 0.85rem; }
   .selection-bar select { font-size: 0.78rem; padding: 0.25rem 0.4rem; }
 
+  /* ── Search filters (P1-11) ──
+     The rail above the results. Every dimension here is DERIVED from a
+     field getSearch already returns (see _shape_search_rows in
+     legiscan_client.py) — chamber and measure type off the bill number's
+     prefix, session off the result's own LegiScan URL, status off the
+     last-action text via bill_status.js. Nothing here costs an API call,
+     which is why filtering a 150-row result set is affordable at all.
+
+     Author and committee are deliberately absent: getSearch carries
+     neither, and the only way to know them is a getBill per row. Same
+     house rule as the 601's "Known gaps" card — leave out what we can't
+     know rather than guess it. */
+  .search-filters {
+    display: flex; flex-direction: column; gap: var(--space-3);
+    background: var(--surface); border: 1px solid var(--rule);
+    border-radius: var(--radius-md); padding: 0.9rem 1rem; margin-bottom: 0.75rem;
+  }
+  .filter-group { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  .filter-group-label {
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--slate); min-width: 4.5rem;
+  }
+  .filter-group .filter-tab { font-size: 0.78rem; padding: 0.2rem 0.6rem; }
+  /* A filter that would empty the list is shown, disabled, with its zero
+     visible — "no Senate bills here" is an answer, and a control that
+     silently vanishes teaches the user the filter is unreliable. */
+  .filter-tab[disabled] { opacity: 0.45; cursor: default; }
+  .filter-tab[disabled]:hover { border-color: var(--rule); }
+  .filter-sort { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
+  .filter-sort select { font-size: 0.78rem; padding: 0.25rem 0.4rem; }
+
+  /* Active filters restated as removable chips. The tabs above already
+     show their own state, but once three groups are set the only way to
+     see everything that is narrowing the list — without reading four
+     rows of controls — is one line that says so. */
+  .active-filters {
+    display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+    border-top: 1px solid var(--rule); padding-top: var(--space-3);
+  }
+  .filter-chip {
+    font: inherit; font-size: 0.75rem; font-weight: 600; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    background: var(--accent-soft); color: var(--accent); border: none;
+    border-radius: var(--radius-pill); padding: 0.2rem 0.55rem;
+  }
+  .filter-chip:hover { background: var(--accent-solid); color: var(--accent-solid-text); }
+  .filter-chip .x { font-size: 0.9rem; line-height: 1; opacity: 0.7; }
+  .filter-clear { font-size: 0.75rem; }
+
+  /* Why this row is here. LegiScan matches on full bill text but returns
+     none of it, so a title can share no word with the query (live, that
+     is ~79% of a broad result set). Where a query term IS in the title
+     it gets marked; where it is not, the row says the match was in the
+     text rather than leaving the user to guess — see matchNoteHtml(). */
+  mark.match-hit {
+    background: var(--warn-soft); color: inherit;
+    border-radius: var(--radius-sm); padding: 0 0.1rem;
+  }
+  .match-note { margin-top: 0.25rem; font-size: 0.72rem; color: var(--slate); font-style: italic; }
+
+  /* Said out loud when filters cover only a prefix of the matches (see
+     SEARCH_PAGE_CAP). A filter over part of a result set that presents
+     itself as a filter over all of it is the failure this avoids. */
+  .result-truncated {
+    background: var(--warn-soft); color: var(--ink); border-radius: var(--radius-md);
+    padding: var(--space-2) 0.75rem; margin-bottom: 0.75rem; font-size: 0.8rem;
+  }
+
   /* ── Saved searches ──
      The list above the search box (see saved_searches in schema.sql).
      Rows, not cards: each is a name, the query behind it, and a count of

@@ -94,6 +94,7 @@ import letter_drafts
 import mailer
 import pdf_forms
 import refresh_watchlist
+import legiscan_client
 from legiscan_client import lookup_bill, get_bill_detail, search_bills, smart_search
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "calaccess-pipeline"))
@@ -2448,12 +2449,30 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 self._send_json(400, {"error": "page must be a number."})
                 return
+            # The search page filters and sorts client-side across the
+            # whole result set, so it asks for the whole result set (up
+            # to SEARCH_PAGE_CAP pages, fetched concurrently) rather than
+            # one page at a time. `page` is still honoured for anything
+            # asking the old way.
+            deep = (qs.get("all") or ["1"])[0] != "0"
+            # Only two session choices are offered, and only these two
+            # values are ever sent to LegiScan — a stray ?year= can't
+            # reach the API. Current session is the default because a
+            # lobbyist's question is almost always about live bills; the
+            # opt-out exists because bill history is a real question too.
+            scope = (qs.get("session") or ["current"])[0]
+            year = (legiscan_client.YEAR_ALL_SESSIONS if scope == "all"
+                    else legiscan_client.YEAR_CURRENT_SESSION)
             try:
-                data = smart_search(q, page=page)
+                data = smart_search(
+                    q, page=page, year=year,
+                    pages=legiscan_client.SEARCH_PAGE_CAP if deep else 1,
+                )
             except Exception:
                 traceback.print_exc()
                 self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
                 return
+            data["session_scope"] = scope
             # Annotate each row with what this user already tracks. A
             # search of 119 results across three pages otherwise asks
             # them to re-evaluate bills they settled last week — the flag
