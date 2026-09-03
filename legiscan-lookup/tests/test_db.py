@@ -388,3 +388,127 @@ def test_list_flagged_bills_latest_activity_date_is_none_without_history(conn):
     rows = db.list_flagged_bills(conn, user_id)
 
     assert rows[0]["latest_activity_date"] is None
+
+
+# ── the hearing calendar's upcoming/past split ──────────────────────
+#
+# Every test here passes `today` explicitly rather than letting the
+# function reach for the real clock, so the fixtures can sit either side
+# of a fixed date and the suite doesn't start failing when the dates it
+# hard-codes drift into the past.
+
+def _insert_hearings(conn, bill_id, rows):
+    conn.executemany(
+        "INSERT INTO bill_hearings (bill_id, event_type, date, time, location, description) "
+        "VALUES (?, 'Hearing', ?, ?, 'Room 1', NULL)",
+        [(bill_id, date, time) for date, time in rows],
+    )
+    conn.commit()
+
+
+def test_calendar_splits_hearings_around_today(conn):
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    _insert_hearings(conn, bill_id, [
+        ("2026-08-13", "09:30"),
+        ("2026-09-10", "13:30"),
+        ("2026-04-02", "08:30"),
+    ])
+
+    result = db.list_hearings_for_flagged_bills(conn, user_id, today="2026-09-02")
+
+    assert [h["date"] for h in result["upcoming"]] == ["2026-09-10"]
+    assert [h["date"] for h in result["past"]] == ["2026-08-13", "2026-04-02"]
+
+
+def test_calendar_counts_a_hearing_today_as_upcoming(conn):
+    # The boundary is >=, not >: a hearing at 1:30pm is still something to
+    # prepare for at 8am the same morning.
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    _insert_hearings(conn, bill_id, [("2026-09-02", "13:30")])
+
+    result = db.list_hearings_for_flagged_bills(conn, user_id, today="2026-09-02")
+
+    assert [h["date"] for h in result["upcoming"]] == ["2026-09-02"]
+    assert result["past"] == []
+
+
+def test_calendar_sorts_each_half_in_its_own_direction(conn):
+    # Upcoming runs soonest-first, past runs newest-first, and the day
+    # grouping in calendar_body.html buckets *consecutive* same-date rows
+    # — so same-day hearings must stay adjacent, ordered by time.
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    _insert_hearings(conn, bill_id, [
+        ("2026-09-10", "14:00"),
+        ("2026-09-10", "09:00"),
+        ("2026-09-20", "10:00"),
+        ("2026-08-01", "10:00"),
+        ("2026-08-20", "10:00"),
+    ])
+
+    result = db.list_hearings_for_flagged_bills(conn, user_id, today="2026-09-02")
+
+    assert [(h["date"], h["time"]) for h in result["upcoming"]] == [
+        ("2026-09-10", "09:00"), ("2026-09-10", "14:00"), ("2026-09-20", "10:00"),
+    ]
+    assert [h["date"] for h in result["past"]] == ["2026-08-20", "2026-08-01"]
+
+
+def test_calendar_treats_an_undated_hearing_as_upcoming(conn):
+    # LegiScan saying a hearing exists without saying when is news, not
+    # history — it sorts to the top of upcoming rather than into the past.
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    _insert_hearings(conn, bill_id, [("2026-09-10", "13:30"), (None, None)])
+
+    result = db.list_hearings_for_flagged_bills(conn, user_id, today="2026-09-02")
+
+    assert [h["date"] for h in result["upcoming"]] == [None, "2026-09-10"]
+    assert result["past"] == []
+
+
+def test_calendar_reports_flagged_count_even_with_no_hearings(conn):
+    # Drives the empty state that names what was actually checked ("No
+    # upcoming hearings on your 2 flagged bills"), so it has to be right
+    # precisely when there are no hearing rows to count from.
+    user_id = insert_user(conn)
+    db.flag_bill(conn, user_id, insert_bill(conn, bill_id=1, bill_number="SB1"))
+    db.flag_bill(conn, user_id, insert_bill(conn, bill_id=2, bill_number="SB2"))
+    conn.commit()
+
+    result = db.list_hearings_for_flagged_bills(conn, user_id, today="2026-09-02")
+
+    assert result["flagged_count"] == 2
+    assert result["upcoming"] == []
+    assert result["past"] == []
+
+
+def test_calendar_only_covers_the_callers_own_flagged_bills(conn):
+    mine = insert_user(conn)
+    theirs = insert_user(conn, email="someone@example.com")
+    my_bill = insert_bill(conn, bill_id=1, bill_number="SB1")
+    their_bill = insert_bill(conn, bill_id=2, bill_number="SB2")
+    db.flag_bill(conn, mine, my_bill)
+    db.flag_bill(conn, theirs, their_bill)
+    _insert_hearings(conn, my_bill, [("2026-09-10", "09:00")])
+    _insert_hearings(conn, their_bill, [("2026-09-11", "09:00")])
+
+    result = db.list_hearings_for_flagged_bills(conn, mine, today="2026-09-02")
+
+    assert [h["bill_number"] for h in result["upcoming"]] == ["SB1"]
+    assert result["flagged_count"] == 1
+
+
+def test_today_in_california_is_an_iso_date(conn):
+    # Compared straight against bill_hearings.date, which is TEXT in ISO
+    # form — the format is the contract, so it's worth pinning.
+    today = db.today_in_california()
+
+    assert len(today) == 10
+    assert today[4] == "-" and today[7] == "-"
