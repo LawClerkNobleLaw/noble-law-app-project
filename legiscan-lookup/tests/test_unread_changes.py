@@ -4,7 +4,7 @@ P0-2 (db._unread_counts_for_bills + db.mark_bill_viewed).
 
 The rule under test is a comparison of two timestamps written by two
 different callers: bill_change_events.detected_at, appended by the daily
-refresh job, against flagged_bills.last_viewed_at, written when the user
+refresh job, against bill_views.last_viewed_at, written when the user
 opens the bill's report. Both are stamped in UTC in the same
 'YYYY-MM-DDTHH:MM:SSZ' shape and compared as plain strings, so every test
 here pins both explicitly rather than letting "now" decide — a suite that
@@ -66,8 +66,10 @@ def test_a_change_after_the_visit_is_unread_again(conn):
     assert _row(conn, user_id, 1)["unread_count"] == 1
 
 
-def test_unread_is_per_user_not_per_bill(conn):
-    """Two firms tracking the same bill read it on their own schedules."""
+def test_unread_is_per_reader(conn):
+    """Two people tracking the same bill read it on their own schedules —
+    whether they're at the same firm or different ones. The flag became
+    the firm's; being up to date stayed the person's."""
     reader = insert_user(conn, email="reader@example.com")
     other = insert_user(conn, email="other@example.com")
     insert_bill(conn, bill_id=1)
@@ -91,19 +93,27 @@ def test_bill_with_no_recorded_changes_has_no_dot(conn):
     assert _row(conn, user_id, 1)["unread_count"] == 0
 
 
-def test_marking_an_unflagged_bill_is_a_no_op(conn):
-    """Opening the report for a bill you don't track is ordinary — a
-    search result opens the same page — and there's no dot to clear."""
+def test_an_unflagged_bill_can_still_be_marked_read(conn):
+    """Opening the report for a bill nobody tracks is ordinary — a search
+    result opens the same page. The view is recorded anyway: it costs one
+    row, and it means the dot is already right if the firm flags that
+    bill later in the same sitting."""
     user_id = insert_user(conn)
     insert_bill(conn, bill_id=1)
+    _change(conn, 1, "2026-09-01T06:00:00Z")
 
-    assert db.mark_bill_viewed(conn, user_id, 1) is False
+    db.mark_bill_viewed(conn, user_id, 1, viewed_at="2026-09-01T09:00:00Z")
+    db.flag_bill(conn, user_id, 1)
+    conn.commit()
+
+    assert _row(conn, user_id, 1)["unread_count"] == 0
 
 
-def test_unflagging_forgets_that_the_bill_was_read(conn):
-    """last_viewed_at lives on the flag, so re-flagging a bill later
-    starts from "you haven't looked at this", which is true — the user
-    stopped tracking it and whatever happened since is news again."""
+def test_having_read_a_bill_survives_unflagging_it(conn):
+    """The view is a fact about the reader, not about the flag: they did
+    read the bill's state that day. So re-flagging later marks only what
+    happened since as unread, rather than replaying everything they had
+    already seen."""
     user_id = insert_user(conn)
     insert_bill(conn, bill_id=1)
     db.flag_bill(conn, user_id, 1)
@@ -113,8 +123,7 @@ def test_unflagging_forgets_that_the_bill_was_read(conn):
 
     db.unflag_bill(conn, user_id, 1)
     db.flag_bill(conn, user_id, 1)
+    _change(conn, 1, "2026-10-01T06:00:00Z", summary="Amended")
     conn.commit()
 
-    row = _row(conn, user_id, 1)
-    assert row["last_viewed_at"] is None
-    assert row["unread_count"] == 1
+    assert _row(conn, user_id, 1)["unread_count"] == 1

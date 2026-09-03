@@ -54,7 +54,17 @@ FORM_601_SECTIONS = [
             {"key": "TELEPHONE", "label": "Phone — number (555-1234)", "kind": "phone_rest", "required": True},
             {"key": "MAILING ADDRESS  If different than above", "label": "Mailing address (if different)", "kind": "text", "required": False},
             {"key": "EMAIL", "label": "Email", "kind": "email", "required": True},
-            {"key": "INDIVIDUAL LOBBYISTS 1", "label": "Individual lobbyist (your legal name)", "kind": "text", "required": True},
+            # Filled from the firm's roster on Profile (see
+            # db.list_org_lobbyists), falling back to the registrant's
+            # own legal name for a firm of one. Editable here, and only
+            # the first slot is required: a 601 with no lobbyist named on
+            # it isn't a registration.
+            {"key": "INDIVIDUAL LOBBYISTS 1", "label": "Individual lobbyist 1", "kind": "text", "required": True},
+            {"key": "INDIVIDUAL LOBBYISTS 2", "label": "Individual lobbyist 2", "kind": "text", "required": False},
+            {"key": "INDIVIDUAL LOBBYISTS 3", "label": "Individual lobbyist 3", "kind": "text", "required": False},
+            {"key": "INDIVIDUAL LOBBYISTS 4", "label": "Individual lobbyist 4", "kind": "text", "required": False},
+            {"key": "INDIVIDUAL LOBBYISTS 5", "label": "Individual lobbyist 5", "kind": "text", "required": False},
+            {"key": "INDIVIDUAL LOBBYISTS 6", "label": "Individual lobbyist 6", "kind": "text", "required": False},
         ],
     },
     {

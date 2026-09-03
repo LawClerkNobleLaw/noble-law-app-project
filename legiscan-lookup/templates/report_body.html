@@ -379,7 +379,7 @@ function render(r) {
     <div class="panel" style="margin-top:1rem">
       <div class="panel-head"><div class="title">Your notes</div></div>
       <div style="padding:1rem 1.15rem">
-        <label for="bill-notes" class="sub" style="display:block;margin-bottom:0.35rem">Private to your account. Saves when you click away.</label>
+        <label for="bill-notes" class="sub" style="display:block;margin-bottom:0.35rem">Shared with your firm. Saves when you click away.</label>
         <textarea id="bill-notes" rows="4" style="width:100%" placeholder="What you're watching for on this bill, who you've talked to, what you told them…"
                   onblur="saveNotes(this)">${escapeNotes(r.notes || '')}</textarea>
         <div class="sub" id="notes-status" style="margin-top:0.35rem"></div>

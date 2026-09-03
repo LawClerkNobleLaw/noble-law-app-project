@@ -243,6 +243,51 @@ CREATE TABLE IF NOT EXISTS bill_lobbying_link (
   notes            TEXT
 );
 
+-- The firm. Everything a firm's work product consists of — its clients,
+-- the bills it tracks, the positions it holds, the filings it prepares,
+-- the letters it writes — belongs to one of these rather than to
+-- whichever person happened to type it in.
+--
+-- Introduced while every organization still has exactly one seat, on
+-- purpose. The customer is a firm and the data model was one person: a
+-- second lobbyist at the same firm could not see the client's position,
+-- and Form 601, which exists to register a firm's lobbyists, could only
+-- ever list one. That is the kind of thing that gets more expensive to
+-- fix with every week of real filing history, so the layer goes in
+-- before the seats do.
+CREATE TABLE IF NOT EXISTS organizations (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  created_at TEXT
+);
+
+-- The firm's lobbyists, as Form 601 needs them listed. Separate from
+-- users: a firm registers lobbyists who may not have a login here, and
+-- someone with a login (an assistant, an associate) is not necessarily a
+-- registered lobbyist. `user_id` links the two when they are the same
+-- person, and is NULL when they aren't.
+CREATE TABLE IF NOT EXISTS org_lobbyists (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  org_id     INTEGER NOT NULL REFERENCES organizations(id),
+  user_id    INTEGER REFERENCES users(id),
+  name       TEXT NOT NULL,
+  cert_id    TEXT,                    -- optional CA SOS lobbyist certification ID
+  created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_org_lobbyists_org ON org_lobbyists(org_id);
+
+-- Which bills each PERSON has looked at. Split out of flagged_bills when
+-- the flag itself became the firm's rather than the individual's: the
+-- flag is "our firm tracks this", the view is "I have read this", and
+-- one lobbyist opening a bill must not clear their colleague's dot.
+CREATE TABLE IF NOT EXISTS bill_views (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id        INTEGER NOT NULL REFERENCES users(id),
+  bill_id        INTEGER NOT NULL REFERENCES bills(id),
+  last_viewed_at TEXT NOT NULL,
+  UNIQUE(user_id, bill_id)
+);
+
 -- Individual accounts, layered INSIDE the site's existing shared
 -- LOOKUP_USER/PASSWORD login (see app.py's module docstring) — that
 -- outer login still gates the whole site; this is a second, personal
@@ -252,6 +297,10 @@ CREATE TABLE IF NOT EXISTS users (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   email          TEXT NOT NULL UNIQUE,
   password_hash  TEXT NOT NULL,
+  -- Which firm this person works at. Every account gets one at sign-up
+  -- (see accounts.create_user) — a solo lobbyist is a firm of one, not a
+  -- special case with a NULL here.
+  org_id         INTEGER REFERENCES organizations(id),
   created_at     TEXT
 );
 
@@ -285,23 +334,26 @@ CREATE TABLE IF NOT EXISTS lobbyist_profiles (
   created_at         TEXT
 );
 
--- "Flagged bills" (the user-facing term) — a personal, per-user list,
--- unlike `watchlist` above which is one shared list with no owner.
+-- "Flagged bills" (the user-facing term) — the firm's list, unlike
+-- `watchlist` above which is one global list with no owner at all.
+-- user_id is who flagged it; ownership is that person's organization
+-- (see db.ORG_SCOPE), so a colleague sees the same bills.
 -- Reuses that same underlying machinery rather than duplicating it:
 -- flagging a bill still upserts it into `bills` and adds it to the
 -- shared `watchlist` (so the daily refresh job keeps it fresh) — this
--- table only adds the "which user cares about this bill" layer on top.
--- Many-to-many: one bill can be flagged by many users, one user can
--- flag many bills.
+-- table only adds the "which firm cares about this bill" layer on top.
+-- Many-to-many: one bill can be flagged by many firms, one firm can flag
+-- many bills.
 CREATE TABLE IF NOT EXISTS flagged_bills (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id),
   bill_id    INTEGER NOT NULL REFERENCES bills(id),
   flagged_at TEXT,
-  -- The lobbyist's own free-text note on this bill. Per user, not per
-  -- bill: two firms tracking the same bill have nothing to say to each
-  -- other, and this sits alongside their flag rather than on the shared
-  -- `bills` row the refresh job overwrites.
+  -- The firm's own free-text note on this bill. Per flag, not per bill:
+  -- two firms tracking the same bill have nothing to say to each other,
+  -- and this sits alongside their flag rather than on the shared `bills`
+  -- row the refresh job overwrites. Read and edited by anyone at the
+  -- firm, same as the flag it hangs off.
   notes      TEXT,
   -- When this user last opened this bill's report. What makes the
   -- flagged list a to-do instead of an inventory: anything in
@@ -345,7 +397,7 @@ CREATE INDEX IF NOT EXISTS idx_clients_user_id ON clients(user_id);
 
 -- Which of a user's own clients a flagged bill is being tracked for.
 -- Many-to-many on purpose — a bill can matter to more than one client.
--- Both bill_id and client_id are scoped to user_id at the application
+-- Both bill_id and client_id are scoped to the organization at the application
 -- layer (db.link_bill_to_client checks the client is actually theirs
 -- and the bill is actually one they've flagged before inserting), not
 -- just left to the foreign keys, since SQLite FKs alone can't express
@@ -472,6 +524,13 @@ CREATE TABLE IF NOT EXISTS prepared_filings (
   signed_name        TEXT,
   confirmed_accurate INTEGER NOT NULL DEFAULT 0,      -- 0/1
   signed_at          TEXT,
+  -- Which account signed off, as opposed to which name was typed into
+  -- the box. Now that a filing belongs to the firm rather than to one
+  -- person, "prepared by A, signed off by B" is a thing that can happen,
+  -- and the filing is the one place in this app where being able to say
+  -- who attested to what has a statutory consequence rather than a
+  -- client-relations one.
+  signed_by          INTEGER REFERENCES users(id),
   -- Both added for the in-place HTML editor (see
   -- docs/disclosure-html-editor-plan.md) — neither existed when this
   -- filing model was PDF-preview-only.

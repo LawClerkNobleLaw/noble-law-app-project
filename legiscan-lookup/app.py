@@ -1136,7 +1136,10 @@ PROFILE_PAGE = _render_template(
 )
 
 
-PROFILE_BODY = _render_template("profile_body.html")
+PROFILE_BODY = _render_template(
+    "profile_body.html",
+    CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
+)
 
 PROFILE_VIEW_PAGE = page("Your profile — Rotunda", "/profile", PROFILE_BODY)
 
@@ -2407,6 +2410,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
             return
 
+        if parsed.path == "/api/org-lobbyists":
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to see your firm's lobbyists.")
+                if not user_id:
+                    return
+                self._send_json(200, db.list_org_lobbyists(conn, user_id))
+            finally:
+                conn.close()
+            return
+
         if parsed.path == "/api/saved-searches":
             conn = db.get_connection()
             try:
@@ -2607,6 +2621,32 @@ class Handler(BaseHTTPRequestHandler):
                 db.flag_bill(conn, user_id, bill_id)
                 conn.commit()
                 self._send_json(200, {"status": "flagged"})
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/org-lobbyists":
+            # The firm's roster, which is what Form 601's Part I is a list
+            # of. Kept on Profile rather than inside the disclosure flow:
+            # it's a fact about the firm, not about one filing, and every
+            # 601 from here on reads it.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage your firm's lobbyists.")
+                if not user_id:
+                    return
+                try:
+                    db.add_org_lobbyist(conn, user_id, body.get("name"), body.get("cert_id"))
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                conn.commit()
+                self._send_json(200, db.list_org_lobbyists(conn, user_id))
             finally:
                 conn.close()
             return
@@ -3077,7 +3117,15 @@ class Handler(BaseHTTPRequestHandler):
                 client_row_ids = None
                 if form_type == "601":
                     field_data = pdf_forms.values_for_form_601(
-                        profile, clients, user_row["email"], sign_off=None, today=datetime.date.today()
+                        profile, clients, user_row["email"], sign_off=None,
+                        today=datetime.date.today(),
+                        # Form 601 exists to register a firm's lobbyists.
+                        # Until an organization sat above the account
+                        # there was only ever one name to put here; an
+                        # empty roster still falls back to the
+                        # registrant's own, which is right for a firm of
+                        # one (see pdf_forms.values_for_form_601).
+                        lobbyists=db.list_org_lobbyists(conn, user_id),
                     )
                     client_row_ids = [c["id"] for c in clients[:pdf_forms.max_client_rows()]]
 
@@ -3296,6 +3344,25 @@ class Handler(BaseHTTPRequestHandler):
     def _do_DELETE(self):
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
+
+        if parsed.path == "/api/org-lobbyists":
+            lobbyist_id = (qs.get("id") or [""])[0]
+            if not lobbyist_id.isdigit():
+                self._send_json(400, {"error": "Missing or invalid id parameter."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage your firm's lobbyists.")
+                if not user_id:
+                    return
+                if not db.delete_org_lobbyist(conn, user_id, int(lobbyist_id)):
+                    self._send_json(404, {"error": "No lobbyist with that ID."})
+                    return
+                conn.commit()
+                self._send_json(200, db.list_org_lobbyists(conn, user_id))
+            finally:
+                conn.close()
+            return
 
         if parsed.path == "/api/letters":
             letter_id = (qs.get("id") or [""])[0]
