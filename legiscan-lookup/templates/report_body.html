@@ -105,12 +105,30 @@ async function load() {
     // client list isn't an error here — it just means no picker.
     allClients = clientsRes.ok ? await clientsRes.json() : [];
     render(data);
+    markViewed(data);
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';
   } finally {
     document.getElementById('loading').className = '';
   }
+}
+
+// Clearing this bill's unread dot on the flagged list. Fired after the
+// report has actually rendered — a load that threw never gets here, so a
+// failed page doesn't count as having been read.
+//
+// Deliberately unawaited and deliberately silent on failure: this is
+// bookkeeping about what the user has seen, and an error toast about it
+// would be louder than the thing it's reporting. Nothing on this page
+// depends on the response.
+function markViewed(report) {
+  if (!report || !report.flagged) return;
+  fetch('/api/bill-viewed', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bill_id: Number(billId) }),
+  }).catch(() => {});
 }
 
 // The highlighted "Current Status" callout above the full history

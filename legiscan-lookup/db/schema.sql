@@ -253,6 +253,13 @@ CREATE TABLE IF NOT EXISTS flagged_bills (
   -- other, and this sits alongside their flag rather than on the shared
   -- `bills` row the refresh job overwrites.
   notes      TEXT,
+  -- When this user last opened this bill's report. What makes the
+  -- flagged list a to-do instead of an inventory: anything in
+  -- bill_change_events detected after this instant is unread, and the
+  -- row carries a dot until the user goes and looks. NULL means never
+  -- opened, which is treated as "everything recorded is unread" — the
+  -- honest reading, since the user has demonstrably not seen any of it.
+  last_viewed_at TEXT,
   UNIQUE(user_id, bill_id)
 );
 CREATE INDEX IF NOT EXISTS idx_flagged_bills_user_id ON flagged_bills(user_id);
