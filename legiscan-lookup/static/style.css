@@ -997,13 +997,111 @@
     .dash-grid { grid-template-columns: 1fr; }
   }
 
-  /* The flagged table gained Next action and already scrolled sideways on
-     a phone, where the position dropdown ends up past the right edge.
-     Last change is the column to drop there: Next action answers the
-     more urgent question, and Status still says where the bill is.
-     Narrow screens only — there's room for all five on a laptop. */
+  /* ── The bill tables, wide and narrow (P2-23) ──
+     Two tables carry a client's position on a bill: the flagged list and
+     the client record. Both used to hand a phone a five-column table
+     inside a sideways scroller, which put the position <select> — the
+     one control worth reaching between hearings — past the right edge,
+     reachable only by horizontal drag.
+
+     The wrapper is a class rather than the inline style="overflow-x:auto"
+     it was, because below the breakpoint there is nothing left to scroll
+     and the wrapper has to stop clipping: overflow-x on a block clips
+     overflow-y too (per spec), which is what the row menu's own
+     open-up hack exists to work around (see row_menu.js). */
+  .table-scroll { overflow-x: auto; }
+
+  /* Wide: let the positions column own the slack. At 1440px the browser
+     was giving the width to the title and clipping Clients & positions
+     at the card edge; these caps say which columns are content-sized and
+     leave the rest to the two that need room to breathe. */
+  @media (min-width: 901px) {
+    .bill-cards th.col-next, .bill-cards th.col-status, .bill-cards th.col-change {
+      width: 1%; white-space: nowrap;
+    }
+    .bill-cards td.col-next, .bill-cards td.col-status { white-space: nowrap; }
+    .bill-cards th.col-clients, .bill-cards th.col-position { min-width: 15rem; }
+  }
+
+  /* Narrow: one card per bill. The table elements are re-declared as
+     blocks, which does drop the grid roles — correct here, since a
+     stacked card has no columns to be the third of. What each value
+     means comes back as a label per cell, generated from CSS so the row
+     builder stays one shape for both layouts.
+
+     Last change comes BACK at this width, having been hidden at 900px
+     only to buy horizontal room. In a card, vertical space is cheap —
+     the phone ends up with more of the row than it had, not less. */
   @media (max-width: 900px) {
-    .col-change { display: none; }
+    .table-scroll { overflow: visible; }
+    .bill-cards, .bill-cards tbody, .bill-cards tr, .bill-cards td { display: block; width: auto; }
+    .bill-cards thead { display: none; }
+    .bill-cards tr {
+      background: var(--surface); border: 1px solid var(--rule);
+      border-radius: var(--radius-lg); padding: 0.85rem 0.95rem;
+      margin: 0 1.15rem var(--space-3);
+    }
+    .panel .bill-cards td { border: 0; padding: 0.3rem 0; }
+    /* The identity of the thing needs no label — it is the card's title,
+       and "Bill: CA SB1159" reads as a form field rather than a heading. */
+    .bill-cards td.col-next::before,
+    .bill-cards td.col-status::before,
+    .bill-cards td.col-change::before,
+    .bill-cards td.col-position::before,
+    .bill-cards td.col-clients::before {
+      display: block; margin-bottom: 0.2rem;
+      font-size: 0.68rem; font-weight: 600; letter-spacing: 0.04em;
+      text-transform: uppercase; color: var(--slate);
+    }
+    .bill-cards td.col-next::before { content: "Next action"; }
+    .bill-cards td.col-status::before { content: "Status"; }
+    .bill-cards td.col-change::before { content: "Last change"; }
+    .bill-cards td.col-clients::before { content: "Clients & positions"; }
+    /* The client record already knows whose position it is — the page is
+       that client — so the same cell gets the shorter true label. */
+    .bill-cards td.col-position::before { content: "Position"; }
+    .bill-cards td.col-change { display: block; }
+
+    /* The whole point of the breakpoint: the position control, full
+       width, at a real touch height, with the client's name above it
+       rather than truncated beside it. */
+    .bill-cards td.col-clients, .bill-cards td.col-position {
+      border-top: 1px solid var(--rule) !important;
+      margin-top: var(--space-2); padding-top: var(--space-3) !important;
+    }
+    .bill-cards td.col-clients .client-chip {
+      width: auto; border-radius: var(--radius-md);
+      flex-wrap: wrap; row-gap: 0.35rem; padding: 0.45rem 0.6rem;
+    }
+    .bill-cards td.col-clients .client-chip > :first-child {
+      flex-basis: 100%; white-space: normal;
+    }
+    .bill-cards td.col-clients select.position-select {
+      flex: 1; min-height: 2.75rem; min-width: 8rem;
+      border: 1px solid var(--rule); border-radius: var(--radius-sm);
+      background: var(--surface); padding: 0.3rem 1.6rem 0.3rem 0.5rem;
+    }
+    .bill-cards td.col-clients .add-client-select { width: 100%; min-height: 2.75rem; }
+    /* The client record's Position column is a bare <select>, not a chip. */
+    .bill-cards td.col-position > select.position-select {
+      width: 100%; min-height: 2.75rem;
+      border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--surface);
+    }
+    /* On the client record the title is its own cell rather than part of
+       the bill's identity block, so it gets the heading treatment the
+       bill number gets on the flagged list. */
+    .bill-cards td.col-title { font-weight: 600; }
+    .bill-cards td.col-rowmenu { text-align: left; margin-top: var(--space-2); }
+
+    /* The filter rail at this width: the group label sits above its own
+       tabs rather than sharing a line with them, since a 4.5rem label
+       column plus a wrapped row of client names leaves the tabs about
+       two words wide. A long client name gets to be a long tab and
+       wrap — this is the one control where truncating the name defeats
+       the purpose of having it. */
+    .search-filters .filter-group { flex-direction: column; align-items: stretch; }
+    .search-filters .filter-group-label { min-width: 0; }
+    .search-filters .filter-tab { text-align: left; white-space: normal; }
   }
 
   .row-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: 0.35rem; }
