@@ -332,5 +332,14 @@ CREATE TABLE IF NOT EXISTS prepared_filings (
   -- filing model was PDF-preview-only.
   pdf_field_data_hash TEXT,                    -- sha256 of field_data as of the last "generate PDF" click; NULL or mismatched vs the CURRENT field_data means the PDF on hand is stale and sign-off is blocked (see db.sign_off_prepared_filing / db._hash_field_data)
   client_row_ids     TEXT,                     -- JSON array of client ids, in order, currently filling the (up to 9) client rows — lets the editor show/reorder them when a firm has more than 9 clients
-  created_at         TEXT
+  created_at         TEXT,
+  -- The filing deadline, and the real-world event it's counted from.
+  -- Both entered/derived, never inferred from created_at: when a draft
+  -- was opened says nothing about when the state needs the filing. The
+  -- lobbyist supplies trigger_date (for a 601, the date the firm
+  -- qualified); due_date is derived from it by
+  -- disclosure_fields.due_date_for and stays editable, since the
+  -- statutory reading is theirs to make, not this app's.
+  trigger_date       TEXT,
+  due_date           TEXT
 );

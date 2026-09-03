@@ -30,6 +30,7 @@ an included row's employer name always comes from clients.name.
 """
 
 import re
+from datetime import datetime, timedelta
 
 import pdf_forms
 
@@ -73,6 +74,64 @@ FORM_601_SECTIONS = [
 ]
 
 FORM_SECTIONS_BY_TYPE = {"601": FORM_601_SECTIONS}
+
+
+# ── filing deadlines ────────────────────────────────────────────────
+#
+# What a form is due, relative to the event that starts its clock. Keyed
+# by form_type like everything else here, so 603/615 (whose clocks are
+# quarterly rather than event-driven) slot in as new entries.
+#
+# The date this produces is a CONVENIENCE, not an authority. The app
+# can't know when a firm qualified — that's a fact about the world, so
+# `trigger_date` is entered by the lobbyist and the due date is derived
+# from it and left editable. Nothing here is computed from a draft's
+# created_at: when someone opened a draft has no bearing on when the
+# state needs the filing, and a deadline derived from it would be wrong
+# in a way that looks authoritative. Same instinct as the "Known gaps in
+# this draft" card — say what we don't know rather than fill it in.
+FORM_DEADLINES = {
+    "601": {
+        "days_after_trigger": 10,
+        "trigger_label": "Date the firm qualified",
+        "trigger_help": "Registration is due within 10 days of qualifying as a lobbying firm. "
+                        "Enter the qualifying date and the due date below is filled in for you — "
+                        "check it against your own reading of the deadline.",
+        "rule_label": "10 days after qualifying",
+    },
+}
+
+
+def valid_iso_date(value):
+    """True if `value` is a real calendar date in ISO 'YYYY-MM-DD' form —
+    what <input type="date"> submits. A regex isn't enough for a date a
+    filing deadline is counted from: '2026-02-31' matches any sane
+    pattern and isn't a day."""
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def deadline_rule(form_type):
+    """The deadline config for this form, or None if it has no rule yet."""
+    return FORM_DEADLINES.get(form_type)
+
+
+def due_date_for(form_type, trigger_date):
+    """Derive a due date from the event that starts the clock. Returns
+    None when the form has no rule or the trigger isn't a usable ISO
+    date — a missing due date is a fine outcome here, an invented one
+    isn't."""
+    rule = FORM_DEADLINES.get(form_type)
+    if not rule or not trigger_date:
+        return None
+    try:
+        start = datetime.strptime(trigger_date, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+    return (start + timedelta(days=rule["days_after_trigger"])).strftime("%Y-%m-%d")
 
 _KIND_VALIDATORS = {
     "phone_area": (_PHONE_AREA_RE, "must be a 3-digit area code"),

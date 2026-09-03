@@ -239,3 +239,108 @@ def test_is_editable_field_key_recognizes_client_rows_and_rejects_unknown():
     assert disclosure_fields.is_editable_field_key("601", "EMAIL") is True
     assert disclosure_fields.is_editable_field_key("601", "DESCRIPTION 1") is True
     assert disclosure_fields.is_editable_field_key("601", "Signature_5") is False
+
+
+# ── filing deadlines ────────────────────────────────────────────────
+
+def test_due_date_for_601_is_ten_days_after_the_qualifying_date():
+    assert disclosure_fields.due_date_for("601", "2026-08-26") == "2026-09-05"
+    # Across a month boundary, where adding 10 to the day-of-month breaks.
+    assert disclosure_fields.due_date_for("601", "2026-02-25") == "2026-03-07"
+
+
+def test_due_date_is_none_rather_than_guessed():
+    # The whole point of the column: no trigger, no deadline. An invented
+    # one would look exactly as authoritative as a real one.
+    assert disclosure_fields.due_date_for("601", None) is None
+    assert disclosure_fields.due_date_for("601", "") is None
+    assert disclosure_fields.due_date_for("601", "not-a-date") is None
+    # A form with no rule yet (603/615) doesn't get 601's rule applied.
+    assert disclosure_fields.due_date_for("615", "2026-08-26") is None
+
+
+def test_valid_iso_date_rejects_dates_that_only_look_like_dates():
+    assert disclosure_fields.valid_iso_date("2026-08-26") is True
+    # Matches any reasonable regex, isn't a day.
+    assert disclosure_fields.valid_iso_date("2026-02-31") is False
+    assert disclosure_fields.valid_iso_date("2026-13-01") is False
+    assert disclosure_fields.valid_iso_date("08/26/2026") is False
+    assert disclosure_fields.valid_iso_date("") is False
+    assert disclosure_fields.valid_iso_date(None) is False
+
+
+def test_new_filing_has_no_deadline_until_one_is_set(conn):
+    user_id = insert_user(conn)
+    filing_id = _make_filing(conn, user_id)
+
+    filing = db.get_prepared_filing(conn, user_id, filing_id)
+
+    assert filing["trigger_date"] is None
+    assert filing["due_date"] is None
+    assert filing["days_until_due"] is None
+
+
+def test_set_prepared_filing_deadline_stores_both_dates(conn):
+    user_id = insert_user(conn)
+    filing_id = _make_filing(conn, user_id)
+
+    filing = db.set_prepared_filing_deadline(conn, user_id, filing_id, "2026-08-26", "2026-09-05")
+    conn.commit()
+
+    assert filing["trigger_date"] == "2026-08-26"
+    assert filing["due_date"] == "2026-09-05"
+
+
+def test_set_prepared_filing_deadline_stores_an_override_verbatim(conn):
+    # The lobbyist's reading of their own deadline beats the app's
+    # arithmetic — db stores what it's handed and does no deriving.
+    user_id = insert_user(conn)
+    filing_id = _make_filing(conn, user_id)
+
+    filing = db.set_prepared_filing_deadline(conn, user_id, filing_id, "2026-08-26", "2026-10-01")
+    conn.commit()
+
+    assert filing["due_date"] == "2026-10-01"
+
+
+def test_set_prepared_filing_deadline_can_clear_the_dates(conn):
+    user_id = insert_user(conn)
+    filing_id = _make_filing(conn, user_id)
+    db.set_prepared_filing_deadline(conn, user_id, filing_id, "2026-08-26", "2026-09-05")
+
+    filing = db.set_prepared_filing_deadline(conn, user_id, filing_id, "", "")
+    conn.commit()
+
+    assert filing["trigger_date"] is None
+    assert filing["due_date"] is None
+    assert filing["days_until_due"] is None
+
+
+def test_set_prepared_filing_deadline_is_scoped_to_the_owner(conn):
+    # Same reasoning as get_prepared_filing/delete_client: never trust a
+    # client-supplied filing id on its own.
+    owner = insert_user(conn)
+    other = insert_user(conn, email="someone@example.com")
+    filing_id = _make_filing(conn, owner)
+
+    with pytest.raises(ValueError):
+        db.set_prepared_filing_deadline(conn, other, filing_id, "2026-08-26", "2026-09-05")
+
+
+def test_days_until_due_is_negative_once_overdue(conn):
+    # Drives the "N days overdue" chip; it has to survive as a negative
+    # number rather than being clamped or dropped.
+    user_id = insert_user(conn)
+    filing_id = _make_filing(conn, user_id)
+    today = db.today_in_california()
+    past = (datetime.date.fromisoformat(today) - datetime.timedelta(days=3)).isoformat()
+    future = (datetime.date.fromisoformat(today) + datetime.timedelta(days=4)).isoformat()
+
+    overdue = db.set_prepared_filing_deadline(conn, user_id, filing_id, None, past)
+    assert overdue["days_until_due"] == -3
+
+    upcoming = db.set_prepared_filing_deadline(conn, user_id, filing_id, None, future)
+    assert upcoming["days_until_due"] == 4
+
+    due_today = db.set_prepared_filing_deadline(conn, user_id, filing_id, None, today)
+    assert due_today["days_until_due"] == 0

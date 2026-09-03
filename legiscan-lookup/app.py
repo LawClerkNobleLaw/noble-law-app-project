@@ -1505,6 +1505,9 @@ def _with_disclosure_editor_meta(filing):
     filing["field_schema"] = disclosure_fields.sections_for_form_type(filing["form_type"])
     filing["client_row_fields"] = pdf_forms.CLIENT_ROW_FIELDS
     filing["max_client_rows"] = pdf_forms.max_client_rows()
+    # None for a form with no deadline rule yet — the editor then just
+    # asks for a due date instead of naming what it's counted from.
+    filing["deadline_rule"] = disclosure_fields.deadline_rule(filing["form_type"])
     return filing
 
 
@@ -2615,6 +2618,50 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 try:
                     filing = db.update_prepared_filing_field(conn, user_id, filing_id, field_key, value)
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                conn.commit()
+                self._send_json(200, _with_disclosure_editor_meta(filing))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/prepared-filings/deadline":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            filing_id = body.get("id")
+            if not filing_id:
+                self._send_json(400, {"error": "Missing id."})
+                return
+            trigger_date = (body.get("trigger_date") or "").strip()
+            # An explicit due_date in the body is an override and is taken
+            # as-is; otherwise it's derived from the trigger. The lobbyist's
+            # own reading of their deadline beats this app's arithmetic —
+            # see disclosure_fields.FORM_DEADLINES on why nothing here is
+            # inferred from a draft's created_at.
+            due_date = (body.get("due_date") or "").strip()
+
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to edit a disclosure filing.")
+                if not user_id:
+                    return
+                filing = db.get_prepared_filing(conn, user_id, filing_id)
+                if not filing:
+                    self._send_json(404, {"error": "No prepared filing found with that id."})
+                    return
+                for label, value in (("Qualifying date", trigger_date), ("Due date", due_date)):
+                    if value and not disclosure_fields.valid_iso_date(value):
+                        self._send_json(400, {"error": f"{label} must be a real calendar date."})
+                        return
+                if not due_date:
+                    due_date = disclosure_fields.due_date_for(filing["form_type"], trigger_date)
+                try:
+                    filing = db.set_prepared_filing_deadline(conn, user_id, filing_id, trigger_date, due_date)
                 except ValueError as e:
                     self._send_json(400, {"error": str(e)})
                     return
