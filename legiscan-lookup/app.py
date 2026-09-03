@@ -3282,7 +3282,16 @@ class Handler(BaseHTTPRequestHandler):
                         self._send_json(400, {"error": f"No client found with id {cid}."})
                         return
                     clients.append(client)
-                row_values = pdf_forms.client_row_values(clients)
+                # Adding or removing one client must not wipe what was
+                # typed into the other rows — four of the five row fields
+                # are things the client record doesn't hold, so they are
+                # typed here. Pass the rows as they stand so each
+                # retained client's own edits move with it.
+                row_values = pdf_forms.client_row_values(
+                    clients,
+                    previous_clients=filing.get("client_row_ids") or [],
+                    previous_field_data=filing["field_data"],
+                )
                 try:
                     filing = db.set_prepared_filing_client_rows(conn, user_id, filing_id, client_ids, row_values)
                 except ValueError as e:

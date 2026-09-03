@@ -136,27 +136,60 @@ HEADER_FIELDS = [
 ]
 
 
-def client_row_values(clients):
+def client_row_values(clients, previous_clients=None, previous_field_data=None):
     """Builds the flattened {field_name: value} dict for all 9 client
     rows, given `clients` in the exact order they should fill rows
     1..9 — the caller decides that order (values_for_form_601 uses
-    `list_clients`'s alphabetical order; the disclosure-editor's
-    client-row picker lets the lobbyist choose/reorder it instead, see
-    docs/disclosure-html-editor-plan.md).
+    `list_clients`'s alphabetical order; the disclosure editor lets the
+    lobbyist add and remove clients instead).
 
     Always writes all 9 rows, blanking any row past len(clients) —
     important when this is called again after a *smaller* selection
-    than before (e.g. the picker going from 9 clients down to 5): rows
-    6-9 must be cleared, not left holding the previous selection's
-    stale data."""
+    than before (e.g. going from 9 clients down to 5): rows 6-9 must be
+    cleared, not left holding the previous selection's stale data.
+
+    `previous_clients` (the client-id list these rows held before) and
+    `previous_field_data` (the filing's current values) carry a client's
+    typed row values across to its new row. Every one of these five
+    fields is editable on the review screen, and four of the five —
+    nature of interests, effective date, period of contract, agencies
+    lobbied — are things the client record often doesn't hold, so they
+    get typed here. Without this, adding a tenth client would silently
+    wipe what was typed for the first nine.
+
+    The rule is deliberately one-directional: the CLIENT RECORD WINS
+    wherever it has something to say, and a previous value is carried
+    over only for a field the record leaves empty. So correcting a
+    client's name or address flows through to every filing that names
+    it — which is the whole point of holding it on the client — while
+    the four fields the record usually can't fill keep whatever the
+    lobbyist typed. As the client record grows the fields it's missing
+    (see the audit's P2-26), it simply takes over more of the row."""
+    # client id -> the row fields that client's values sat in before.
+    previous_rows = {}
+    if previous_clients and previous_field_data:
+        for i, client_id in enumerate(previous_clients[:len(CLIENT_ROW_FIELDS)]):
+            previous_rows[client_id] = CLIENT_ROW_FIELDS[i]
+
     values = {}
     for i, row in enumerate(CLIENT_ROW_FIELDS):
         client = clients[i] if i < len(clients) else None
-        values[row["employer"]] = _client_block(client) if client else ""
-        values[row["description"]] = (client.get("interests") or "") if client else ""
-        values[row["effective"]] = (client.get("effective_date") or "") if client else ""
-        values[row["period"]] = (client.get("contract_period") or "") if client else ""
-        values[row["agencies"]] = (client.get("agencies_lobbied") or "") if client else ""
+        derived = {
+            "employer": _client_block(client) if client else "",
+            "description": (client.get("interests") or "") if client else "",
+            "effective": (client.get("effective_date") or "") if client else "",
+            "period": (client.get("contract_period") or "") if client else "",
+            "agencies": (client.get("agencies_lobbied") or "") if client else "",
+        }
+        was = previous_rows.get(client.get("id")) if client else None
+        for key, field_name in row.items():
+            value = derived[key]
+            # Only where the client record derives nothing: then whatever
+            # is already in this client's row is the only copy of it, and
+            # dropping it would lose data the lobbyist typed by hand.
+            if was and not value:
+                value = previous_field_data.get(was[key], "")
+            values[field_name] = value
     return values
 
 
