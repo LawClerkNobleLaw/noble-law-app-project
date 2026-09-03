@@ -146,27 +146,50 @@ def snapshot_bill_state(conn, bill_id):
 def diff_bill_state(before, bill):
     """Compare a snapshot from snapshot_bill_state() against a freshly
     fetched (not-yet-stored) bill dict from legiscan_client.get_bill_detail,
-    and return a list of plain-English one-sentence change descriptions —
-    empty if `before` is None or nothing actually changed. Four change
-    types, in the order the digest email lists them: status, amendments,
-    hearings, votes."""
+    and return one dict per change — empty if `before` is None or nothing
+    actually changed. Four change types, in the order the digest email
+    lists them: status, amendments, hearings, votes.
+
+    Each dict carries:
+      change_type  one of status/amendment/hearing/vote
+      summary      short chip label for the flagged list ("Enrolled")
+      description  the full sentence the digest email sends
+      event_date   the date the change itself carries, or None — not the
+                   same as when it was detected, since LegiScan often
+                   reports an action days after it happened
+
+    Structured rather than the bare sentences this used to return because
+    the same diff now feeds two places with different needs: the digest
+    email wants prose, and bill_change_events wants something the flagged
+    list can render as a dated chip without re-parsing English."""
     if before is None:
         return []
     changes = []
 
     if bill.get("status_code") != before["status_code"]:
-        changes.append(
-            f"Status changed from {before['status_label'] or 'Unknown'} to "
-            f"{bill.get('status_label') or 'Unknown'} (as of {bill.get('status_date') or 'an unknown date'})."
-        )
+        new_label = bill.get("status_label") or "Unknown"
+        changes.append({
+            "change_type": "status",
+            "summary": new_label,
+            "description": (
+                f"Status changed from {before['status_label'] or 'Unknown'} to "
+                f"{new_label} (as of {bill.get('status_date') or 'an unknown date'})."
+            ),
+            "event_date": bill.get("status_date"),
+        })
 
     for a in bill.get("amendments", []):
         if a.get("amendment_id") is not None and a["amendment_id"] not in before["amendment_ids"]:
             adopted = " — adopted" if a.get("adopted") else ""
-            changes.append(
-                f"New amendment in the {a.get('chamber') or 'legislature'} "
-                f"on {a.get('date') or 'an unspecified date'}{adopted}."
-            )
+            changes.append({
+                "change_type": "amendment",
+                "summary": "Amended" if not a.get("adopted") else "Amendment adopted",
+                "description": (
+                    f"New amendment in the {a.get('chamber') or 'legislature'} "
+                    f"on {a.get('date') or 'an unspecified date'}{adopted}."
+                ),
+                "event_date": a.get("date"),
+            })
 
     for h in bill.get("hearings", []):
         key = (h.get("date"), h.get("time"), h.get("event_type"))
@@ -175,17 +198,55 @@ def diff_bill_state(before, bill):
             if h.get("time"):
                 when += f" at {h['time']}"
             what = f" — {h['description']}" if h.get("description") else ""
-            changes.append(f"Hearing scheduled for {when}{what}.")
+            changes.append({
+                "change_type": "hearing",
+                "summary": "Hearing set",
+                "description": f"Hearing scheduled for {when}{what}.",
+                "event_date": h.get("date"),
+            })
 
     for v in bill.get("votes", []):
         if v.get("roll_call_id") is not None and v["roll_call_id"] not in before["vote_ids"]:
             outcome = "passed" if v.get("passed") else "failed"
-            changes.append(
-                f"Vote recorded in the {v.get('chamber') or 'legislature'}: "
-                f"{outcome} {v.get('yea') or 0}-{v.get('nay') or 0}."
-            )
+            changes.append({
+                "change_type": "vote",
+                "summary": f"Vote {outcome}",
+                "description": (
+                    f"Vote recorded in the {v.get('chamber') or 'legislature'}: "
+                    f"{outcome} {v.get('yea') or 0}-{v.get('nay') or 0}."
+                ),
+                "event_date": v.get("date"),
+            })
 
     return changes
+
+
+def record_bill_changes(conn, bill_id, changes, detected_at=None):
+    """Append what diff_bill_state() just found to bill_change_events.
+
+    Append-only on purpose: this is the app's own record of what it
+    observed, and rewriting it would reintroduce exactly the problem it
+    exists to solve. Caller commits — refresh_one() batches this into the
+    same transaction as the upsert it belongs to.
+
+    Safe to call with an empty list, which is the common case: most bills
+    on most days haven't moved."""
+    if not changes:
+        return 0
+    detected_at = detected_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn.executemany(
+        """INSERT INTO bill_change_events
+             (bill_id, detected_at, change_type, summary, description, event_date)
+           VALUES (?,?,?,?,?,?)""",
+        [
+            (
+                bill_id, detected_at, c["change_type"], c["summary"],
+                c["description"], c.get("event_date"),
+            )
+            for c in changes
+        ],
+    )
+    return len(changes)
 
 
 def upsert_bill(conn, bill):
@@ -365,6 +426,52 @@ def _next_hearings_for_bills(conn, bill_ids, today):
     return next_by_bill
 
 
+def _latest_changes_for_bills(conn, bill_ids):
+    """The most recently detected change for each of these bills, keyed by
+    bill_id — what the flagged list's Last change column shows.
+
+    Returns nothing for a bill the refresh job hasn't seen move yet, which
+    on a database that predates bill_change_events means every bill. The
+    column falls back to latest_activity_date in that case rather than
+    sitting empty; see the table's comment in schema.sql.
+
+    One refresh often finds several changes on the same bill at the same
+    instant, so "the latest" can't be settled by time alone. They're
+    ranked by what a lobbyist reads first: the bill moving stage, then a
+    recorded vote, then an amendment, then a hearing being scheduled —
+    that last one ranks lowest here only because the Next action column
+    already shows it in full. The rest of the run is reported as a count
+    (`also_count`) rather than dropped silently."""
+    if not bill_ids:
+        return {}
+    placeholders = ",".join("?" for _ in bill_ids)
+    rows = conn.execute(
+        f"""SELECT bill_id, detected_at, change_type, summary, description, event_date,
+                   CASE change_type
+                     WHEN 'status' THEN 1 WHEN 'vote' THEN 2
+                     WHEN 'amendment' THEN 3 ELSE 4
+                   END AS rank
+            FROM bill_change_events
+            WHERE bill_id IN ({placeholders})
+            ORDER BY detected_at DESC, rank ASC, id DESC""",
+        tuple(bill_ids),
+    ).fetchall()
+
+    latest = {}
+    for row in rows:
+        bill_id = row["bill_id"]
+        if bill_id not in latest:
+            change = dict(row)
+            change.pop("rank", None)
+            change["also_count"] = 0
+            latest[bill_id] = change
+        elif row["detected_at"] == latest[bill_id]["detected_at"]:
+            # Same refresh run as the headline change — worth saying there
+            # was more, even though only one line fits in the column.
+            latest[bill_id]["also_count"] += 1
+    return latest
+
+
 def list_flagged_bills(conn, user_id, today=None):
     rows = conn.execute(
         """SELECT f.bill_id, f.flagged_at, w.last_checked_at,
@@ -382,11 +489,14 @@ def list_flagged_bills(conn, user_id, today=None):
     bill_ids = [r["bill_id"] for r in result]
     clients_by_bill = clients_for_bills(conn, user_id, bill_ids)
     next_hearings = _next_hearings_for_bills(conn, bill_ids, today or today_in_california())
+    latest_changes = _latest_changes_for_bills(conn, bill_ids)
     for r in result:
         r["assigned_clients"] = clients_by_bill.get(r["bill_id"], [])
         # None for a bill with nothing scheduled — the column says so in
         # words rather than leaving the cell blank.
         r["next_hearing"] = next_hearings.get(r["bill_id"])
+        # None until the refresh job has seen this bill move at least once.
+        r["last_change"] = latest_changes.get(r["bill_id"])
     return result
 
 

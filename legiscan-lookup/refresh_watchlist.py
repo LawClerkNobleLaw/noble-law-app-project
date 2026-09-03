@@ -81,6 +81,13 @@ def refresh_one(conn, bill_id):
     bill = get_bill_detail(bill_id)
     digest_changes = db.diff_bill_state(before_state, bill)
     db.upsert_bill(conn, bill)
+    # After upsert_bill, so the bills row is guaranteed present for the
+    # foreign key on a bill being seen for the first time — though a first
+    # sighting has no snapshot to diff against and so records nothing.
+    # This is the only point the app ever learns a bill moved: the same
+    # transaction that overwrites the evidence also writes the record of
+    # it, so the two can't come apart.
+    db.record_bill_changes(conn, bill_id, digest_changes)
     db.touch_watchlist(conn, bill_id)
     conn.commit()
     changed = (not before) or before["change_hash"] != bill.get("change_hash")
