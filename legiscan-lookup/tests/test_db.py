@@ -505,6 +505,94 @@ def test_calendar_only_covers_the_callers_own_flagged_bills(conn):
     assert result["flagged_count"] == 1
 
 
+# ── list_flagged_bills' next_hearing ────────────────────────────────
+
+def test_flagged_bill_next_hearing_is_the_soonest_still_to_come(conn):
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    _insert_hearings(conn, bill_id, [
+        ("2026-09-20", "10:00"),
+        ("2026-09-10", "13:30"),
+        ("2026-08-01", "09:00"),  # past — must not win
+    ])
+
+    rows = db.list_flagged_bills(conn, user_id, today="2026-09-02")
+
+    assert rows[0]["next_hearing"]["date"] == "2026-09-10"
+    assert rows[0]["next_hearing"]["days_until"] == 8
+
+
+def test_flagged_bill_next_hearing_is_none_when_only_past_ones_exist(conn):
+    # The column has to say "No date set" rather than show a stale date —
+    # a bill whose only hearing already happened has no next action.
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    _insert_hearings(conn, bill_id, [("2026-08-01", "09:00")])
+
+    rows = db.list_flagged_bills(conn, user_id, today="2026-09-02")
+
+    assert rows[0]["next_hearing"] is None
+
+
+def test_flagged_bill_hearing_today_counts_with_zero_days_until(conn):
+    # Drives the "Today" urgency chip — and 0 has to survive the round
+    # trip as 0, not be flattened into a falsy no-hearing case.
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    _insert_hearings(conn, bill_id, [("2026-09-02", "13:30")])
+
+    rows = db.list_flagged_bills(conn, user_id, today="2026-09-02")
+
+    assert rows[0]["next_hearing"]["days_until"] == 0
+
+
+def test_flagged_bill_undated_hearing_does_not_become_a_next_action(conn):
+    # Unlike the calendar, which shows undated hearings: a hearing with
+    # no date can't answer "when do I have to act".
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    _insert_hearings(conn, bill_id, [(None, None)])
+
+    rows = db.list_flagged_bills(conn, user_id, today="2026-09-02")
+
+    assert rows[0]["next_hearing"] is None
+
+
+def test_flagged_bills_next_hearing_does_not_leak_between_bills(conn):
+    # One query covers every flagged bill at once, so the grouping is the
+    # part worth pinning: each bill must get its own soonest hearing.
+    user_id = insert_user(conn)
+    first = insert_bill(conn, bill_id=1, bill_number="SB1")
+    second = insert_bill(conn, bill_id=2, bill_number="SB2")
+    third = insert_bill(conn, bill_id=3, bill_number="SB3")
+    for bill_id in (first, second, third):
+        db.flag_bill(conn, user_id, bill_id)
+    _insert_hearings(conn, first, [("2026-09-25", "10:00")])
+    _insert_hearings(conn, second, [("2026-09-05", "10:00"), ("2026-09-30", "10:00")])
+    conn.commit()
+
+    by_number = {r["bill_number"]: r for r in db.list_flagged_bills(conn, user_id, today="2026-09-02")}
+
+    assert by_number["SB1"]["next_hearing"]["date"] == "2026-09-25"
+    assert by_number["SB2"]["next_hearing"]["date"] == "2026-09-05"
+    assert by_number["SB3"]["next_hearing"] is None
+
+
+def test_days_between_counts_calendar_days_and_survives_junk(conn):
+    assert db._days_between("2026-09-02", "2026-09-02") == 0
+    assert db._days_between("2026-09-02", "2026-09-03") == 1
+    assert db._days_between("2026-09-02", "2026-08-30") == -3
+    # Across a month boundary and a leap day, where naive arithmetic slips.
+    assert db._days_between("2026-08-30", "2026-09-02") == 3
+    assert db._days_between("2028-02-27", "2028-03-01") == 3
+    assert db._days_between("2026-09-02", None) is None
+    assert db._days_between("2026-09-02", "not-a-date") is None
+
+
 def test_today_in_california_is_an_iso_date(conn):
     # Compared straight against bill_hearings.date, which is TEXT in ISO
     # form — the format is the contract, so it's worth pinning.
