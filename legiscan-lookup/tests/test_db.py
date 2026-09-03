@@ -593,6 +593,201 @@ def test_days_between_counts_calendar_days_and_survives_junk(conn):
     assert db._days_between("2026-09-02", "not-a-date") is None
 
 
+# ── change detection and bill_change_events ─────────────────────────
+
+def _synced_bill(conn, bill_id=1, status_code=1, status_label="Introduced"):
+    """A bill already in the DB, so snapshot_bill_state has something to
+    return — a first sighting deliberately isn't a change."""
+    insert_bill(conn, bill_id=bill_id)
+    conn.execute(
+        "UPDATE bills SET status_code = ?, status_label = ?, status_date = '2026-01-05' WHERE id = ?",
+        (status_code, status_label, bill_id),
+    )
+    conn.commit()
+    return bill_id
+
+
+def test_diff_reports_a_status_change_with_its_parts_split_out(conn):
+    bill_id = _synced_bill(conn)
+    before = db.snapshot_bill_state(conn, bill_id)
+
+    changes = db.diff_bill_state(before, {
+        "status_code": 4, "status_label": "Enrolled", "status_date": "2026-08-28",
+    })
+
+    assert len(changes) == 1
+    assert changes[0]["change_type"] == "status"
+    # summary drives the chip, event_date its date, description the email.
+    assert changes[0]["summary"] == "Enrolled"
+    assert changes[0]["event_date"] == "2026-08-28"
+    assert "Introduced" in changes[0]["description"]
+    assert "Enrolled" in changes[0]["description"]
+
+
+def test_diff_of_a_bill_never_seen_before_is_not_a_change(conn):
+    # snapshot_bill_state returns None for an unknown bill, and a first
+    # sighting must not land in the digest or the change log as news.
+    assert db.snapshot_bill_state(conn, 999) is None
+    assert db.diff_bill_state(None, {"status_code": 4, "status_label": "Enrolled"}) == []
+
+
+def test_diff_reports_a_new_hearing_and_a_new_amendment(conn):
+    bill_id = _synced_bill(conn)
+    before = db.snapshot_bill_state(conn, bill_id)
+
+    changes = db.diff_bill_state(before, {
+        "status_code": 1, "status_label": "Introduced",
+        "amendments": [{"amendment_id": 77, "chamber": "Senate", "date": "2026-06-25"}],
+        "hearings": [{"date": "2026-09-10", "time": "13:30", "event_type": "Hearing"}],
+    })
+
+    by_type = {c["change_type"]: c for c in changes}
+    assert by_type["amendment"]["summary"] == "Amended"
+    assert by_type["amendment"]["event_date"] == "2026-06-25"
+    assert by_type["hearing"]["summary"] == "Hearing set"
+    assert by_type["hearing"]["event_date"] == "2026-09-10"
+
+
+def test_diff_ignores_amendments_and_hearings_already_on_record(conn):
+    # The refresh runs daily against a full re-fetch, so "unchanged" is
+    # the overwhelmingly common case — re-reporting it would make every
+    # digest fire every day.
+    bill_id = _synced_bill(conn)
+    conn.execute(
+        "INSERT INTO bill_amendments (bill_id, amendment_id, chamber, date) VALUES (?, 77, 'Senate', '2026-06-25')",
+        (bill_id,),
+    )
+    conn.execute(
+        "INSERT INTO bill_hearings (bill_id, event_type, date, time) VALUES (?, 'Hearing', '2026-09-10', '13:30')",
+        (bill_id,),
+    )
+    conn.commit()
+    before = db.snapshot_bill_state(conn, bill_id)
+
+    changes = db.diff_bill_state(before, {
+        "status_code": 1, "status_label": "Introduced",
+        "amendments": [{"amendment_id": 77, "chamber": "Senate", "date": "2026-06-25"}],
+        "hearings": [{"date": "2026-09-10", "time": "13:30", "event_type": "Hearing"}],
+    })
+
+    assert changes == []
+
+
+def test_record_bill_changes_appends_and_is_a_no_op_when_empty(conn):
+    bill_id = _synced_bill(conn)
+
+    assert db.record_bill_changes(conn, bill_id, []) == 0
+    written = db.record_bill_changes(conn, bill_id, [
+        {"change_type": "status", "summary": "Enrolled",
+         "description": "Status changed.", "event_date": "2026-08-28"},
+    ], detected_at="2026-08-29T06:00:00Z")
+    conn.commit()
+
+    assert written == 1
+    rows = conn.execute("SELECT * FROM bill_change_events WHERE bill_id = ?", (bill_id,)).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["summary"] == "Enrolled"
+    assert rows[0]["event_date"] == "2026-08-28"
+    assert rows[0]["detected_at"] == "2026-08-29T06:00:00Z"
+
+
+def test_flagged_bill_last_change_is_the_most_recently_detected_one(conn):
+    user_id = insert_user(conn)
+    bill_id = _synced_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    db.record_bill_changes(conn, bill_id, [
+        {"change_type": "amendment", "summary": "Amended",
+         "description": "New amendment.", "event_date": "2026-06-25"},
+    ], detected_at="2026-06-26T06:00:00Z")
+    db.record_bill_changes(conn, bill_id, [
+        {"change_type": "status", "summary": "Enrolled",
+         "description": "Status changed.", "event_date": "2026-08-28"},
+    ], detected_at="2026-08-29T06:00:00Z")
+    conn.commit()
+
+    rows = db.list_flagged_bills(conn, user_id, today="2026-09-02")
+
+    assert rows[0]["last_change"]["summary"] == "Enrolled"
+    assert rows[0]["last_change"]["event_date"] == "2026-08-28"
+
+
+def test_flagged_bill_last_change_ranks_a_status_move_over_a_hearing(conn):
+    # One refresh commonly finds several changes at the same instant, so
+    # time alone can't pick the headline — without a rank it came down to
+    # insertion order, and a scheduled hearing (whose event_date is in the
+    # FUTURE) would win and print a next-month date under "Last change".
+    user_id = insert_user(conn)
+    bill_id = _synced_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    db.record_bill_changes(conn, bill_id, [
+        {"change_type": "status", "summary": "Enrolled",
+         "description": "Status changed.", "event_date": "2026-08-28"},
+        {"change_type": "hearing", "summary": "Hearing set",
+         "description": "Hearing scheduled.", "event_date": "2026-09-30"},
+    ], detected_at="2026-08-29T06:00:00Z")
+    conn.commit()
+
+    change = db.list_flagged_bills(conn, user_id, today="2026-09-02")[0]["last_change"]
+
+    assert change["summary"] == "Enrolled"
+    # The other change in that run is reported, not silently dropped.
+    assert change["also_count"] == 1
+
+
+def test_flagged_bill_last_change_does_not_count_earlier_runs_as_also(conn):
+    # also_count means "more in the same run", not "more ever" — an older
+    # change is history, not part of today's headline.
+    user_id = insert_user(conn)
+    bill_id = _synced_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    db.record_bill_changes(conn, bill_id, [
+        {"change_type": "amendment", "summary": "Amended",
+         "description": "New amendment.", "event_date": "2026-06-25"},
+    ], detected_at="2026-06-26T06:00:00Z")
+    db.record_bill_changes(conn, bill_id, [
+        {"change_type": "status", "summary": "Enrolled",
+         "description": "Status changed.", "event_date": "2026-08-28"},
+    ], detected_at="2026-08-29T06:00:00Z")
+    conn.commit()
+
+    change = db.list_flagged_bills(conn, user_id, today="2026-09-02")[0]["last_change"]
+
+    assert change["summary"] == "Enrolled"
+    assert change["also_count"] == 0
+
+
+def test_flagged_bill_last_change_is_none_before_any_refresh_has_seen_it(conn):
+    # The state every existing database is in the day this ships: the
+    # column has to fall back rather than render an empty cell.
+    user_id = insert_user(conn)
+    bill_id = _synced_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    conn.commit()
+
+    rows = db.list_flagged_bills(conn, user_id, today="2026-09-02")
+
+    assert rows[0]["last_change"] is None
+
+
+def test_flagged_bills_last_change_does_not_leak_between_bills(conn):
+    user_id = insert_user(conn)
+    first = _synced_bill(conn, bill_id=1)
+    second = _synced_bill(conn, bill_id=2)
+    conn.execute("UPDATE bills SET bill_number = 'SB2' WHERE id = 2")
+    for bill_id in (first, second):
+        db.flag_bill(conn, user_id, bill_id)
+    db.record_bill_changes(conn, first, [
+        {"change_type": "status", "summary": "Enrolled",
+         "description": "Status changed.", "event_date": "2026-08-28"},
+    ], detected_at="2026-08-29T06:00:00Z")
+    conn.commit()
+
+    by_id = {r["bill_id"]: r for r in db.list_flagged_bills(conn, user_id, today="2026-09-02")}
+
+    assert by_id[first]["last_change"]["summary"] == "Enrolled"
+    assert by_id[second]["last_change"] is None
+
+
 def test_today_in_california_is_an_iso_date(conn):
     # Compared straight against bill_hearings.date, which is TEXT in ISO
     # form — the format is the contract, so it's worth pinning.

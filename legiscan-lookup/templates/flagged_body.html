@@ -15,7 +15,10 @@
 
 <div class="panel">
   <div class="panel-head">
-    <div class="title">Flagged Bills</div>
+    <div>
+      <div class="title">Flagged Bills</div>
+      <div class="sub" id="freshness"></div>
+    </div>
     <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
       <div class="search-box">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="5" r="3.5"/><path d="M8 8l2 2" stroke-linecap="round"/></svg>
@@ -228,6 +231,7 @@ async function load() {
     currentRows = await flaggedRes.json();
     preparedFilings = filingsRes.ok ? await filingsRes.json() : [];
     renderStats();
+    renderFreshness();
     renderTabs();
     applyFilters();
   } catch (err) {
@@ -236,6 +240,21 @@ async function load() {
   } finally {
     loadingEl.className = '';
   }
+}
+
+// When the refresh job last ran, said once here instead of repeated down
+// a column. It was the same value on every row by construction —
+// touch_watchlist() stamps every bill on every run whether or not
+// anything changed — so as a column it trained the reader to ignore the
+// one place a date could have carried urgency. The row-level question is
+// "what changed", which is a different field entirely (see
+// lastChangeCell).
+function renderFreshness() {
+  const el = document.getElementById('freshness');
+  if (!el) return;
+  const stamps = currentRows.map(r => r.last_checked_at).filter(Boolean).sort();
+  const latest = stamps[stamps.length - 1];
+  el.textContent = latest ? `Checked ${fmtDateTime(latest)}` : '';
 }
 
 // A friendly "Aug 24, 2:03 PM" instead of the raw
@@ -255,6 +274,41 @@ function fmtShortDate(dateStr) {
   const opts = { month: 'short', day: 'numeric' };
   if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
   return d.toLocaleDateString('en-US', opts);
+}
+
+// What actually moved on this bill, and when.
+//
+// last_change is the app's own observation, recorded by the refresh job
+// (see bill_change_events) — precise, and the only thing that can say a
+// bill was *amended* without its status having changed. It only exists
+// from the first refresh after that table shipped, so there's a fallback:
+// latest_activity_date, the newest date in the bill's own recorded
+// history. That's a weaker claim — it's the date of the bill's last
+// action, not something we watched happen — so it's labelled as such
+// rather than dressed up as a detected change.
+function lastChangeCell(r) {
+  const change = r.last_change;
+  if (change) {
+    // event_date is the date the change *carries*, which is only the date
+    // it happened for things that already happened. A newly scheduled
+    // hearing carries a future date — printing that under "Last change"
+    // claimed the bill changed next month. So a future event_date falls
+    // back to when the refresh actually saw it.
+    const detected = (change.detected_at || '').slice(0, 10);
+    const when = (change.event_date && change.event_date <= detected) ? change.event_date : detected;
+    const also = change.also_count ? ` +${change.also_count} more` : '';
+    return `
+      <div class="change-when">${fmtShortDate(when)}</div>
+      <div class="change-what" title="${(change.description || '').replace(/"/g, '&quot;')}">${change.summary || ''}${also}</div>
+    `;
+  }
+  if (r.latest_activity_date) {
+    return `
+      <div class="change-when">${fmtShortDate(r.latest_activity_date)}</div>
+      <div class="change-what none">Last recorded action</div>
+    `;
+  }
+  return '<div class="change-what none">No activity recorded</div>';
 }
 
 // Statuses where the bill has stopped moving, so there is no next date
@@ -497,7 +551,7 @@ function render(rows) {
   listEl.innerHTML = `
     <div style="overflow-x:auto">
     <table>
-      <thead><tr><th>Bill</th><th>Next action</th><th>Status</th><th class="col-checked">Last checked</th><th>Clients &amp; positions</th></tr></thead>
+      <thead><tr><th>Bill</th><th>Next action</th><th>Status</th><th class="col-change">Last change</th><th>Clients &amp; positions</th></tr></thead>
       <tbody>
       ${rows.map(r => `
         <tr>
@@ -526,7 +580,7 @@ function render(rows) {
           </td>
           <td class="next-action">${nextActionCell(r)}</td>
           <td>${r.status_label ? `<span class="status-badge">${r.status_label}</span>` : ''}</td>
-          <td class="date col-checked">${fmtDateTime(r.last_checked_at)}</td>
+          <td class="col-change">${lastChangeCell(r)}</td>
           <td>${clientCell(r)}</td>
         </tr>
       `).join('')}
