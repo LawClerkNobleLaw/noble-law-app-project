@@ -81,19 +81,66 @@ async function postJson(path, body) {
   return data;
 }
 
+/* ── Autosave, said out loud ───────────────────────────────────────────
+ *
+ * "Edits save automatically as you leave each field" was the only
+ * evidence that anything was being saved — a promise in a caption, on a
+ * screen whose whole purpose is a document somebody is about to attest
+ * to. Now each field says "Saving…" while it is in flight and "Saved"
+ * when it lands, and the page keeps a running "last saved" time.
+ *
+ * The indicator has to survive the re-render every save triggers (the
+ * whole filing comes back, and pdf_current may have flipped), so the
+ * state lives in a variable render() reads, and the "Saved" is cleared
+ * on a timer rather than by another re-render.
+ */
+let saveState = null;      // {key, phase} — phase is 'saving' | 'saved'
+let lastSavedAt = null;
+let savedClearTimer = null;
+
+function setFieldSaveState(key, phase) {
+  saveState = phase ? { key, phase } : null;
+  const el = document.getElementById(fieldDomId(key) + '-saved');
+  if (!el) return;
+  el.textContent = phase === 'saving' ? 'Saving…' : (phase === 'saved' ? 'Saved' : '');
+  el.className = 'field-saved' + (phase ? ' ' + phase : '');
+}
+
+function paintSaveState() {
+  if (!saveState) return;
+  setFieldSaveState(saveState.key, saveState.phase);
+  if (saveState.phase !== 'saved') return;
+  clearTimeout(savedClearTimer);
+  const key = saveState.key;
+  savedClearTimer = setTimeout(() => {
+    if (saveState && saveState.key === key) setFieldSaveState(key, null);
+  }, 2500);
+}
+
 async function saveField(inputEl) {
   const key = inputEl.dataset.fieldKey;
   const value = inputEl.value;
   if (value === inputEl.dataset.orig) return;  // dirty-check — nothing actually changed, skip the round trip
   inputEl.disabled = true;
+  setFieldSaveState(key, 'saving');
   try {
     filing = await postJson('/api/prepared-filings/field', { id: Number(filingId), field_key: key, value });
+    lastSavedAt = new Date();
+    saveState = { key, phase: 'saved' };
     render();
   } catch (err) {
     showError(err.message);
+    setFieldSaveState(key, null);
     inputEl.disabled = false;
     inputEl.focus();
   }
+}
+
+function autosaveNoteHtml() {
+  const when = lastSavedAt
+    ? ` Last saved ${lastSavedAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}.`
+    : '';
+  return `<div class="sub" style="margin:0 0 0.8rem">Edits save automatically as you leave each field.${when}</div>`;
 }
 
 async function generatePdf() {
@@ -148,15 +195,105 @@ async function removeFiling() {
   }
 }
 
+/* ── Where this value came from ────────────────────────────────────────
+ *
+ * The finding this answers: every field on this screen looked
+ * hand-typed, so a reviewer had no way to tell a business address
+ * pulled from Profile from one somebody typed over it. Sign-off on a
+ * form nobody can check is ceremony.
+ *
+ * Four states, computed server-side against the firm's data as it
+ * stands right now (disclosure_fields.provenance_for) rather than
+ * asserted from the schema — "from your Profile" printed under a value
+ * that no longer matches Profile would be a false statement on a
+ * compliance document.
+ */
+function provenanceHtml(fieldKey) {
+  const p = (filing.provenance || {})[fieldKey];
+  if (!p) return '';
+  // One link, always in the same place and always saying the same
+  // thing: the sentence changes, the way out of it doesn't.
+  const editSource = `<a href="${p.href}">Edit source</a>`;
+  let sentence;
+  if (p.state === 'inherited') {
+    sentence = `From ${escapeHtml(p.label)}.`;
+  } else if (p.state === 'edited') {
+    sentence = `Edited here. ${escapeHtml(p.label[0].toUpperCase() + p.label.slice(1))} says
+      <span class="provenance-was">${escapeHtml(p.source_value)}</span>.`;
+  } else if (p.state === 'typed') {
+    sentence = `Typed here. ${escapeHtml(p.empty_note)}`;
+  } else {
+    sentence = escapeHtml(p.empty_note);
+  }
+  return `<div class="provenance${p.state === 'edited' ? ' edited' : ''}">${sentence} ${editSource}</div>`;
+}
+
+// A DOM id per field, so the banner's jump links have somewhere to go
+// and the saved indicator has somewhere to be written. The AcroForm
+// field names are full of spaces and slashes, so they're encoded rather
+// than used raw.
+function fieldDomId(fieldKey) {
+  return 'f-' + encodeURIComponent(fieldKey).replace(/[^A-Za-z0-9]/g, '_');
+}
+
 function fieldInputHtml(field, value) {
   const type = field.kind === 'email' ? 'email' : 'text';
-  const mark = field.required ? ' <span style="color:var(--bad,#c0392b)">*</span>' : '';
+  const mark = field.required ? ' <span class="req" title="Required before this can be signed off">*</span>' : '';
+  const domId = fieldDomId(field.key);
+  const issue = (filing.issues || []).find(i => i.field_key === field.key);
   return `
-    <label style="display:block;margin-bottom:0.8rem">
-      <div class="sub" style="margin:0 0 0.3rem">${escapeHtml(field.label)}${mark}</div>
+    <label style="display:block;margin-bottom:0.8rem" id="${domId}" class="field-block${issue ? ' has-issue' : ''}">
+      <div class="field-label-row">
+        <span class="sub" style="margin:0">${escapeHtml(field.label)}${mark}</span>
+        <span class="field-saved" id="${domId}-saved" aria-live="polite"></span>
+      </div>
       <input type="${type}" data-field-key="${escapeHtml(field.key)}" data-orig="${escapeHtml(value)}"
              value="${escapeHtml(value)}" style="width:100%" onblur="saveField(this)">
+      ${issue ? `<div class="field-issue">${escapeHtml(issue.message)}</div>` : ''}
+      ${provenanceHtml(field.key)}
     </label>`;
+}
+
+/* ── What is still missing ─────────────────────────────────────────────
+ *
+ * Required fields carried a red asterisk and nothing else: no count of
+ * what was outstanding, and no way to get to it. On a five-page form
+ * that is a hunt. The banner states the number, and every row jumps to
+ * and focuses the field it names.
+ *
+ * It reads from the same disclosure_fields.field_issues() the server
+ * rejects a generate/sign with, so the page can never say "ready" about
+ * a draft the server would refuse — or list a problem that is no longer
+ * one.
+ */
+function issuesBannerHtml() {
+  const issues = filing.issues || [];
+  if (!issues.length) {
+    return `<div class="review-banner ok">Every required field on this form is filled in.</div>`;
+  }
+  const blanks = issues.filter(i => i.required).length;
+  const bad = issues.length - blanks;
+  const parts = [];
+  if (blanks) parts.push(`${blanks} required field${blanks === 1 ? '' : 's'} still blank`);
+  if (bad) parts.push(`${bad} field${bad === 1 ? '' : 's'} to fix`);
+  return `
+    <div class="review-banner" role="status">
+      <div class="review-banner-head">${parts.join(' · ')}</div>
+      <ul class="review-banner-list">
+        ${issues.map(i => `<li><button type="button" onclick="jumpToField('${escapeHtml(i.field_key)}')"
+          >${escapeHtml(i.message)}</button></li>`).join('')}
+      </ul>
+    </div>`;
+}
+
+function jumpToField(fieldKey) {
+  const block = document.getElementById(fieldDomId(fieldKey));
+  if (!block) return;
+  block.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const input = block.querySelector('input');
+  // Focus after the scroll starts rather than instead of it: focusing
+  // alone jumps the page with no sense of where it went.
+  if (input) setTimeout(() => input.focus({ preventScroll: true }), 250);
 }
 
 /* ── Client rows (P1-20) ───────────────────────────────────────────────
@@ -398,6 +535,8 @@ function render() {
       <button type="button" class="danger" onclick="removeFiling()">Delete draft</button>
     </div>
 
+    ${signed ? '' : issuesBannerHtml()}
+
     <div class="card">
       <div class="bill-title" style="margin-bottom:0.4rem">Known gaps in this draft</div>
       <div class="bill-desc">
@@ -412,7 +551,7 @@ function render() {
 
     <div class="card">
       <h2 class="section" style="margin-top:0">Business information</h2>
-      <div class="sub" style="margin:0 0 0.8rem">Edits save automatically as you leave each field.</div>
+      ${autosaveNoteHtml()}
       ${businessFieldsHtml}
     </div>
 
@@ -430,6 +569,9 @@ function render() {
     ${pdfSection}
     ${signOffSection}
   `;
+  // After the innerHTML above, not before it — the span this writes into
+  // was just replaced.
+  paintSaveState();
 }
 
 load();

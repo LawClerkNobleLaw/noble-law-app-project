@@ -1232,6 +1232,58 @@
     padding: var(--space-2) 0.75rem; margin-bottom: 0.75rem; font-size: 0.8rem;
   }
 
+  /* ── Disclosure review: making sign-off a real review (P1-21) ──
+     Three additions, all answering the same thing: sign-off recorded who
+     attested, and gave them nothing to attest against. */
+
+  /* What is still outstanding, counted, at the top, with a jump link per
+     row. A red asterisk per field says which ones matter; it does not
+     say how many are left or where they are, and on a five-page form
+     that difference is a hunt. */
+  .review-banner {
+    background: var(--warn-soft); border: 1px solid var(--rule);
+    border-radius: var(--radius-md); padding: 0.85rem 1rem; margin-bottom: 1.5rem;
+  }
+  .review-banner.ok { background: var(--good-soft); }
+  .review-banner-head { font-size: 0.9rem; font-weight: 700; margin-bottom: 0.4rem; }
+  .review-banner.ok { font-size: 0.88rem; }
+  .review-banner-list { margin: 0; padding-left: 1.1rem; display: grid; gap: 0.15rem; }
+  .review-banner-list button {
+    background: none; border: 0; padding: 0; font: inherit; font-size: 0.83rem;
+    color: var(--ink); text-align: left; cursor: pointer; text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .review-banner-list button:hover { color: var(--accent); }
+
+  .field-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); margin-bottom: 0.3rem; }
+  /* The asterisk carries a title, because a red glyph on its own means
+     "required" only to someone who already knows that convention — and
+     it is the one cue on this screen that is otherwise colour alone. */
+  .req { color: var(--error); font-weight: 700; cursor: help; }
+  .field-block.has-issue input { border-color: var(--error); }
+  .field-issue { font-size: 0.76rem; color: var(--error); margin-top: 0.25rem; }
+
+  /* Provenance. Every field on this screen looked hand-typed, so a
+     reviewer could not tell a value pulled from Profile from one typed
+     over it. `edited` is the state worth a second look, so it is the
+     one that carries weight — the others are quiet by design, since
+     "this is still what Profile says" is the resting state of most of
+     the form and should not shout on every field. */
+  .provenance { font-size: 0.74rem; color: var(--slate); margin-top: 0.25rem; }
+  .provenance a { color: inherit; }
+  .provenance.edited { color: var(--ink); }
+  .provenance-was {
+    font-weight: 600; background: var(--warn-soft);
+    border-radius: var(--radius-sm); padding: 0 0.2rem;
+  }
+
+  /* Autosave, said out loud. "Edits save automatically as you leave each
+     field" was the only evidence anything saved at all, on a screen
+     whose output is a document somebody attests to. */
+  .field-saved { font-size: 0.72rem; color: var(--slate); min-height: 1em; }
+  .field-saved.saved { color: var(--good); }
+  .field-saved.saved::before { content: "\2713\00a0"; }
+
   /* ── Disclosure review: client rows (P1-20) ──
      Only rows holding something are rendered now, so each row needs its
      own header: who is in it, which row number the PDF will use, and a

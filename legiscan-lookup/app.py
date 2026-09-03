@@ -1603,20 +1603,57 @@ def _trigger_refresh(job_name, target_fn):
     return True
 
 
-def _with_disclosure_editor_meta(filing):
+def _current_source_values(conn, user_id, form_type):
+    """What pdf_forms would fill this form with if the draft were being
+    created right now, from the firm's data as it stands today.
+
+    Only used to answer "does this value still match where it came
+    from" (see disclosure_fields.provenance_for). Nothing is written
+    from it — a draft is deliberately a snapshot, and a business address
+    changing in Profile must not silently rewrite a filing somebody is
+    part-way through reviewing. It should say so on the field instead,
+    which is exactly what this makes possible."""
+    if form_type != "601":
+        return {}
+    profile = accounts.get_profile(conn, user_id)
+    if not profile:
+        return {}
+    user_row = conn.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()
+    return pdf_forms.values_for_form_601(
+        profile,
+        db.list_clients(conn, user_id),
+        user_row["email"] if user_row else "",
+        sign_off=None,
+        today=datetime.date.today(),
+        lobbyists=db.list_org_lobbyists(conn, user_id),
+    )
+
+
+def _with_disclosure_editor_meta(filing, conn, user_id):
     """Every /api/prepared-filings* response that hands back a filing
     also needs to hand back what the disclosure editor renders it with:
     the field schema (labels/kind/required), the real client-row
     AcroForm field names (pdf_forms.CLIENT_ROW_FIELDS — the frontend
     needs the exact field_data keys to bind row inputs to), and the row
-    count. One helper so the four call sites can't drift out of sync
+    count. One helper so the six call sites can't drift out of sync
     with each other."""
-    filing["field_schema"] = disclosure_fields.sections_for_form_type(filing["form_type"])
+    form_type = filing["form_type"]
+    filing["field_schema"] = disclosure_fields.sections_for_form_type(form_type)
     filing["client_row_fields"] = pdf_forms.CLIENT_ROW_FIELDS
     filing["max_client_rows"] = pdf_forms.max_client_rows()
     # None for a form with no deadline rule yet — the editor then just
     # asks for a due date instead of naming what it's counted from.
-    filing["deadline_rule"] = disclosure_fields.deadline_rule(filing["form_type"])
+    filing["deadline_rule"] = disclosure_fields.deadline_rule(form_type)
+    # What is still wrong with this draft, structured (a key per row) so
+    # the banner can offer a jump link rather than only a sentence. The
+    # same list a rejected generate/sign already returns as prose — one
+    # source, so the banner and the rejection can't disagree.
+    filing["issues"] = disclosure_fields.field_issues(form_type, filing["field_data"])
+    # Where each pre-filled value came from, and whether it still agrees
+    # with that source. See disclosure_fields.provenance_for.
+    filing["provenance"] = disclosure_fields.provenance_for(
+        form_type, filing["field_data"], _current_source_values(conn, user_id, form_type),
+    )
     return filing
 
 
@@ -2277,7 +2314,7 @@ class Handler(BaseHTTPRequestHandler):
                     # The editor needs to know what's editable and what's
                     # required to render itself — sent alongside the
                     # filing rather than a separate round trip.
-                    self._send_json(200, _with_disclosure_editor_meta(filing))
+                    self._send_json(200, _with_disclosure_editor_meta(filing, conn, user_id))
                 else:
                     self._send_json(200, db.list_prepared_filings(conn, user_id))
             finally:
@@ -3152,7 +3189,7 @@ class Handler(BaseHTTPRequestHandler):
                     conn, user_id, form_type, body.get("period_label"), field_data, client_row_ids=client_row_ids,
                 )
                 conn.commit()
-                self._send_json(200, _with_disclosure_editor_meta(db.get_prepared_filing(conn, user_id, filing_id)))
+                self._send_json(200, _with_disclosure_editor_meta(db.get_prepared_filing(conn, user_id, filing_id), conn, user_id))
             finally:
                 conn.close()
             return
@@ -3197,7 +3234,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(400, {"error": str(e)})
                     return
                 conn.commit()
-                self._send_json(200, _with_disclosure_editor_meta(filing))
+                self._send_json(200, _with_disclosure_editor_meta(filing, conn, user_id))
             finally:
                 conn.close()
             return
@@ -3241,7 +3278,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(400, {"error": str(e)})
                     return
                 conn.commit()
-                self._send_json(200, _with_disclosure_editor_meta(filing))
+                self._send_json(200, _with_disclosure_editor_meta(filing, conn, user_id))
             finally:
                 conn.close()
             return
@@ -3298,7 +3335,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(400, {"error": str(e)})
                     return
                 conn.commit()
-                self._send_json(200, _with_disclosure_editor_meta(filing))
+                self._send_json(200, _with_disclosure_editor_meta(filing, conn, user_id))
             finally:
                 conn.close()
             return
@@ -3333,7 +3370,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(400, {"error": str(e)})
                     return
                 conn.commit()
-                self._send_json(200, _with_disclosure_editor_meta(filing))
+                self._send_json(200, _with_disclosure_editor_meta(filing, conn, user_id))
             finally:
                 conn.close()
             return
