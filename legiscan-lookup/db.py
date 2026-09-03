@@ -19,6 +19,8 @@ import hashlib
 import json
 import os
 import sqlite3
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import config
 
@@ -314,7 +316,56 @@ def unflag_bill(conn, user_id, bill_id):
         remove_from_watchlist(conn, bill_id)
 
 
-def list_flagged_bills(conn, user_id):
+def _days_between(start, end):
+    """Whole days from one ISO 'YYYY-MM-DD' string to another, or None if
+    either won't parse. Counted in dates, never in elapsed hours, so a
+    hearing tomorrow morning is 1 rather than 0."""
+    try:
+        first = datetime.strptime(start, "%Y-%m-%d").date()
+        second = datetime.strptime(end, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+    return (second - first).days
+
+
+def _next_hearings_for_bills(conn, bill_ids, today):
+    """The soonest still-to-come hearing for each of these bills, keyed by
+    bill_id, with days_until precomputed — what the flagged list's Next
+    action column and its urgency sort are built from.
+
+    days_until is worked out here rather than in the browser so the
+    countdown is measured from the same California clock the "still to
+    come" cut was made with (see today_in_california), instead of from
+    whatever timezone the user's laptop happens to be set to.
+
+    Undated hearings are skipped, unlike on the calendar: this column
+    answers "when do I have to act," and a hearing LegiScan hasn't put a
+    date on can't answer that. The calendar shows them because there the
+    question is "what exists," not "what's next.\""""
+    if not bill_ids:
+        return {}
+    placeholders = ",".join("?" for _ in bill_ids)
+    rows = conn.execute(
+        f"""SELECT bill_id, date, time, event_type, location, description
+            FROM bill_hearings
+            WHERE bill_id IN ({placeholders})
+              AND date IS NOT NULL AND date != '' AND date >= ?
+            ORDER BY date, time""",
+        (*bill_ids, today),
+    ).fetchall()
+
+    # Rows arrive soonest-first, so the first one seen for a bill is its next.
+    next_by_bill = {}
+    for row in rows:
+        if row["bill_id"] in next_by_bill:
+            continue
+        hearing = dict(row)
+        hearing["days_until"] = _days_between(today, hearing["date"])
+        next_by_bill[row["bill_id"]] = hearing
+    return next_by_bill
+
+
+def list_flagged_bills(conn, user_id, today=None):
     rows = conn.execute(
         """SELECT f.bill_id, f.flagged_at, w.last_checked_at,
                   b.state, b.bill_number, b.title, b.status_label, b.status_date, b.url,
@@ -328,34 +379,101 @@ def list_flagged_bills(conn, user_id):
         (user_id,),
     ).fetchall()
     result = [dict(r) for r in rows]
-    clients_by_bill = clients_for_bills(conn, user_id, [r["bill_id"] for r in result])
+    bill_ids = [r["bill_id"] for r in result]
+    clients_by_bill = clients_for_bills(conn, user_id, bill_ids)
+    next_hearings = _next_hearings_for_bills(conn, bill_ids, today or today_in_california())
     for r in result:
         r["assigned_clients"] = clients_by_bill.get(r["bill_id"], [])
+        # None for a bill with nothing scheduled — the column says so in
+        # words rather than leaving the cell blank.
+        r["next_hearing"] = next_hearings.get(r["bill_id"])
     return result
 
 
-def list_hearings_for_flagged_bills(conn, user_id):
-    """Every scheduled hearing across every bill this user has flagged,
-    flattened into one list and annotated with which bill each one
-    belongs to — for the /flagged/calendar view. Pure aggregation of
-    what the daily refresh job (refresh_watchlist.py) already stores
+CAPITOL_TZ = "America/Los_Angeles"
+
+
+def today_in_california():
+    """Today's date in Sacramento, as an ISO 'YYYY-MM-DD' string.
+
+    Every deadline this app deals with — hearing dates, FPPC filing
+    dates — is a California date, so "is this still upcoming?" has to be
+    asked in Pacific rather than in the server's clock. Hosted on Render
+    the process runs UTC, which rolls over to tomorrow at 4pm or 5pm
+    local; asking there would drop a hearing off the calendar during the
+    working afternoon of the very day it happens.
+
+    A string rather than a date object because every date column in this
+    schema is TEXT in that same ISO format (LegiScan hands them over that
+    way), so comparisons stay plain lexicographic string comparisons on
+    both sides — no parsing, no date() conversion."""
+    try:
+        tz = ZoneInfo(CAPITOL_TZ)
+    except Exception:
+        # No system tz database. Rare, and not worth taking the calendar
+        # down over — UTC runs ahead of Pacific, so the fallback's worst
+        # case is the early-rollover described above rather than a
+        # hearing that never appears at all.
+        tz = timezone.utc
+    return datetime.now(tz).strftime("%Y-%m-%d")
+
+
+def list_hearings_for_flagged_bills(conn, user_id, today=None):
+    """Every hearing across every bill this user has flagged, split into
+    upcoming and past — for the /flagged/calendar view. Pure aggregation
+    of what the daily refresh job (refresh_watchlist.py) already stores
     in bill_hearings for each bill it watches; no new LegiScan call
     happens here, just a join across tables that already exist.
 
-    Not date-filtered to "upcoming" the way the action report's own
-    upcoming_hearings is — the calendar's job is showing the whole
-    picture across every flagged bill, past and future, so a user can
-    see what already happened as well as what's next."""
+    Split, and sorted in opposite directions, because the two halves
+    answer different questions: upcoming runs soonest-first (what do I
+    have to prepare for), past runs newest-first (what just happened).
+    That ordering is settled here rather than in the template because the
+    calendar groups *consecutive* same-date rows into a day — it depends
+    on rows arriving already in the order they'll be displayed, so a
+    re-sort in JS would silently shatter the day groups.
+
+    A hearing with no date at all counts as upcoming: LegiScan has told
+    us a hearing exists without saying when, and that's something the
+    user still needs to see rather than something to file under history.
+
+    Returns the flagged-bill count alongside, so an empty calendar can
+    say which bills it actually checked, and `today` so the view marks
+    the current day from the same clock the split was made with instead
+    of re-deriving it from whatever timezone the browser is in."""
     rows = conn.execute(
         """SELECT h.id, h.bill_id, h.event_type, h.date, h.time, h.location, h.description,
                   b.state, b.bill_number, b.title
            FROM bill_hearings h
            JOIN bills b ON b.id = h.bill_id
-           JOIN flagged_bills f ON f.bill_id = h.bill_id AND f.user_id = ?
-           ORDER BY h.date, h.time""",
+           JOIN flagged_bills f ON f.bill_id = h.bill_id AND f.user_id = ?""",
         (user_id,),
     ).fetchall()
-    return [dict(r) for r in rows]
+
+    today = today or today_in_california()
+    upcoming, past = [], []
+    for row in rows:
+        hearing = dict(row)
+        if not hearing["date"] or hearing["date"] >= today:
+            upcoming.append(hearing)
+        else:
+            past.append(hearing)
+
+    # Undated hearings sort on '' and so land at the top of upcoming,
+    # which is where an unscheduled-but-real hearing belongs.
+    upcoming.sort(key=lambda h: (h["date"] or "", h["time"] or ""))
+    past.sort(key=lambda h: (h["date"] or "", h["time"] or ""), reverse=True)
+
+    flagged_count = conn.execute(
+        "SELECT COUNT(*) FROM flagged_bills WHERE user_id = ?", (user_id,)
+    ).fetchone()[0]
+
+    return {
+        "today": today,
+        "flagged_count": flagged_count,
+        "upcoming": upcoming,
+        "past": past,
+    }
 
 
 def list_sponsor_vote_rollup(conn, user_id):

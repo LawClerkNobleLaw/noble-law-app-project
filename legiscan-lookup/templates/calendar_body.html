@@ -3,18 +3,28 @@
 <div class="page-head">
   <div>
     <h1>Hearing calendar</h1>
-    <p class="sub">Every scheduled hearing across your flagged bills, grouped by day.</p>
+    <p class="sub">Hearings across the bills you've flagged. Upcoming first — past hearings are still here, behind the toggle. All times Pacific.</p>
   </div>
 </div>
 
 <div id="error" role="alert" aria-live="assertive"></div>
 <div id="loading"><span class="spinner"></span>Loading…</div>
+<div class="filter-tabs" id="tabs"></div>
 <div id="calendar"></div>
 
+<script src="{{HEARING_TIME_SRC}}"></script>
 <script>
 const calendarEl = document.getElementById('calendar');
+const tabsEl = document.getElementById('tabs');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
+
+// Set from /api/flagged/calendar. `today` comes from the server so the
+// Today marker agrees with the upcoming/past split that was already made
+// there — deriving it from the browser clock would disagree for anyone
+// working outside Pacific.
+let data = { today: '', flagged_count: 0, upcoming: [], past: [] };
+let activeView = 'upcoming';
 
 function fmtDay(dateStr) {
   if (!dateStr) return 'Date to be determined';
@@ -23,14 +33,59 @@ function fmtDay(dateStr) {
   return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 }
 
-function render(rows) {
+// Both arguments are ISO 'YYYY-MM-DD' strings parsed at local midnight, so
+// this counts calendar days apart and never trips over a partial day.
+function daysFromToday(dateStr) {
+  if (!dateStr || !data.today) return null;
+  const then = new Date(dateStr + 'T00:00:00');
+  const now = new Date(data.today + 'T00:00:00');
+  if (isNaN(then.getTime()) || isNaN(now.getTime())) return null;
+  return Math.round((then - now) / 86400000);
+}
+
+function dayBadge(dateStr) {
+  const n = daysFromToday(dateStr);
+  if (n === null) return '<span class="tag">Not scheduled</span>';
+  if (n === 0) return '<span class="tag">Today</span>';
+  if (n === 1) return '<span class="tag">Tomorrow</span>';
+  if (n > 1 && n <= 7) return `<span class="tag">In ${n} days</span>`;
+  return '';
+}
+
+function emptyMessage() {
+  const n = data.flagged_count;
+  if (!n) {
+    return 'You haven\'t flagged any bills yet, so there\'s nothing to put on a calendar. <a href="/lookup">Find a bill to track →</a>';
+  }
+  const bills = n === 1 ? '1 flagged bill' : `${n} flagged bills`;
+  return activeView === 'upcoming'
+    ? `No upcoming hearings on your ${bills}. Nothing is scheduled — this is checked every morning.`
+    : `No past hearings recorded on your ${bills}.`;
+}
+
+function renderTabs() {
+  const views = [['upcoming', 'Upcoming'], ['past', 'Past']];
+  tabsEl.innerHTML = views.map(([value, label]) =>
+    `<button type="button" class="filter-tab ${value === activeView ? 'active' : ''}" onclick="setView('${value}')">${label}<span class="n">${data[value].length}</span></button>`
+  ).join('');
+}
+
+function setView(view) {
+  activeView = view;
+  renderTabs();
+  render();
+}
+
+function render() {
+  const rows = data[activeView] || [];
   if (!rows.length) {
-    calendarEl.innerHTML = '<p class="empty">No hearings scheduled across your flagged bills yet.</p>';
+    calendarEl.innerHTML = `<p class="empty">${emptyMessage()}</p>`;
     return;
   }
 
-  // rows already arrive sorted by date/time from the API — this just
-  // buckets consecutive same-date rows into a group, presentation-only.
+  // rows already arrive sorted from the API — ascending for upcoming,
+  // descending for past — so this just buckets consecutive same-date rows
+  // into a group. Presentation-only; don't re-sort here (see db.py).
   const groups = [];
   let current = null;
   for (const h of rows) {
@@ -44,7 +99,10 @@ function render(rows) {
 
   calendarEl.innerHTML = groups.map(g => `
     <div class="panel" style="margin-bottom:1rem">
-      <div class="panel-head"><div class="title">${fmtDay(g.key)}</div></div>
+      <div class="panel-head">
+        <div class="title">${fmtDay(g.key)}</div>
+        ${activeView === 'upcoming' ? dayBadge(g.key) : ''}
+      </div>
       <div>
         ${g.rows.map(h => `
           <div class="bill-row hearing-row">
@@ -52,7 +110,7 @@ function render(rows) {
               <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2.5" width="10" height="9.5" rx="1"/><path d="M2 5.5h10M5 1.5v2M9 1.5v2" stroke-linecap="round"/></svg>
             </div>
             <div style="flex:1;min-width:0">
-              <div class="bill-title">${h.event_type || 'Hearing'}${h.time ? ' · ' + h.time : ''}</div>
+              <div class="bill-title">${h.event_type || 'Hearing'} · ${hearingTimeLabel(h.time)}</div>
               <div class="bill-id"><a href="/report?bill_id=${h.bill_id}">${h.state} ${h.bill_number}</a> — ${h.title || ''}</div>
               ${(h.location || h.description) ? `<div class="sub" style="margin:0.3rem 0 0;font-size:0.78rem">${[h.location, h.description].filter(Boolean).join(' — ')}</div>` : ''}
             </div>
@@ -63,9 +121,15 @@ function render(rows) {
   `).join('');
 }
 
-fetch('/api/flagged/calendar').then(r => r.json()).then(rows => {
+fetch('/api/flagged/calendar').then(r => r.json()).then(payload => {
   loadingEl.className = '';
-  render(rows);
+  data = payload;
+  // Upcoming stays the default even when it's empty. "No upcoming hearings
+  // on your 6 flagged bills" is the answer the user came for; falling back
+  // to Past would hand them 18 months of history and let them conclude
+  // nothing had been checked — which is the bug this split exists to fix.
+  renderTabs();
+  render();
 }).catch(() => {
   loadingEl.className = '';
   errorEl.textContent = 'Could not load the calendar.';

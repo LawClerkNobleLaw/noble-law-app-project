@@ -25,6 +25,7 @@
       <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.75rem;color:var(--slate)">
         Sort by
         <select id="sort-by" style="font-size:0.78rem;padding:0.3rem 0.5rem">
+          <option value="next_action">Next action</option>
           <option value="bill_number">Bill number</option>
           <option value="title">Alphabetical</option>
           <option value="client">Client</option>
@@ -37,6 +38,7 @@
   <div id="list"></div>
 </div>
 
+<script src="{{HEARING_TIME_SRC}}"></script>
 <script src="{{CLIENT_QUICKADD_SRC}}"></script>
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script src="{{TITLE_CASE_SRC}}"></script>
@@ -63,8 +65,13 @@ let activeFilter = 'all';
 // SQLite's own string ordering here. Persisted across reloads —
 // same localStorage pattern THEME_INIT_SCRIPT uses for the dark-mode
 // toggle, just scoped to this page's own key.
+// Defaults to next_action: urgency is the ordering a list of tracked
+// bills is actually read in, and alphabetical-by-anything buries the one
+// with a hearing on Monday. Only ever written on an explicit change, so
+// a user who has picked a sort before keeps theirs and only people who
+// never touched it move to the new default.
 const SORT_STORAGE_KEY = 'flaggedBills.sortBy';
-let sortBy = localStorage.getItem(SORT_STORAGE_KEY) || 'bill_number';
+let sortBy = localStorage.getItem(SORT_STORAGE_KEY) || 'next_action';
 if (sortSelectEl) sortSelectEl.value = sortBy;
 
 function firstClientName(r) {
@@ -72,7 +79,26 @@ function firstClientName(r) {
   return names[0] || '';
 }
 
+// days_until comes precomputed from the server (see
+// db._next_hearings_for_bills) so the countdown is measured from
+// California's date, not the browser's. null means nothing scheduled.
+function daysUntilNext(r) {
+  return r.next_hearing ? r.next_hearing.days_until : null;
+}
+
 function sortRows(rows) {
+  if (sortBy === 'next_action') {
+    // Soonest deadline first; bills with nothing scheduled fall to the
+    // end (they're the ones with no action to be late for), ordered by
+    // bill number among themselves so the tail isn't arbitrary.
+    return rows.slice().sort((a, b) => {
+      const ad = daysUntilNext(a), bd = daysUntilNext(b);
+      if (ad === null && bd === null) return (a.bill_number || '').localeCompare(b.bill_number || '');
+      if (ad === null) return 1;
+      if (bd === null) return -1;
+      return ad - bd;
+    });
+  }
   if (sortBy === 'title') {
     return rows.slice().sort((a, b) => (a.title || '').localeCompare(b.title || ''));
   }
@@ -145,10 +171,16 @@ function renderStats() {
   `;
 }
 
-const FILTERS = [['all', 'All'], ['support', 'Support'], ['oppose', 'Oppose'], ['watch', 'Watch']];
+const FILTERS = [['all', 'All'], ['urgent', 'Hearing this week'], ['support', 'Support'], ['oppose', 'Oppose'], ['watch', 'Watch']];
 
 function matchesFilter(r, filter) {
   if (filter === 'all') return true;
+  // 'urgent' filters on the deadline rather than on a client position,
+  // so it sits alongside the position tabs without being one of them.
+  if (filter === 'urgent') {
+    const days = daysUntilNext(r);
+    return days !== null && days <= 7;
+  }
   return (r.assigned_clients || []).some(c => (c.position || 'watch') === filter);
 }
 
@@ -213,6 +245,59 @@ function fmtDateTime(iso) {
   const d = new Date(iso.includes('Z') || iso.includes('+') ? iso : iso + 'Z');
   if (isNaN(d)) return iso;
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+// "Sep 8" — the year is only worth the width when it isn't the obvious one.
+function fmtShortDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d.getTime())) return dateStr;
+  const opts = { month: 'short', day: 'numeric' };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString('en-US', opts);
+}
+
+// Statuses where the bill has stopped moving, so there is no next date
+// to wait for. Keyed on the same lowercase status_label the Status column
+// shows, which is a small closed vocabulary from LegiScan.
+const TERMINAL_STATUSES = {
+  failed: 'This bill is dead',
+  vetoed: 'Vetoed by the Governor',
+  passed: 'Passed the Legislature',
+};
+
+// What this bill needs from the user next, in the shapes the data
+// actually supports: a scheduled hearing, a bill sitting on the
+// Governor's desk, or nothing dated. Deliberately not guessing beyond
+// those — an invented "next step" on a compliance screen is worse than
+// an honest "No date set".
+function nextActionCell(r) {
+  const hearing = r.next_hearing;
+  if (hearing) {
+    const days = hearing.days_until;
+    const where = hearing.location || hearing.description || hearing.event_type || '';
+    let chip = '';
+    if (days === 0) chip = '<span class="next-chip now">Today</span>';
+    else if (days === 1) chip = '<span class="next-chip now">Tomorrow</span>';
+    else if (days !== null && days <= 7) chip = `<span class="next-chip">In ${days} days</span>`;
+    return `
+      <div class="next-when">${fmtShortDate(hearing.date)} · ${hearingTimeLabel(hearing.time)}</div>
+      ${where ? `<div class="next-where">${where}</div>` : ''}
+      ${chip}
+    `;
+  }
+  const status = (r.status_label || '').toLowerCase();
+  if (status === 'enrolled') {
+    return '<div class="next-when">Awaiting signature</div><div class="next-where">Sent to the Governor</div>';
+  }
+  // A bill that's finished moving needs to say so. "No date set" on a
+  // dead bill reads as "a date hasn't been announced yet" and quietly
+  // invites the user to keep waiting for one. Each sub-line just restates
+  // the status field rather than inferring anything past it.
+  if (TERMINAL_STATUSES[status]) {
+    return `<div class="next-when none">No further action</div><div class="next-where">${TERMINAL_STATUSES[status]}</div>`;
+  }
+  return '<div class="next-when none">No date set</div>';
 }
 
 async function unflag(billId) {
@@ -412,7 +497,7 @@ function render(rows) {
   listEl.innerHTML = `
     <div style="overflow-x:auto">
     <table>
-      <thead><tr><th>Bill</th><th>Status</th><th>Last checked</th><th>Clients &amp; positions</th><th></th></tr></thead>
+      <thead><tr><th>Bill</th><th>Next action</th><th>Status</th><th class="col-checked">Last checked</th><th>Clients &amp; positions</th></tr></thead>
       <tbody>
       ${rows.map(r => `
         <tr>
@@ -421,9 +506,17 @@ function render(rows) {
               <div class="bill-icon">
                 <svg viewBox="0 0 14 14" fill="currentColor"><rect x="1" y="1" width="5" height="5" rx="1"/><rect x="8" y="1" width="5" height="5" rx="1"/><rect x="1" y="8" width="5" height="5" rx="1"/><rect x="8" y="8" width="5" height="5" rx="1"/></svg>
               </div>
-              <div>
-                <div class="bill-title">${r.title || ''}</div>
-                <div class="bill-id">${r.state} ${r.bill_number}</div>
+              <div class="bill-main">
+                <div class="bill-ident">${r.state} ${r.bill_number}</div>
+                <div class="bill-name" title="${(r.title || '').replace(/"/g, '&quot;')}">${r.title || ''}</div>
+              </div>
+              <div class="row-menu">
+                <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, ${r.bill_id})" aria-label="Bill actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-${r.bill_id}">
+                  <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
+                </button>
+                <div class="row-menu-dropdown" id="row-menu-${r.bill_id}">
+                  <button type="button" onclick="unflag(${r.bill_id})">Unflag this bill</button>
+                </div>
               </div>
             </div>
             <div class="row-actions">
@@ -431,17 +524,10 @@ function render(rows) {
               <a class="secondary" href="/report?bill_id=${r.bill_id}">Report</a>
             </div>
           </td>
+          <td class="next-action">${nextActionCell(r)}</td>
           <td>${r.status_label ? `<span class="status-badge">${r.status_label}</span>` : ''}</td>
-          <td class="date">${fmtDateTime(r.last_checked_at)}</td>
+          <td class="date col-checked">${fmtDateTime(r.last_checked_at)}</td>
           <td>${clientCell(r)}</td>
-          <td class="row-menu">
-            <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, ${r.bill_id})" aria-label="Bill actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-${r.bill_id}">
-              <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
-            </button>
-            <div class="row-menu-dropdown" id="row-menu-${r.bill_id}">
-              <button type="button" onclick="unflag(${r.bill_id})">Unflag this bill</button>
-            </div>
-          </td>
         </tr>
       `).join('')}
       </tbody>

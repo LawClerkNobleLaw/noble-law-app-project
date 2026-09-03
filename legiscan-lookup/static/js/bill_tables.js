@@ -47,7 +47,7 @@ function amendmentRowsHtml(amendments) {
 function hearingRowsHtml(hearings) {
   return (hearings || []).map(h => `
     <tr>
-      <td class="date">${h.date || ''}${h.time ? ' ' + h.time : ''}</td>
+      <td class="date">${h.date || ''} ${hearingTimeLabel(h.time)}</td>
       <td class="chamber">${h.event_type || ''}</td>
       <td>${h.description || ''}${h.location ? ` — ${h.location}` : ''}</td>
     </tr>

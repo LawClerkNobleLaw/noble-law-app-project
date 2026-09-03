@@ -4,6 +4,7 @@
 <div id="loading" class="show"><span class="spinner"></span>Loading…</div>
 <div id="report"></div>
 
+<script src="{{HEARING_TIME_SRC}}"></script>
 <script src="{{BILL_TABLES_SRC}}"></script>
 <script src="{{CLIENT_QUICKADD_SRC}}"></script>
 <script>
@@ -198,7 +199,7 @@ function render(r) {
     <div class="panel" style="margin-top:1rem">
       <div class="panel-head"><div class="title">Upcoming hearings</div></div>
       ${hearingRows
-        ? `<div style="overflow-x:auto"><table><thead><tr><th>When</th><th>Type</th><th>Details</th></tr></thead><tbody>${hearingRows}</tbody></table></div>`
+        ? `<div style="overflow-x:auto"><table><thead><tr><th>When (PT)</th><th>Type</th><th>Details</th></tr></thead><tbody>${hearingRows}</tbody></table></div>`
         : '<p class="empty" style="padding:1rem 1.15rem">No upcoming hearings scheduled.</p>'}
     </div>
 
