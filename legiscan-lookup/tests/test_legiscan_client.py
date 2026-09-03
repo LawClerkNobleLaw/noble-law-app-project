@@ -136,3 +136,123 @@ def test_smart_search_pure_digit_query_with_no_matches_does_not_fall_back(monkey
 
     assert len(calls) == 1
     assert result["results"] == []
+
+
+# ── derived row fields and multi-page search (P1-11) ─────────────────
+#
+# getSearch's rows carry no sponsor, no committee, no session field and
+# no matched-text snippet (checked live). Chamber, measure type and
+# session year are therefore derived from two fields that ARE there —
+# the bill number and the result's own LegiScan URL — and these are what
+# the search page's filters run on. If the derivation is wrong, every
+# filter silently hides the wrong bills, so it is pinned here.
+
+
+def _row_with_url(bill_id, bill_number, url, **kwargs):
+    row = _search_result(bill_id, bill_number, "A bill.", **kwargs)
+    row["url"] = url
+    return row
+
+
+def test_search_rows_derive_chamber_type_and_session(monkeypatch):
+    monkeypatch.setattr(legiscan_client, "legiscan_call", lambda op, **p: _ok_response([
+        _row_with_url(1, "AB1", "https://legiscan.com/CA/bill/AB1/2025", relevance="900"),
+        _row_with_url(2, "SB2", "https://legiscan.com/CA/bill/SB2/2023", relevance="800"),
+        _row_with_url(3, "SCA4", "https://legiscan.com/CA/bill/SCA4/2025", relevance="700"),
+        _row_with_url(4, "ACR9", "https://legiscan.com/CA/bill/ACR9/2025", relevance="600"),
+    ]))
+
+    rows = legiscan_client.smart_search("housing")["results"]
+    derived = {r["bill_number"]: (r["chamber"], r["measure_type"], r["session_year"]) for r in rows}
+
+    assert derived["AB1"] == ("Assembly", "Bill", 2025)
+    assert derived["SB2"] == ("Senate", "Bill", 2023)
+    # A constitutional amendment is not a resolution, and a lobbyist
+    # filtering resolutions out should not lose it.
+    assert derived["SCA4"] == ("Senate", "Constitutional amendment", 2025)
+    assert derived["ACR9"] == ("Assembly", "Resolution", 2025)
+
+
+def test_search_rows_survive_a_missing_url(monkeypatch):
+    monkeypatch.setattr(legiscan_client, "legiscan_call", lambda op, **p: _ok_response([
+        _search_result(1, "AB1", "No url on this row."),
+    ]))
+    row = legiscan_client.smart_search("housing")["results"][0]
+    assert row["session_year"] is None
+    assert row["chamber"] == "Assembly"
+
+
+def test_search_pulls_every_page_and_dedupes(monkeypatch):
+    # The page filters and sorts across the whole result set, so it asks
+    # for the whole result set. LegiScan pages a result set that is still
+    # moving, so the same bill can arrive on two pages — the higher
+    # relevance copy is the one kept.
+    pages = {
+        1: _ok_response([_row_with_url(1, "AB1", "u/2025", relevance="900"),
+                         _row_with_url(2, "AB2", "u/2025", relevance="800")],
+                        page_current=1, page_total=3, count=5),
+        2: _ok_response([_row_with_url(2, "AB2", "u/2025", relevance="10"),
+                         _row_with_url(3, "AB3", "u/2025", relevance="700")],
+                        page_current=2, page_total=3),
+        3: _ok_response([_row_with_url(4, "AB4", "u/2025", relevance="600")],
+                        page_current=3, page_total=3),
+    }
+    seen = []
+
+    def fake_call(op, **params):
+        seen.append(params.get("page"))
+        return pages[params["page"]]
+
+    monkeypatch.setattr(legiscan_client, "legiscan_call", fake_call)
+
+    result = legiscan_client.smart_search("housing", pages=4)
+
+    assert sorted(seen) == [1, 2, 3]          # asked for exactly the pages that exist
+    assert [r["bill_id"] for r in result["results"]] == [1, 2, 3, 4]
+    # count is what we are actually holding, not LegiScan's own summary
+    # figure — live, those disagree, and the page prints this one.
+    assert result["count"] == 4
+    assert result["reported_count"] == 5
+    assert result["complete"] is True
+
+
+def test_search_reports_itself_incomplete_past_the_page_cap(monkeypatch):
+    monkeypatch.setattr(legiscan_client, "legiscan_call", lambda op, **p: _ok_response(
+        [_row_with_url(p["page"], "AB%d" % p["page"], "u/2025")],
+        page_current=p["page"], page_total=31, count=1504,
+    ))
+
+    result = legiscan_client.smart_search("housing", pages=legiscan_client.SEARCH_PAGE_CAP)
+
+    # Filters applied to this are filters over a prefix, and the page
+    # has to say so rather than presenting it as the whole set.
+    assert result["complete"] is False
+    assert result["count"] == legiscan_client.SEARCH_PAGE_CAP
+    assert result["reported_count"] == 1504
+
+
+def test_free_text_search_passes_the_year_through(monkeypatch):
+    seen = {}
+
+    def fake_call(op, **params):
+        seen.update(params)
+        return _ok_response([_row_with_url(1, "AB1", "u/2025")])
+
+    monkeypatch.setattr(legiscan_client, "legiscan_call", fake_call)
+    legiscan_client.smart_search("housing", year=legiscan_client.YEAR_ALL_SESSIONS)
+    assert seen["year"] == legiscan_client.YEAR_ALL_SESSIONS
+
+
+def test_bill_number_search_is_never_year_filtered(monkeypatch):
+    # Someone typing a bill number wants that bill. Hiding the 2023 one
+    # that shares its number would be the search lying about what exists.
+    seen = {}
+
+    def fake_call(op, **params):
+        seen.update(params)
+        return _ok_response([_row_with_url(1, "AB122", "u/2023")])
+
+    monkeypatch.setattr(legiscan_client, "legiscan_call", fake_call)
+    legiscan_client.smart_search("AB122", year=legiscan_client.YEAR_CURRENT_SESSION, pages=4)
+    assert "year" not in seen
+    assert seen["bill"] == "AB122"
