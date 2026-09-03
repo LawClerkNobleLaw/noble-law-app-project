@@ -105,6 +105,12 @@ PORT = config.PORT
 # anywhere (and Render's own start command) finds them the same way.
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
+# How many bills one "flag selected" can take. Each is its own getBill
+# call against LegiScan (see /api/flag-bulk), so this is a quota and
+# latency bound, not a UI one — a request for fifty would sit there
+# for the better part of a minute.
+MAX_BULK_FLAG = 25
+
 JS_CONTENT_TYPE = "application/javascript; charset=utf-8"
 
 
@@ -1051,6 +1057,9 @@ LANDING_PAGE = _render_template(
 LOOKUP_BODY = _render_template(
     "lookup_body.html",
     BILL_STATUS_SRC=BILL_STATUS_SRC,
+    POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
+    TITLE_CASE_SRC=TITLE_CASE_SRC,
+    TOAST_SRC=TOAST_SRC,
     top_nav=''.join(('<div class="skeleton-row">\n      <div class="skeleton-bar" style="width:10%"></div>\n      <div class="skeleton-bar" style="width:45%"></div>\n      <div class="skeleton-bar" style="width:14%"></div>\n      <div class="skeleton-bar" style="width:12%"></div>\n    </div>' for _ in range(3))),
 )
 
@@ -2340,10 +2349,33 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 data = smart_search(q, page=page)
-                self._send_json(200, data)
             except Exception:
                 traceback.print_exc()
                 self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
+                return
+            # Annotate each row with what this user already tracks. A
+            # search of 119 results across three pages otherwise asks
+            # them to re-evaluate bills they settled last week — the flag
+            # state is one indexed read away, and the row can carry it.
+            # Signed-out visitors get the results unannotated rather than
+            # an error; search doesn't require an account.
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if user_id:
+                    tracking = db.tracking_for_bills(
+                        conn, user_id, [r["bill_id"] for r in data.get("results", []) if r.get("bill_id")]
+                    )
+                    for row in data.get("results", []):
+                        tracked = tracking.get(row.get("bill_id"))
+                        row["flagged"] = bool(tracked)
+                        row["clients"] = tracked["clients"] if tracked else []
+                    data["signed_in"] = True
+                else:
+                    data["signed_in"] = False
+            finally:
+                conn.close()
+            self._send_json(200, data)
             return
 
         self._send_json(404, {"error": "Not found."})
@@ -2488,6 +2520,74 @@ class Handler(BaseHTTPRequestHandler):
                 db.flag_bill(conn, user_id, bill_id)
                 conn.commit()
                 self._send_json(200, {"status": "flagged"})
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/flag-bulk":
+            # Triage of a new-bill sweep is a bulk activity: a session is
+            # thirty bills skimmed and four flagged. Doing that one at a
+            # time through /api/flag meant four page round trips plus
+            # three re-searches, so this takes the whole selection at
+            # once — and optionally assigns every one of them to a client
+            # in the same request, since "flag these four for UCSA" is
+            # the actual thought behind the selection.
+            #
+            # Still one getBill per bill (see /api/flag on why the detail
+            # is re-fetched rather than trusted from the browser), which
+            # is the real cost and why the selection is capped. What this
+            # saves is the navigation, not the API calls.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            raw_ids = body.get("bill_ids")
+            if not isinstance(raw_ids, list) or not raw_ids:
+                self._send_json(400, {"error": "Pick at least one bill to flag."})
+                return
+            try:
+                bill_ids = [int(b) for b in raw_ids]
+            except (ValueError, TypeError):
+                self._send_json(400, {"error": "bill_ids must be numbers."})
+                return
+            if len(bill_ids) > MAX_BULK_FLAG:
+                self._send_json(400, {
+                    "error": f"Flag up to {MAX_BULK_FLAG} bills at a time. "
+                             "Each one is a separate lookup against LegiScan."
+                })
+                return
+
+            client_id = body.get("client_id")
+            position = body.get("position") or "watch"
+
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to flag bills.")
+                if not user_id:
+                    return
+                flagged, failed = [], []
+                for bill_id in bill_ids:
+                    try:
+                        bill = get_bill_detail(bill_id)
+                    except Exception:
+                        # One unreachable bill shouldn't lose the other
+                        # three. Reported per-bill below rather than
+                        # failing the whole request.
+                        traceback.print_exc()
+                        failed.append(bill_id)
+                        continue
+                    db.upsert_bill(conn, bill)
+                    db.flag_bill(conn, user_id, bill_id)
+                    if client_id:
+                        try:
+                            db.link_bill_to_client(conn, user_id, bill_id, int(client_id), position)
+                        except ValueError as e:
+                            self._send_json(400, {"error": str(e)})
+                            return
+                    flagged.append(bill_id)
+                conn.commit()
+                self._send_json(200, {"flagged": flagged, "failed": failed})
             finally:
                 conn.close()
             return
