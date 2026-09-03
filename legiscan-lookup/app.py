@@ -527,6 +527,8 @@ STYLE = STYLE.replace("__BRAND_MARK_SVG_B64__", BRAND_MARK_SVG_B64)
 BILL_TABLES_JS = _read_static_text("js/bill_tables.js")
 HEARING_TIME_JS = _read_static_text("js/hearing_time.js")
 BILL_STATUS_JS = _read_static_text("js/bill_status.js")
+POSITION_HISTORY_JS = _read_static_text("js/position_history.js")
+TOAST_JS = _read_static_text("js/toast.js")
 BILL_CLIENTS_JS = _read_static_text("js/bill_clients.js")
 CLIENT_QUICKADD_JS = _read_static_text("js/client_quickadd.js")
 CONFIRM_DELETE_JS = _read_static_text("js/confirm_delete.js")
@@ -543,6 +545,8 @@ STATIC_ASSETS = {
     "js/bill_tables.js": (BILL_TABLES_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/hearing_time.js": (HEARING_TIME_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/bill_status.js": (BILL_STATUS_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/position_history.js": (POSITION_HISTORY_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/toast.js": (TOAST_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/bill_clients.js": (BILL_CLIENTS_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/client_quickadd.js": (CLIENT_QUICKADD_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/confirm_delete.js": (CONFIRM_DELETE_JS.encode("utf-8"), JS_CONTENT_TYPE),
@@ -554,6 +558,8 @@ STYLE_HREF = _asset_url("style.css")
 BILL_TABLES_SRC = _asset_url("js/bill_tables.js")
 HEARING_TIME_SRC = _asset_url("js/hearing_time.js")
 BILL_STATUS_SRC = _asset_url("js/bill_status.js")
+POSITION_HISTORY_SRC = _asset_url("js/position_history.js")
+TOAST_SRC = _asset_url("js/toast.js")
 BILL_CLIENTS_SRC = _asset_url("js/bill_clients.js")
 CLIENT_QUICKADD_SRC = _asset_url("js/client_quickadd.js")
 CONFIRM_DELETE_SRC = _asset_url("js/confirm_delete.js")
@@ -1139,6 +1145,8 @@ FLAGGED_BODY = _render_template(
     "flagged_body.html",
     HEARING_TIME_SRC=HEARING_TIME_SRC,
     BILL_STATUS_SRC=BILL_STATUS_SRC,
+    POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
+    TOAST_SRC=TOAST_SRC,
     BILL_CLIENTS_SRC=BILL_CLIENTS_SRC,
     CLIENT_QUICKADD_SRC=CLIENT_QUICKADD_SRC,
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
@@ -1198,6 +1206,8 @@ CLIENTS_PAGE = page("Clients — Rotunda", "/clients", CLIENTS_BODY)
 CLIENT_DETAIL_BODY = _render_template(
     "client_detail_body.html",
     BILL_STATUS_SRC=BILL_STATUS_SRC,
+    POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
+    TOAST_SRC=TOAST_SRC,
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
     TITLE_CASE_SRC=TITLE_CASE_SRC,
     ROW_MENU_SRC=ROW_MENU_SRC,
@@ -1222,6 +1232,8 @@ REPORT_BODY = _render_template(
     BILL_TABLES_SRC=BILL_TABLES_SRC,
     HEARING_TIME_SRC=HEARING_TIME_SRC,
     BILL_STATUS_SRC=BILL_STATUS_SRC,
+    POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
+    TOAST_SRC=TOAST_SRC,
     BILL_CLIENTS_SRC=BILL_CLIENTS_SRC,
     CLIENT_QUICKADD_SRC=CLIENT_QUICKADD_SRC,
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
@@ -2077,7 +2089,14 @@ class Handler(BaseHTTPRequestHandler):
                         (client["existing_filer_id"],),
                     ).fetchone()
                     entity_id = row["id"] if row else None
-                self._send_json(200, {"client": client, "bills": bills, "entity_id": entity_id})
+                self._send_json(200, {
+                    "client": client, "bills": bills, "entity_id": entity_id,
+                    # Every stance this user has taken for this client, on
+                    # any bill — including bills they've since been taken
+                    # off, which is exactly what makes the record worth
+                    # keeping (see db.list_position_history).
+                    "position_history": db.list_position_history(conn, user_id, client_id=client_id),
+                })
             finally:
                 conn.close()
             return
@@ -2516,8 +2535,17 @@ class Handler(BaseHTTPRequestHandler):
                 if not user_id:
                     return
                 position = body.get("position") or "watch"
+                # None (not "") means "leave the effective date alone" —
+                # see db.link_bill_to_client, which only moves it when the
+                # position itself changed. An empty string from a cleared
+                # date input is normalized to that same None rather than
+                # being written as a blank date.
+                effective_date = (body.get("effective_date") or "").strip() or None
                 try:
-                    db.link_bill_to_client(conn, user_id, bill_id, client_id, position)
+                    db.link_bill_to_client(
+                        conn, user_id, bill_id, client_id, position,
+                        effective_date=effective_date,
+                    )
                 except ValueError as e:
                     self._send_json(400, {"error": str(e)})
                     return

@@ -311,9 +311,58 @@ CREATE TABLE IF NOT EXISTS bill_client_links (
   bill_id   INTEGER NOT NULL REFERENCES bills(id),
   client_id INTEGER NOT NULL REFERENCES clients(id),
   position  TEXT NOT NULL DEFAULT 'watch',
+  -- The date this position took effect, as opposed to the moment
+  -- somebody clicked the dropdown. They're usually the same day and
+  -- occasionally aren't: a position agreed with the client on Monday and
+  -- entered on Thursday took effect Monday, and "what was our position
+  -- when we testified in June" is a question about the former.
+  -- Defaults to the California date of the change; editable after.
+  effective_date TEXT,
   linked_at TEXT,
   UNIQUE(user_id, bill_id, client_id)
 );
+
+-- Append-only record of every position this user has held for a client
+-- on a bill. bill_client_links carries the current answer and is
+-- overwritten in place; this carries how it got there.
+--
+-- The reason it exists is a question that has a right answer and, before
+-- this table, no way to reach it: "what was our position when we
+-- testified in June?" A support-to-oppose flip is the most consequential
+-- single click in this product, and it used to leave no trace at all.
+--
+-- A row with to_position NULL is the client being taken off the bill
+-- entirely. The link row is deleted; this one survives it, which is the
+-- point — a removal is exactly the event someone would later need to
+-- account for.
+--
+-- changed_by is the user who made the change. Identical to user_id
+-- today, since an account is a single person (see P1-14 in the product
+-- audit — an organization above the user is coming), and recorded
+-- separately now so that when it stops being identical there is history
+-- to read rather than a column added after the fact.
+CREATE TABLE IF NOT EXISTS position_history (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id        INTEGER NOT NULL REFERENCES users(id),
+  bill_id        INTEGER NOT NULL REFERENCES bills(id),
+  -- Deliberately NOT a foreign key, and paired with the name as it read
+  -- at the time. A record of what a firm's position was has to outlive
+  -- the client row it referred to: with a real reference, deleting a
+  -- client would either be blocked by this table or take the history
+  -- with it, and both of those are worse than a dangling id. Same
+  -- snapshot reasoning as prepared_filings.field_data.
+  client_id      INTEGER NOT NULL,
+  client_name    TEXT,
+  from_position  TEXT,                       -- NULL on the first assignment
+  to_position    TEXT,                       -- NULL when the client was removed
+  effective_date TEXT,
+  changed_at     TEXT NOT NULL,
+  changed_by     INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_position_history_bill
+  ON position_history(user_id, bill_id, changed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_position_history_client
+  ON position_history(user_id, client_id, changed_at DESC);
 
 -- "Prepare my disclosure form" — one row per draft/prepared filing.
 -- field_data is a JSON snapshot of every value used to fill the PDF at

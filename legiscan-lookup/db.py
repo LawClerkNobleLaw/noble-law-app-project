@@ -87,6 +87,8 @@ def _migrate(conn):
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(bill_client_links)")}
     if "position" not in cols:
         conn.execute("ALTER TABLE bill_client_links ADD COLUMN position TEXT NOT NULL DEFAULT 'watch'")
+    if "effective_date" not in cols:
+        conn.execute("ALTER TABLE bill_client_links ADD COLUMN effective_date TEXT")
 
     client_cols = {row["name"] for row in conn.execute("PRAGMA table_info(clients)")}
     for col in ("effective_date", "contract_period", "agencies_lobbied", "bus_phone"):
@@ -771,7 +773,7 @@ def get_client_bills(conn, user_id, client_id):
     client detail page."""
     rows = conn.execute(
         """SELECT b.id AS bill_id, b.state, b.bill_number, b.title,
-                  b.status_label, b.status_date, b.url, l.position
+                  b.status_label, b.status_date, b.url, l.position, l.effective_date
            FROM bill_client_links l
            JOIN bills b ON b.id = l.bill_id
            WHERE l.user_id = ? AND l.client_id = ?
@@ -824,7 +826,8 @@ def delete_client(conn, user_id, client_id):
 VALID_POSITIONS = ("support", "oppose", "watch")
 
 
-def link_bill_to_client(conn, user_id, bill_id, client_id, position="watch"):
+def link_bill_to_client(conn, user_id, bill_id, client_id, position="watch",
+                        effective_date=None):
     """Raises ValueError (safe to show the user) if the client isn't
     actually theirs, the bill isn't actually one they've flagged, or
     position isn't one of the three allowed values — all checked
@@ -834,7 +837,17 @@ def link_bill_to_client(conn, user_id, bill_id, client_id, position="watch"):
     Doubles as the "change position later" path: called again for a
     link that already exists, it updates position on the existing row
     instead of leaving it untouched — same endpoint handles both
-    assigning a client to a bill and changing its stance afterward."""
+    assigning a client to a bill and changing its stance afterward.
+
+    Every call that actually changes something also appends to
+    position_history. A re-save of the same position with the same
+    effective date appends nothing: the user picked the value that was
+    already there, and a log that records non-events is a log nobody
+    reads.
+
+    effective_date defaults to today in California — the position is in
+    force from the day it was set unless the user says otherwise. See the
+    column comment in schema.sql for why the two dates are separate."""
     if position not in VALID_POSITIONS:
         raise ValueError("Position must be support, oppose, or watch.")
     owns_client = conn.execute(
@@ -847,19 +860,121 @@ def link_bill_to_client(conn, user_id, bill_id, client_id, position="watch"):
     ).fetchone()
     if not has_flagged:
         raise ValueError("Flag this bill before assigning it to a client.")
+
+    existing = conn.execute(
+        """SELECT position, effective_date FROM bill_client_links
+           WHERE user_id = ? AND bill_id = ? AND client_id = ?""",
+        (user_id, bill_id, client_id),
+    ).fetchone()
+    # An existing link keeps its effective date unless the caller sends a
+    # new one; a brand-new one starts today. Changing the position
+    # without saying otherwise moves the date with it — the new stance
+    # took effect when it was taken, not when the client was first added.
+    if effective_date is None:
+        if existing is None or existing["position"] != position:
+            effective_date = today_in_california()
+        else:
+            effective_date = existing["effective_date"]
+
     conn.execute(
-        """INSERT INTO bill_client_links (user_id, bill_id, client_id, position, linked_at)
-           VALUES (?, ?, ?, ?, datetime('now'))
-           ON CONFLICT(user_id, bill_id, client_id) DO UPDATE SET position=excluded.position""",
-        (user_id, bill_id, client_id, position),
+        """INSERT INTO bill_client_links
+             (user_id, bill_id, client_id, position, effective_date, linked_at)
+           VALUES (?, ?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(user_id, bill_id, client_id) DO UPDATE SET
+             position=excluded.position, effective_date=excluded.effective_date""",
+        (user_id, bill_id, client_id, position, effective_date),
+    )
+
+    if existing is not None and existing["position"] == position \
+            and existing["effective_date"] == effective_date:
+        return
+    record_position_change(
+        conn, user_id, bill_id, client_id,
+        from_position=existing["position"] if existing else None,
+        to_position=position,
+        effective_date=effective_date,
     )
 
 
 def unlink_bill_from_client(conn, user_id, bill_id, client_id):
+    """Take a client off a bill. The link row goes; the history of it
+    doesn't — a removal is recorded with to_position NULL, since "we
+    stopped holding a position in September" is exactly the kind of thing
+    someone later has to account for."""
+    existing = conn.execute(
+        """SELECT position FROM bill_client_links
+           WHERE user_id = ? AND bill_id = ? AND client_id = ?""",
+        (user_id, bill_id, client_id),
+    ).fetchone()
     conn.execute(
         "DELETE FROM bill_client_links WHERE user_id = ? AND bill_id = ? AND client_id = ?",
         (user_id, bill_id, client_id),
     )
+    if existing is not None:
+        record_position_change(
+            conn, user_id, bill_id, client_id,
+            from_position=existing["position"], to_position=None,
+            effective_date=today_in_california(),
+        )
+
+
+def record_position_change(conn, user_id, bill_id, client_id, from_position,
+                           to_position, effective_date=None, changed_at=None):
+    """Append one row to position_history. Append-only by construction —
+    nothing in this module updates or deletes from that table."""
+    # The name as it read at the time, alongside the id — see the column
+    # comment in schema.sql. A client deleted later leaves a record that
+    # still says who it was about.
+    name_row = conn.execute("SELECT name FROM clients WHERE id = ?", (client_id,)).fetchone()
+    conn.execute(
+        """INSERT INTO position_history
+             (user_id, bill_id, client_id, client_name, from_position, to_position,
+              effective_date, changed_at, changed_by)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (
+            user_id, bill_id, client_id, name_row["name"] if name_row else None,
+            from_position, to_position, effective_date,
+            changed_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            user_id,
+        ),
+    )
+
+
+def list_position_history(conn, user_id, bill_id=None, client_id=None):
+    """This user's position changes, newest first — for the panel on the
+    bill report (one bill, every client) and on the client record (one
+    client, every bill). At least one of bill_id/client_id is expected;
+    with neither, this is the whole account's history, which is what the
+    tests read and what a future export would want.
+
+    Joins the names in rather than returning bare ids: every caller
+    renders "Anthropic PBC on CA SB1159", and the alternative is three
+    round trips per row. The client name falls back to the copy stored on
+    the row itself when the client has since been deleted — the record of
+    a position has to outlive the client it was held for."""
+    where = ["h.user_id = ?"]
+    params = [user_id]
+    if bill_id is not None:
+        where.append("h.bill_id = ?")
+        params.append(bill_id)
+    if client_id is not None:
+        where.append("h.client_id = ?")
+        params.append(client_id)
+    rows = conn.execute(
+        f"""SELECT h.id, h.bill_id, h.client_id, h.from_position, h.to_position,
+                   h.effective_date, h.changed_at, h.changed_by,
+                   COALESCE(c.name, h.client_name) AS client_name,
+                   b.state, b.bill_number,
+                   u.email AS changed_by_email
+            FROM position_history h
+            LEFT JOIN clients c ON c.id = h.client_id
+            LEFT JOIN bills b ON b.id = h.bill_id
+            LEFT JOIN users u ON u.id = h.changed_by
+            WHERE {' AND '.join(where)}
+            ORDER BY h.changed_at DESC, h.id DESC""",
+        tuple(params),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def clients_for_bills(conn, user_id, bill_ids):
@@ -869,16 +984,17 @@ def clients_for_bills(conn, user_id, bill_ids):
         return {}
     placeholders = ",".join("?" * len(bill_ids))
     rows = conn.execute(
-        f"""SELECT l.bill_id, c.id AS client_id, c.name, l.position
+        f"""SELECT l.bill_id, c.id AS client_id, c.name, l.position, l.effective_date
             FROM bill_client_links l JOIN clients c ON c.id = l.client_id
             WHERE l.user_id = ? AND l.bill_id IN ({placeholders})""",
         (user_id, *bill_ids),
     ).fetchall()
     by_bill = {}
     for r in rows:
-        by_bill.setdefault(r["bill_id"], []).append(
-            {"id": r["client_id"], "name": r["name"], "position": r["position"]}
-        )
+        by_bill.setdefault(r["bill_id"], []).append({
+            "id": r["client_id"], "name": r["name"], "position": r["position"],
+            "effective_date": r["effective_date"],
+        })
     return by_bill
 
 
@@ -946,6 +1062,11 @@ def get_bill_report(conn, user_id, bill_id):
     # Empty string rather than None so the textarea binds cleanly, and
     # only ever this user's own note — see flagged_bills.notes.
     result["notes"] = (flag_row["notes"] if flag_row else None) or ""
+    # Every position this user has ever held on this bill, for the panel
+    # under the assignments. Newest first, and it outlives the
+    # assignments themselves — a client removed from the bill still
+    # appears here, which is the whole reason the table is append-only.
+    result["position_history"] = list_position_history(conn, user_id, bill_id=bill_id)
     return result
 
 
