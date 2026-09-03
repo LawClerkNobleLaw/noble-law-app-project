@@ -526,6 +526,7 @@ STYLE = STYLE.replace("__BRAND_MARK_SVG_B64__", BRAND_MARK_SVG_B64)
 # Python's own interpolation. A file has no such rule.
 BILL_TABLES_JS = _read_static_text("js/bill_tables.js")
 HEARING_TIME_JS = _read_static_text("js/hearing_time.js")
+BILL_CLIENTS_JS = _read_static_text("js/bill_clients.js")
 CLIENT_QUICKADD_JS = _read_static_text("js/client_quickadd.js")
 CONFIRM_DELETE_JS = _read_static_text("js/confirm_delete.js")
 TITLE_CASE_JS = _read_static_text("js/title_case.js")
@@ -540,6 +541,7 @@ STATIC_ASSETS = {
     "style.css": (STYLE.encode("utf-8"), "text/css; charset=utf-8"),
     "js/bill_tables.js": (BILL_TABLES_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/hearing_time.js": (HEARING_TIME_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/bill_clients.js": (BILL_CLIENTS_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/client_quickadd.js": (CLIENT_QUICKADD_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/confirm_delete.js": (CONFIRM_DELETE_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/title_case.js": (TITLE_CASE_JS.encode("utf-8"), JS_CONTENT_TYPE),
@@ -549,6 +551,7 @@ STATIC_ASSETS = {
 STYLE_HREF = _asset_url("style.css")
 BILL_TABLES_SRC = _asset_url("js/bill_tables.js")
 HEARING_TIME_SRC = _asset_url("js/hearing_time.js")
+BILL_CLIENTS_SRC = _asset_url("js/bill_clients.js")
 CLIENT_QUICKADD_SRC = _asset_url("js/client_quickadd.js")
 CONFIRM_DELETE_SRC = _asset_url("js/confirm_delete.js")
 TITLE_CASE_SRC = _asset_url("js/title_case.js")
@@ -1093,6 +1096,7 @@ PROFILE_VIEW_PAGE = page("Your profile — Rotunda", "/profile", PROFILE_BODY)
 FLAGGED_BODY = _render_template(
     "flagged_body.html",
     HEARING_TIME_SRC=HEARING_TIME_SRC,
+    BILL_CLIENTS_SRC=BILL_CLIENTS_SRC,
     CLIENT_QUICKADD_SRC=CLIENT_QUICKADD_SRC,
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
     TITLE_CASE_SRC=TITLE_CASE_SRC,
@@ -1169,7 +1173,10 @@ REPORT_BODY = _render_template(
     "report_body.html",
     BILL_TABLES_SRC=BILL_TABLES_SRC,
     HEARING_TIME_SRC=HEARING_TIME_SRC,
+    BILL_CLIENTS_SRC=BILL_CLIENTS_SRC,
     CLIENT_QUICKADD_SRC=CLIENT_QUICKADD_SRC,
+    CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
+    TITLE_CASE_SRC=TITLE_CASE_SRC,
 )
 
 REPORT_PAGE = page("Action Report — Rotunda", "/flagged", REPORT_BODY)
@@ -2447,6 +2454,45 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 conn.commit()
                 self._send_json(200, db.list_flagged_bills(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/bill-notes":
+            # The lobbyist's own note on a bill — per user, stored against
+            # their flag (see flagged_bills.notes), so it survives the
+            # daily refresh overwriting everything on the shared `bills`
+            # row and disappears with the flag rather than outliving it.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            bill_id = body.get("bill_id")
+            if not bill_id:
+                self._send_json(400, {"error": "Missing bill_id."})
+                return
+            try:
+                bill_id = int(bill_id)
+            except (ValueError, TypeError):
+                self._send_json(400, {"error": "bill_id must be a number."})
+                return
+
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to add notes to a bill.")
+                if not user_id:
+                    return
+                try:
+                    notes = db.set_bill_notes(conn, user_id, bill_id, (body.get("notes") or "").strip())
+                except ValueError as e:
+                    # Not flagged, so there's no per-user row to hang the
+                    # note on. A 400 saying so beats accepting the text and
+                    # dropping it.
+                    self._send_json(400, {"error": str(e)})
+                    return
+                conn.commit()
+                self._send_json(200, {"notes": notes})
             finally:
                 conn.close()
             return

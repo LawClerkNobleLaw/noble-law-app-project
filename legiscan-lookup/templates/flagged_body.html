@@ -46,6 +46,7 @@
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script src="{{TITLE_CASE_SRC}}"></script>
 <script src="{{ROW_MENU_SRC}}"></script>
+<script src="{{BILL_CLIENTS_SRC}}"></script>
 <script>
 const listEl = document.getElementById('list');
 const loadingEl = document.getElementById('loading');
@@ -76,6 +77,25 @@ let activeFilter = 'all';
 const SORT_STORAGE_KEY = 'flaggedBills.sortBy';
 let sortBy = localStorage.getItem(SORT_STORAGE_KEY) || 'next_action';
 if (sortSelectEl) sortSelectEl.value = sortBy;
+
+// The client chips / position selects / add-client picker are shared
+// with the bill report (see bill_clients.js); this page supplies where
+// its own copy of that state lives.
+initBillClients({
+  allClients: () => allClients,
+  assignedClients: (billId) => {
+    const row = currentRows.find(r => r.bill_id === billId);
+    return row ? (row.assigned_clients || []) : [];
+  },
+  onError: (message) => {
+    errorEl.textContent = message || '';
+    errorEl.className = message ? 'show' : '';
+  },
+  onChanged: (updatedClients) => {
+    if (updatedClients) allClients = updatedClients;
+    load();
+  },
+});
 
 function firstClientName(r) {
   const names = (r.assigned_clients || []).map(c => c.name).sort((a, b) => a.localeCompare(b));
@@ -391,162 +411,6 @@ async function unflag(billId) {
   }
 }
 
-async function assignClient(billId, selectEl) {
-  const clientId = selectEl.value;
-  if (!clientId) return;
-  errorEl.className = '';
-  selectEl.disabled = true;
-  try {
-    const res = await fetch('/api/bill-clients', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bill_id: billId, client_id: Number(clientId) }),
-    });
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || 'Could not assign client');
-    }
-    load();
-  } catch (err) {
-    selectEl.disabled = false;
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
-  }
-}
-
-async function unassignClient(billId, clientId, btnEl) {
-  // Same confirmDelete() dialog as removeClient() (see CONFIRM_DELETE_JS).
-  const r = currentRows.find(x => x.bill_id === billId);
-  const c = r && (r.assigned_clients || []).find(x => x.id === clientId);
-  const ok = await confirmDelete('Remove client?', `Remove ${c ? c.name : 'this client'} from this bill? This can't be undone.`);
-  if (!ok) return;
-  errorEl.className = '';
-  btnEl.disabled = true;
-  try {
-    const res = await fetch(`/api/bill-clients?bill_id=${billId}&client_id=${clientId}`, { method: 'DELETE' });
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || 'Could not remove assignment');
-    }
-    load();
-  } catch (err) {
-    btnEl.disabled = false;
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
-  }
-}
-
-async function setPosition(billId, clientId, selectEl) {
-  const newPosition = selectEl.value;
-  const savedPosition = selectEl.dataset.saved;
-  errorEl.className = '';
-  // Optimistic repaint so the picked color shows right away — reverted
-  // in the catch below if the server rejects the change, so a failed
-  // save can no longer look identical to a successful one.
-  selectEl.className = 'position-select ' + newPosition;
-  selectEl.disabled = true;
-  try {
-    const res = await fetch('/api/bill-clients', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bill_id: billId, client_id: clientId, position: newPosition }),
-    });
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || 'Could not update position');
-    }
-    selectEl.dataset.saved = newPosition;
-    load();
-  } catch (err) {
-    selectEl.value = savedPosition;
-    selectEl.className = 'position-select ' + savedPosition;
-    selectEl.disabled = false;
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
-  }
-}
-
-function positionSelect(r, c) {
-  const position = c.position || 'watch';
-  const options = POSITIONS.map(([value, label]) =>
-    `<option value="${value}" ${position === value ? 'selected' : ''}>${label}</option>`
-  ).join('');
-  return `<select class="position-select ${position}" data-saved="${position}" onchange="setPosition(${r.bill_id}, ${c.id}, this)" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${options}</select>`;
-}
-
-// Two different jobs live in this cell: the chips change an *existing*
-// assignment's position (or remove it); the select below them *adds a
-// new* client. They used to look like two competing ways to do the same
-// thing — see .client-chip/.add-client-select in STYLE for the visual
-// fix (behavior/handlers here are unchanged).
-function clientCell(r) {
-  const chips = (r.assigned_clients || []).map(c => `
-    <div class="client-chip">
-      <a href="/clients/detail?id=${c.id}">${titleCaseName(c.name)}</a>
-      ${positionSelect(r, c)}
-      <button type="button" class="icon-btn" onclick="unassignClient(${r.bill_id}, ${c.id}, this)" aria-label="Remove client from this bill" title="Remove client" style="height:1.5rem;width:1.5rem;color:var(--slate)">×</button>
-    </div>
-  `).join('');
-
-  const assignedIds = new Set((r.assigned_clients || []).map(c => c.id));
-  const available = allClients.filter(c => !assignedIds.has(c.id));
-  const placeholder = allClients.length ? (available.length ? '+ Add client' : 'All clients assigned') : 'No clients yet…';
-  return `
-    <div>${chips}</div>
-    <select class="add-client-select" onchange="handleClientCellSelect(${r.bill_id}, this)" style="margin-top:0.2rem">
-      <option value="">${placeholder}</option>
-      ${clientOptionsHtml(available)}
-    </select>
-  `;
-}
-
-// Selecting an existing client assigns it right away, same as before —
-// selecting "+ Add new client" (always the last option, see
-// clientOptionsHtml() in CLIENT_QUICKADD_JS) opens the quick-add panel
-// instead, then assigns whatever it creates to this row's bill, since
-// that's the whole reason to reach the quick-add form from here rather
-// than from /clients directly.
-function handleClientCellSelect(billId, selectEl) {
-  const value = selectEl.value;
-  if (value !== ADD_NEW_CLIENT_VALUE) {
-    // Same "reset right away, don't wait for the network round trip"
-    // behavior the old inline onchange="assignClient(...); this.value=''"
-    // had — assignClient() below is async and doesn't await here.
-    assignClient(billId, selectEl);
-    selectEl.value = '';
-    return;
-  }
-  openQuickAddClient(allClients, (updatedClients, created) => {
-    allClients = updatedClients;
-    assignNewClientToBill(billId, created.id);
-  }, () => {
-    selectEl.value = '';
-  });
-}
-
-async function assignNewClientToBill(billId, clientId) {
-  errorEl.className = '';
-  try {
-    const res = await fetch('/api/bill-clients', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bill_id: billId, client_id: clientId }),
-    });
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || 'Client was added, but could not be assigned to this bill.');
-    }
-  } catch (err) {
-    errorEl.textContent = err.message;
-    errorEl.className = 'show';
-  } finally {
-    // Refresh either way — the new client should show up in every
-    // row's dropdown from here on even if assigning it to *this* bill
-    // just failed.
-    load();
-  }
-}
-
 function render(rows) {
   if (!currentRows.length) {
     listEl.innerHTML = '<p class="empty">Nothing flagged yet — look up a bill and click "Flag this bill" from there.</p>';
@@ -593,7 +457,7 @@ function render(rows) {
           <td class="next-action">${nextActionCell(r)}</td>
           <td>${r.status_label ? `<span class="status-badge">${r.status_label}</span>` : ''}</td>
           <td class="col-change">${lastChangeCell(r)}</td>
-          <td>${clientCell(r)}</td>
+          <td>${billClientCellHtml(r.bill_id)}</td>
         </tr>
       `).join('')}
       </tbody>

@@ -7,6 +7,9 @@
 <script src="{{HEARING_TIME_SRC}}"></script>
 <script src="{{BILL_TABLES_SRC}}"></script>
 <script src="{{CLIENT_QUICKADD_SRC}}"></script>
+<script src="{{CONFIRM_DELETE_SRC}}"></script>
+<script src="{{TITLE_CASE_SRC}}"></script>
+<script src="{{BILL_CLIENTS_SRC}}"></script>
 <script>
 const reportEl = document.getElementById('report');
 const errorEl = document.getElementById('error');
@@ -52,7 +55,26 @@ const billId = new URLSearchParams(window.location.search).get('bill_id');
   }
 })();
 
-const POSITION_LABELS = { support: 'Support', oppose: 'Oppose', watch: 'Watch' };
+// Every client this user has, for the "+ Add client" picker. Fetched
+// alongside the report itself — this page used to need only the clients
+// already on the bill, since it couldn't change them.
+let allClients = [];
+
+// The same client-chip/position/add-client control the flagged list
+// renders (see bill_clients.js). The rule this page now follows: any
+// action available on a bill row is available on the bill page.
+initBillClients({
+  allClients: () => allClients,
+  assignedClients: () => (currentReport ? (currentReport.assigned_clients || []) : []),
+  onError: (message) => {
+    errorEl.textContent = message || '';
+    errorEl.className = message ? 'show' : '';
+  },
+  onChanged: (updatedClients) => {
+    if (updatedClients) allClients = updatedClients;
+    load();
+  },
+});
 // Set by render() each time a report loads — the flag-confirmation
 // modal below reads this instead of re-fetching, same role `current`
 // played in the old /lookup page this modal moved here from (see
@@ -69,10 +91,16 @@ async function load() {
     return;
   }
   try {
-    const res = await fetch(`/api/report?bill_id=${billId}`);
-    if (res.status === 401) { window.location.href = '/login'; return; }
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not load report');
+    const [reportRes, clientsRes] = await Promise.all([
+      fetch(`/api/report?bill_id=${billId}`),
+      fetch('/api/clients'),
+    ]);
+    if (reportRes.status === 401) { window.location.href = '/login'; return; }
+    const data = await reportRes.json();
+    if (!reportRes.ok) throw new Error(data.error || 'Could not load report');
+    // A signed-out visitor can still reach a report, so an unauthorized
+    // client list isn't an error here — it just means no picker.
+    allClients = clientsRes.ok ? await clientsRes.json() : [];
     render(data);
   } catch (err) {
     errorEl.textContent = err.message;
@@ -136,6 +164,68 @@ async function saveAmendByDate(inputEl) {
   }
 }
 
+// The note goes back into a <textarea>, so only "</textarea>" can break
+// out — but &, < and > are escaped anyway rather than relying on that
+// being the only case for however long this markup stays as it is.
+function escapeNotes(text) {
+  return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Saves on blur rather than per keystroke — a note is written in one
+// sitting, and the status line below says so instead of leaving the user
+// guessing whether it took.
+async function saveNotes(textareaEl) {
+  const statusEl = document.getElementById('notes-status');
+  if (textareaEl.value === textareaEl.defaultValue) return;
+  errorEl.className = '';
+  statusEl.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/bill-notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bill_id: Number(billId), notes: textareaEl.value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save your notes.');
+    textareaEl.defaultValue = textareaEl.value;
+    if (currentReport) currentReport.notes = data.notes;
+    statusEl.textContent = 'Saved.';
+  } catch (err) {
+    statusEl.textContent = '';
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+// Unflagging drops this user's positions and notes on the bill, so the
+// confirmation names what goes with it — same confirmDelete() the
+// flagged list uses, rather than the browser's own confirm().
+async function unflag() {
+  const r = currentReport;
+  const label = r ? `${r.state} ${r.bill_number}` : 'this bill';
+  const assigned = (r && r.assigned_clients) || [];
+  const cost = [];
+  if (assigned.length) {
+    cost.push(`${assigned.length === 1 ? 'its assigned client and saved position' : `its ${assigned.length} assigned clients and saved positions`}`);
+  }
+  if (r && r.notes) cost.push('your notes');
+  const detail = cost.length ? ` This also removes ${cost.join(' and ')}.` : '';
+  const ok = await confirmDelete('Unflag this bill?', `Unflag ${label}?${detail} It stops being checked daily. This can't be undone.`);
+  if (!ok) return;
+  errorEl.className = '';
+  try {
+    const res = await fetch(`/api/flag?bill_id=${billId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Could not unflag bill');
+    }
+    load();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
 function render(r) {
   currentReport = r;
   const historyRows = historyRowsHtml(r.history);
@@ -147,16 +237,6 @@ function render(r) {
   const hearingRows = hearingRowsHtml(r.upcoming_hearings);
   const voteRows = voteRowsHtml(r.votes);
 
-  const clientBadges = (r.assigned_clients || []).map(c => {
-    const position = c.position || 'watch';
-    return `
-      <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem">
-        <a href="/clients/detail?id=${c.id}">${c.name}</a>
-        <span class="position-badge ${position}">${POSITION_LABELS[position] || position}</span>
-      </div>
-    `;
-  }).join('');
-
   reportEl.innerHTML = `
     <div class="card">
       <div class="bill-id">${r.state} ${r.bill_number}</div>
@@ -166,7 +246,9 @@ function render(r) {
       ${r.url ? `<a class="bill-link" href="${r.url}" target="_blank" rel="noopener">View on LegiScan →</a>` : ''}
       <div class="card-actions">
         ${r.flagged
-          ? '<span class="status-badge">🚩 Flagged</span>'
+          ? `<span class="status-badge">🚩 Flagged</span>
+             <button type="button" class="secondary" onclick="window.print()">Print</button>
+             <button type="button" class="danger" onclick="unflag()">Unflag</button>`
           : '<button id="flag-btn" class="secondary" onclick="openFlagModal()">Flag this bill</button>'}
       </div>
     </div>
@@ -175,10 +257,21 @@ function render(r) {
       <div class="panel-head"><div class="title">Assigned client${(r.assigned_clients || []).length === 1 ? '' : 's'}</div></div>
       <div style="padding:1rem 1.15rem">
         ${r.flagged
-          ? (clientBadges || '<p class="empty">Not currently assigned to any of your clients.</p>')
+          ? billClientCellHtml(r.bill_id)
           : '<p class="empty">Flag this bill to assign it to a client.</p>'}
       </div>
     </div>
+
+    ${r.flagged ? `
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">Your notes</div></div>
+      <div style="padding:1rem 1.15rem">
+        <label for="bill-notes" class="sub" style="display:block;margin-bottom:0.35rem">Private to your account. Saves when you click away.</label>
+        <textarea id="bill-notes" rows="4" style="width:100%" placeholder="What you're watching for on this bill, who you've talked to, what you told them…"
+                  onblur="saveNotes(this)">${escapeNotes(r.notes || '')}</textarea>
+        <div class="sub" id="notes-status" style="margin-top:0.35rem"></div>
+      </div>
+    </div>` : ''}
 
     ${currentStatusCardHtml(r.history, r.amend_by_date)}
 
