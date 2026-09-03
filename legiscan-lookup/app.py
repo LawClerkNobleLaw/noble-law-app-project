@@ -2452,6 +2452,22 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # Saved VIEWS are the flagged list's, not the search page's: a
+        # named filter composition over bills the firm already tracks,
+        # where a saved SEARCH is a standing query against all of
+        # LegiScan that the daily job re-runs. Different table, different
+        # page, deliberately similar wording on screen.
+        if parsed.path == "/api/saved-views":
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to see your saved views.")
+                if not user_id:
+                    return
+                self._send_json(200, db.list_saved_views(conn, user_id))
+            finally:
+                conn.close()
+            return
+
         if parsed.path == "/api/search":
             # The merged /lookup page's one search endpoint — routes to
             # a bill-number search or a free-text one depending on the
@@ -2855,6 +2871,27 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 conn.commit()
                 self._send_json(200, db.list_saved_searches(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/saved-views":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to save a view.")
+                if not user_id:
+                    return
+                try:
+                    views = db.create_saved_view(conn, user_id, body.get("name"), body.get("query"))
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                self._send_json(200, views)
             finally:
                 conn.close()
             return
@@ -3506,6 +3543,26 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 conn.commit()
                 self._send_json(200, db.list_saved_searches(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/saved-views":
+            view_id = (qs.get("id") or [""])[0]
+            try:
+                view_id = int(view_id)
+            except ValueError:
+                self._send_json(400, {"error": "id must be a number."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage saved views.")
+                if not user_id:
+                    return
+                if not db.delete_saved_view(conn, user_id, view_id):
+                    self._send_json(404, {"error": "No saved view with that ID."})
+                    return
+                self._send_json(200, db.list_saved_views(conn, user_id))
             finally:
                 conn.close()
             return
