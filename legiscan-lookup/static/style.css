@@ -813,6 +813,22 @@
      hue, since red/amber is a pair some users can't separate. */
   .next-chip.now { background: var(--error-soft); color: var(--error); }
 
+  /* A filing's deadline on the Disclosures list. Filing dates are the
+     hardest deadline these users have and the one place being late has a
+     statutory consequence rather than a client-relations one, so overdue
+     is styled as an error rather than a warning, and carries its own
+     wording ("3 days overdue") instead of leaning on colour to say it. */
+  td.col-due { white-space: normal; min-width: 8rem; }
+  .due-when { font-weight: 600; font-size: 0.82rem; }
+  .due-none { font-size: 0.82rem; color: var(--slate); font-style: italic; }
+  .due-chip {
+    display: inline-block; margin-top: 0.25rem; font-size: 0.68rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em; padding: 0.1rem 0.4rem;
+    border-radius: var(--radius-pill); border: 1px solid currentColor;
+  }
+  .due-chip.soon { background: var(--warn-soft); color: var(--warn); }
+  .due-chip.over { background: var(--error-soft); color: var(--error); }
+
   /* What the daily refresh saw move on this bill, and when. */
   td.col-change { white-space: normal; min-width: 7rem; }
   .change-when { font-weight: 600; font-size: 0.82rem; }

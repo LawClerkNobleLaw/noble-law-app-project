@@ -146,6 +146,18 @@ function renderStats() {
   if (!currentRows.length) { statsEl.innerHTML = ''; return; }
   const unassigned = currentRows.filter(r => !(r.assigned_clients || []).length).length;
   const pending = preparedFilings.filter(f => f.status === 'draft').length;
+  // The nearest filing deadline outranks the draft count on this tile: a
+  // filing date is the one deadline here with a statutory consequence,
+  // and until now it appeared nowhere outside the filing itself. Only
+  // filings that actually carry a due date can be nearest — days_until_due
+  // is null until a qualifying date is entered.
+  const dated = preparedFilings.filter(f => f.days_until_due !== null && f.days_until_due !== undefined);
+  const nearest = dated.sort((a, b) => a.days_until_due - b.days_until_due)[0];
+  let filingFoot;
+  if (nearest && nearest.days_until_due < 0) filingFoot = `Overdue by ${-nearest.days_until_due} day${nearest.days_until_due === -1 ? '' : 's'}`;
+  else if (nearest && nearest.days_until_due === 0) filingFoot = 'One is due today';
+  else if (nearest) filingFoot = `Next due in ${nearest.days_until_due} day${nearest.days_until_due === 1 ? '' : 's'}`;
+  else filingFoot = pending ? 'Drafted, awaiting your sign-off' : 'None waiting on you';
   statsEl.innerHTML = `
     <div class="stat-card">
       <div class="stat-icon">${ICON_FLAG}</div>
@@ -169,7 +181,7 @@ function renderStats() {
       <div class="stat-icon">${ICON_DISCLOSURE}</div>
       <div class="stat-label">Disclosures</div>
       <div class="stat-value">${pending}</div>
-      <div class="stat-foot">${pending ? 'Drafted, awaiting your sign-off' : 'None waiting on you'}</div>
+      <div class="stat-foot">${filingFoot}</div>
     </div>
   `;
 }

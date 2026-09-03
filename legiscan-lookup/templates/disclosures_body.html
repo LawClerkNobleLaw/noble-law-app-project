@@ -142,6 +142,38 @@ async function load() {
   }
 }
 
+// "Sep 5, 2026" — the year stays here, unlike the flagged list. A filing
+// deadline is the one date in this app worth being unambiguous about.
+function fmtDueDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T00:00:00');
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// The deadline, and how close it is. days_until_due is computed from
+// California's date server-side (see db._row_to_prepared_filing), so a
+// laptop in another timezone can't shift a statutory deadline by a day.
+//
+// The countdown runs regardless of status, on purpose. "Ready to file"
+// means signed off, not filed — this app never files anything — so a
+// signed draft sitting past its due date is the worst case here, not a
+// finished one. It nags hardest of all.
+function dueCell(r) {
+  if (!r.due_date) {
+    return '<span class="due-none">Not set</span>';
+  }
+  const when = fmtDueDate(r.due_date);
+  const days = r.days_until_due;
+  if (days === null || days === undefined) return when;
+
+  let chip = '';
+  if (days < 0) chip = `<span class="due-chip over">${-days} day${-days === 1 ? '' : 's'} overdue</span>`;
+  else if (days === 0) chip = '<span class="due-chip over">Due today</span>';
+  else if (days <= 10) chip = `<span class="due-chip soon">In ${days} day${days === 1 ? '' : 's'}</span>`;
+  return `<div class="due-when">${when}</div>${chip}`;
+}
+
 function render(rows) {
   lastRows = rows;
   if (!rows.length) {
@@ -151,7 +183,7 @@ function render(rows) {
   listEl.innerHTML = `
     <div style="overflow-x:auto">
     <table>
-      <thead><tr><th>Form</th><th>Period</th><th>Status</th><th>Created</th><th></th></tr></thead>
+      <thead><tr><th>Form</th><th>Due</th><th>Status</th><th>Created</th><th></th></tr></thead>
       <tbody>
       ${rows.map(r => {
         const meta = FORM_META[r.form_type];
@@ -161,7 +193,7 @@ function render(rows) {
         return `
           <tr>
             <td>${(meta && meta.label) || ('Form ' + r.form_type)}</td>
-            <td>${r.period_label || '—'}</td>
+            <td class="col-due">${dueCell(r)}</td>
             <td>${statusBadge}</td>
             <td class="date">${fmtDateTime(r.created_at)}</td>
             <td class="row-menu">

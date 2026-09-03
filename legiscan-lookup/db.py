@@ -98,7 +98,7 @@ def _migrate(conn):
         conn.execute("ALTER TABLE bills ADD COLUMN amend_by_date TEXT")
 
     filing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(prepared_filings)")}
-    for col in ("pdf_field_data_hash", "client_row_ids"):
+    for col in ("pdf_field_data_hash", "client_row_ids", "trigger_date", "due_date"):
         if col not in filing_cols:
             conn.execute(f"ALTER TABLE prepared_filings ADD COLUMN {col} TEXT")
 
@@ -920,6 +920,11 @@ def _row_to_prepared_filing(row):
     # filing_pdf_generated) since the last edit to field_data — the one
     # thing sign-off is allowed to trust.
     d["pdf_current"] = bool(d["pdf_field_data_hash"]) and d["pdf_field_data_hash"] == _hash_field_data(d["field_data"])
+    # Counted from California's date, like every other deadline in this
+    # app — the browser's clock isn't what a filing deadline runs on.
+    # None when no due date has been set, which is every filing until the
+    # lobbyist supplies the trigger; negative once it's overdue.
+    d["days_until_due"] = _days_between(today_in_california(), d["due_date"]) if d.get("due_date") else None
     return d
 
 
@@ -1015,6 +1020,26 @@ def update_prepared_filing_field(conn, user_id, filing_id, field_key, value):
     field_data = filing["field_data"]
     field_data[field_key] = value
     return _edit_prepared_filing_field_data(conn, user_id, filing_id, field_data)
+
+
+def set_prepared_filing_deadline(conn, user_id, filing_id, trigger_date, due_date):
+    """Store a filing's deadline and the event it's counted from. Both may
+    be None — a filing with no trigger entered yet simply has no due date,
+    which the list says plainly rather than guessing at.
+
+    Stores only; the derivation lives in disclosure_fields.due_date_for
+    and is applied by the route. Keeping the statutory rule out of here is
+    deliberate — this module's job is SQLite, and db.py sits below the
+    form-domain modules rather than importing them. It also means an
+    overridden due_date is stored exactly as given: the lobbyist's reading
+    of their own deadline wins over the app's arithmetic."""
+    cur = conn.execute(
+        "UPDATE prepared_filings SET trigger_date = ?, due_date = ? WHERE id = ? AND user_id = ?",
+        (trigger_date or None, due_date or None, filing_id, user_id),
+    )
+    if cur.rowcount == 0:
+        raise ValueError("No prepared filing found.")
+    return get_prepared_filing(conn, user_id, filing_id)
 
 
 def set_prepared_filing_client_rows(conn, user_id, filing_id, client_ids, row_field_data):
