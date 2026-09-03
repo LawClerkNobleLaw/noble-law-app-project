@@ -2566,6 +2566,45 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        if parsed.path == "/api/bill-viewed":
+            # "I have now looked at this bill" — clears its unread dot on
+            # the flagged list (see db.mark_bill_viewed). Sent by the bill
+            # report once it has actually rendered, not on the way in, so
+            # a request that errored out doesn't count as having been read.
+            #
+            # A POST rather than a side effect of GET /api/report: reading
+            # a report is also how the digest email's links work and how a
+            # search result opens, and a GET that quietly mutates state is
+            # the kind of thing a link prefetcher fires for free.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            bill_id = body.get("bill_id")
+            if not bill_id:
+                self._send_json(400, {"error": "Missing bill_id."})
+                return
+            try:
+                bill_id = int(bill_id)
+            except (ValueError, TypeError):
+                self._send_json(400, {"error": "bill_id must be a number."})
+                return
+
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to track what you've read.")
+                if not user_id:
+                    return
+                # False for a bill this user hasn't flagged — reported as
+                # such rather than as an error; see mark_bill_viewed.
+                marked = db.mark_bill_viewed(conn, user_id, bill_id)
+                conn.commit()
+                self._send_json(200, {"marked": marked})
+            finally:
+                conn.close()
+            return
+
         if parsed.path == "/api/bill-amend-by-date":
             # "When does this need to be amended by?" — manually entered,
             # not synced from LegiScan (checked its raw getBill payload

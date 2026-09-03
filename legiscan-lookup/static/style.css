@@ -880,6 +880,33 @@
      a change this app watched happen) is a weaker claim, so it's set
      apart from a real observation instead of looking identical to one. */
   .change-what.none { font-style: italic; }
+  /* Conversely, a change this user hasn't opened yet is the one line on
+     the row that's actually news, and shouldn't be set in the same
+     muted grey as five rows of history. */
+  .change-what.unread { color: var(--ink); font-weight: 600; }
+
+  /* The unread marker on a flagged row (see unreadDot() in
+     FLAGGED_BODY). A count in a pill rather than a bare dot: the number
+     is already known, and "3 changes you haven't seen" is a more useful
+     thing to have said than "something happened here". Sized off the
+     bill identifier it sits beside so it reads as a marker on that line
+     rather than as a badge of its own. */
+  .unread-dot {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 1.05rem; height: 1.05rem; padding: 0 0.28rem; margin-right: 0.35rem;
+    border-radius: var(--radius-pill); background: var(--error); color: var(--surface);
+    font-size: 0.62rem; font-weight: 700; line-height: 1; vertical-align: middle;
+  }
+
+  /* Visually hidden, still read aloud. The clip-rect incantation was
+     already inline on half a dozen labels in the templates; this is the
+     same thing with a name, for the places (an unread count, a status
+     marker) where the visible form is a shape or a colour and the
+     sentence behind it has to exist somewhere. */
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
 
   /* ── Dashboard ──
      The signed-in landing page. Deliberately introduces almost nothing:

@@ -293,6 +293,23 @@ function fmtShortDate(dateStr) {
   return d.toLocaleDateString('en-US', opts);
 }
 
+// The unread marker: this bill has changes recorded since the last time
+// this user opened its report (see db._unread_counts_for_bills). What
+// turns the list from an inventory of what you track into a queue of
+// what you haven't dealt with.
+//
+// A dot plus a number, not a dot alone — "3 changes you haven't seen" is
+// worth more than "something happened", and the count is already in
+// hand. The title and the screen-reader text carry the same sentence,
+// since a coloured dot means nothing on its own to someone who can't see
+// it or doesn't know the convention.
+function unreadDot(r) {
+  const count = r.unread_count || 0;
+  if (!count) return '';
+  const label = count === 1 ? '1 change you haven\u2019t seen' : `${count} changes you haven\u2019t seen`;
+  return `<span class="unread-dot" title="${label}"><span class="sr-only">${label}. </span>${count}</span>`;
+}
+
 // What actually moved on this bill, and when.
 //
 // last_change is the app's own observation, recorded by the refresh job
@@ -316,7 +333,7 @@ function lastChangeCell(r) {
     const also = change.also_count ? ` +${change.also_count} more` : '';
     return `
       <div class="change-when">${fmtShortDate(when)}</div>
-      <div class="change-what" title="${(change.description || '').replace(/"/g, '&quot;')}">${change.summary || ''}${also}</div>
+      <div class="change-what${r.unread_count ? ' unread' : ''}" title="${(change.description || '').replace(/"/g, '&quot;')}">${change.summary || ''}${also}</div>
     `;
   }
   if (r.latest_activity_date) {
@@ -439,7 +456,7 @@ function render(rows) {
                 <svg viewBox="0 0 14 14" fill="currentColor"><rect x="1" y="1" width="5" height="5" rx="1"/><rect x="8" y="1" width="5" height="5" rx="1"/><rect x="1" y="8" width="5" height="5" rx="1"/><rect x="8" y="8" width="5" height="5" rx="1"/></svg>
               </div>
               <div class="bill-main">
-                <div class="bill-ident">${r.state} ${r.bill_number}</div>
+                <div class="bill-ident">${unreadDot(r)}${r.state} ${r.bill_number}</div>
                 <div class="bill-name" title="${(r.title || '').replace(/"/g, '&quot;')}">${r.title || ''}</div>
               </div>
               <div class="row-menu">

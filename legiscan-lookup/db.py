@@ -100,6 +100,8 @@ def _migrate(conn):
     flagged_cols = {row["name"] for row in conn.execute("PRAGMA table_info(flagged_bills)")}
     if "notes" not in flagged_cols:
         conn.execute("ALTER TABLE flagged_bills ADD COLUMN notes TEXT")
+    if "last_viewed_at" not in flagged_cols:
+        conn.execute("ALTER TABLE flagged_bills ADD COLUMN last_viewed_at TEXT")
 
     filing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(prepared_filings)")}
     for col in ("pdf_field_data_hash", "client_row_ids", "trigger_date", "due_date"):
@@ -476,9 +478,43 @@ def _latest_changes_for_bills(conn, bill_ids):
     return latest
 
 
+def _unread_counts_for_bills(conn, user_id, bill_ids):
+    """How many recorded changes on each of these bills this user hasn't
+    seen yet, keyed by bill_id — the flagged list's unread dot.
+
+    "Seen" means opened the bill's report since the change was detected
+    (flagged_bills.last_viewed_at, written by mark_bill_viewed). A bill
+    the user has never opened counts every change on it, rather than
+    starting at zero: the point of the dot is to say "you have not looked
+    at this", and a never-opened bill is the strongest case of that.
+
+    Reading the digest email doesn't clear anything. It can't — the mark
+    happens on the report page, and the email links to it, so following
+    the link is what clears the bill. That's the intended path.
+
+    Counting rows rather than storing a flag means this stays correct
+    with no writes on the refresh side: the daily job appends to
+    bill_change_events exactly as before and knows nothing about who has
+    read what."""
+    if not bill_ids:
+        return {}
+    placeholders = ",".join("?" for _ in bill_ids)
+    rows = conn.execute(
+        f"""SELECT f.bill_id, COUNT(e.id) AS unread
+            FROM flagged_bills f
+            JOIN bill_change_events e
+              ON e.bill_id = f.bill_id
+             AND (f.last_viewed_at IS NULL OR e.detected_at > f.last_viewed_at)
+            WHERE f.user_id = ? AND f.bill_id IN ({placeholders})
+            GROUP BY f.bill_id""",
+        (user_id, *bill_ids),
+    ).fetchall()
+    return {row["bill_id"]: row["unread"] for row in rows}
+
+
 def list_flagged_bills(conn, user_id, today=None):
     rows = conn.execute(
-        """SELECT f.bill_id, f.flagged_at, w.last_checked_at,
+        """SELECT f.bill_id, f.flagged_at, f.last_viewed_at, w.last_checked_at,
                   b.state, b.bill_number, b.title, b.status_label, b.status_date, b.url,
                   b.amend_by_date,
                   (SELECT MAX(h.date) FROM bill_status_history h
@@ -496,6 +532,7 @@ def list_flagged_bills(conn, user_id, today=None):
     today = today or today_in_california()
     next_hearings = _next_hearings_for_bills(conn, bill_ids, today)
     latest_changes = _latest_changes_for_bills(conn, bill_ids)
+    unread = _unread_counts_for_bills(conn, user_id, bill_ids)
     for r in result:
         r["assigned_clients"] = clients_by_bill.get(r["bill_id"], [])
         # None for a bill with nothing scheduled — the column says so in
@@ -503,6 +540,9 @@ def list_flagged_bills(conn, user_id, today=None):
         r["next_hearing"] = next_hearings.get(r["bill_id"])
         # None until the refresh job has seen this bill move at least once.
         r["last_change"] = latest_changes.get(r["bill_id"])
+        # How many recorded changes this user hasn't looked at yet. 0 is
+        # the resting state, and the only state that renders no dot.
+        r["unread_count"] = unread.get(r["bill_id"], 0)
         # bills.amend_by_date is the user's own hand-entered amendment
         # deadline (nothing to do with LegiScan). Counted here off the
         # same California `today` the hearing countdown uses, rather than
@@ -923,6 +963,29 @@ def set_bill_notes(conn, user_id, bill_id, notes):
     if cur.rowcount == 0:
         raise ValueError("Flag this bill before adding notes to it.")
     return notes or ""
+
+
+def mark_bill_viewed(conn, user_id, bill_id, viewed_at=None):
+    """Record that this user has now looked at this bill, clearing its
+    unread dot (see _unread_counts_for_bills).
+
+    Stamped in UTC in the same 'YYYY-MM-DDTHH:MM:SSZ' shape
+    record_bill_changes writes detected_at in — the two are compared as
+    plain strings, so they have to agree on format and on zone. A
+    California date would be wrong here for once: this isn't a deadline,
+    it's an instant, and it's only ever measured against another instant
+    recorded by the refresh job.
+
+    Silently does nothing for a bill this user hasn't flagged. Reading a
+    bill you don't track is a perfectly ordinary thing to do (a search
+    result opens the same page) and there's no dot to clear, so there's
+    nothing here worth failing a request over."""
+    viewed_at = viewed_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cur = conn.execute(
+        "UPDATE flagged_bills SET last_viewed_at = ? WHERE user_id = ? AND bill_id = ?",
+        (viewed_at, user_id, bill_id),
+    )
+    return cur.rowcount > 0
 
 
 def set_bill_amend_by_date(conn, bill_id, amend_by_date):
