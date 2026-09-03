@@ -1057,6 +1057,7 @@ LANDING_PAGE = _render_template(
 LOOKUP_BODY = _render_template(
     "lookup_body.html",
     BILL_STATUS_SRC=BILL_STATUS_SRC,
+    CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
     POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
     TITLE_CASE_SRC=TITLE_CASE_SRC,
     TOAST_SRC=TOAST_SRC,
@@ -2331,6 +2332,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
             return
 
+        if parsed.path == "/api/saved-searches":
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to see your saved searches.")
+                if not user_id:
+                    return
+                self._send_json(200, db.list_saved_searches(conn, user_id))
+            finally:
+                conn.close()
+            return
+
         if parsed.path == "/api/search":
             # The merged /lookup page's one search endpoint — routes to
             # a bill-number search or a free-text one depending on the
@@ -2520,6 +2532,61 @@ class Handler(BaseHTTPRequestHandler):
                 db.flag_bill(conn, user_id, bill_id)
                 conn.commit()
                 self._send_json(200, {"status": "flagged"})
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/saved-searches":
+            # Saving a query so the daily job re-runs it (see
+            # saved_searches in schema.sql). The optional client is what a
+            # new match gets assigned to when the user flags it — one
+            # saved search per client covers most of a firm's needs.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to save a search.")
+                if not user_id:
+                    return
+                client_id = body.get("client_id")
+                try:
+                    db.create_saved_search(
+                        conn, user_id, body.get("name"), body.get("query"),
+                        int(client_id) if client_id else None,
+                    )
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                conn.commit()
+                self._send_json(200, db.list_saved_searches(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/saved-searches/seen":
+            # Opening a saved search is seeing its new matches, same as a
+            # digest going out — the count clears either way, so the two
+            # can't disagree about what the user has been told.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            saved_search_id = body.get("id")
+            if not saved_search_id:
+                self._send_json(400, {"error": "Missing id."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage saved searches.")
+                if not user_id:
+                    return
+                db.mark_search_seen(conn, user_id, int(saved_search_id))
+                conn.commit()
+                self._send_json(200, db.list_saved_searches(conn, user_id))
             finally:
                 conn.close()
             return
@@ -3070,6 +3137,30 @@ class Handler(BaseHTTPRequestHandler):
     def _do_DELETE(self):
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
+
+        if parsed.path == "/api/saved-searches":
+            saved_search_id = (qs.get("id") or [""])[0]
+            if not saved_search_id:
+                self._send_json(400, {"error": "Missing id parameter."})
+                return
+            try:
+                saved_search_id = int(saved_search_id)
+            except ValueError:
+                self._send_json(400, {"error": "id must be a number."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage saved searches.")
+                if not user_id:
+                    return
+                if not db.delete_saved_search(conn, user_id, saved_search_id):
+                    self._send_json(404, {"error": "No saved search with that ID."})
+                    return
+                conn.commit()
+                self._send_json(200, db.list_saved_searches(conn, user_id))
+            finally:
+                conn.close()
+            return
 
         if parsed.path == "/api/flag":
             bill_id = (qs.get("bill_id") or [""])[0]

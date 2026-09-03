@@ -739,6 +739,23 @@ def list_users_with_flagged_bills(conn):
     return [(r["user_id"], r["email"]) for r in rows]
 
 
+def list_recipients(conn):
+    """[(user_id, email), ...] for every user the daily digest might have
+    something to say to — anyone with a flagged bill or a saved search.
+
+    Superset of list_users_with_flagged_bills, which it replaces as the
+    digest's starting point: a user with nothing flagged but a saved
+    search is exactly the account saved searches exist for, and the old
+    list skipped them entirely. The narrowing to "actually has news
+    today" still happens in build_user_digest."""
+    rows = conn.execute(
+        """SELECT DISTINCT u.id AS user_id, u.email FROM users u
+           WHERE EXISTS (SELECT 1 FROM flagged_bills f WHERE f.user_id = u.id)
+              OR EXISTS (SELECT 1 FROM saved_searches s WHERE s.user_id = u.id)"""
+    ).fetchall()
+    return [(r["user_id"], r["email"]) for r in rows]
+
+
 def list_flagged_bill_ids_for_user(conn, user_id):
     return {r["bill_id"] for r in conn.execute(
         "SELECT bill_id FROM flagged_bills WHERE user_id = ?", (user_id,)
@@ -846,7 +863,186 @@ def delete_client(conn, user_id, client_id):
     bill — deleting a client should just take its assignments with it,
     not block on them."""
     conn.execute("DELETE FROM bill_client_links WHERE client_id = ? AND user_id = ?", (client_id, user_id))
+    # A saved search pointing at this client keeps running — it's the
+    # user's query, and only the auto-assign target goes with the client.
+    conn.execute(
+        "UPDATE saved_searches SET client_id = NULL WHERE client_id = ? AND user_id = ?",
+        (client_id, user_id),
+    )
     conn.execute("DELETE FROM clients WHERE id = ? AND user_id = ?", (client_id, user_id))
+
+
+
+# ── Saved searches — a query the daily job re-runs, reporting what's new
+# since the last run. See the table comments in schema.sql for why this
+# exists at all: without it, monitoring only ever covers bills someone
+# has already flagged, and the bill that hurts a client is the one
+# introduced last week that nobody has noticed. ──
+
+def create_saved_search(conn, user_id, name, query, client_id=None):
+    """Raises ValueError (safe to show the user) on a blank name/query,
+    a client that isn't theirs, or a name they've already used."""
+    name = (name or "").strip()
+    query = (query or "").strip()
+    if not name:
+        raise ValueError("Give this search a name.")
+    if not query:
+        raise ValueError("There's no search to save.")
+    if client_id:
+        owns = conn.execute(
+            "SELECT 1 FROM clients WHERE id = ? AND user_id = ?", (client_id, user_id)
+        ).fetchone()
+        if not owns:
+            raise ValueError("That client doesn't belong to your account.")
+    existing = conn.execute(
+        "SELECT id FROM saved_searches WHERE user_id = ? AND name = ?", (user_id, name)
+    ).fetchone()
+    if existing:
+        raise ValueError(f"You already have a saved search called \u201c{name}\u201d.")
+    cur = conn.execute(
+        """INSERT INTO saved_searches (user_id, name, query, client_id, created_at)
+           VALUES (?,?,?,?,datetime('now'))""",
+        (user_id, name, query, client_id or None),
+    )
+    return cur.lastrowid
+
+
+def delete_saved_search(conn, user_id, saved_search_id):
+    """The recorded matches go with it. They only exist to answer "what's
+    new for this search", so they mean nothing once the search is gone —
+    unlike position_history, which is a record of what the firm did."""
+    owns = conn.execute(
+        "SELECT 1 FROM saved_searches WHERE id = ? AND user_id = ?", (saved_search_id, user_id)
+    ).fetchone()
+    if not owns:
+        return False
+    conn.execute("DELETE FROM saved_search_matches WHERE saved_search_id = ?", (saved_search_id,))
+    conn.execute("DELETE FROM saved_searches WHERE id = ? AND user_id = ?", (saved_search_id, user_id))
+    return True
+
+
+def list_saved_searches(conn, user_id):
+    """This user's saved searches with the client's name resolved and a
+    count of matches found since they last looked — what the search page
+    lists, and what makes a saved search worth opening."""
+    rows = conn.execute(
+        """SELECT s.id, s.name, s.query, s.client_id, s.created_at, s.last_run_at,
+                  c.name AS client_name,
+                  (SELECT COUNT(*) FROM saved_search_matches m
+                    WHERE m.saved_search_id = s.id AND m.reported = 0) AS new_match_count
+           FROM saved_searches s
+           LEFT JOIN clients c ON c.id = s.client_id
+           WHERE s.user_id = ?
+           ORDER BY s.name""",
+        (user_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_saved_searches_for_run(conn):
+    """Every saved search across every account, for the daily job. Not
+    user-scoped on purpose — this is the one caller that runs on nobody's
+    behalf in particular."""
+    return [dict(r) for r in conn.execute(
+        "SELECT id, user_id, name, query, client_id FROM saved_searches ORDER BY id"
+    )]
+
+
+def record_saved_search_matches(conn, saved_search_id, rows, seen_at=None):
+    """Store this run's results and return only the ones never seen
+    before, newest run first.
+
+    The whole point of the table is this diff. A saved search for
+    "artificial intelligence" matches 119 bills every morning; what the
+    user needs to hear about is the one that wasn't there yesterday.
+
+    INSERT OR IGNORE against the UNIQUE(saved_search_id, bill_id) rather
+    than a SELECT-then-INSERT: two runs racing (the local launchd job and
+    a hosted cron hitting the same disk) would otherwise both decide a
+    bill was new and report it twice."""
+    seen_at = seen_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    new_matches = []
+    for row in rows:
+        bill_id = row.get("bill_id")
+        if not bill_id:
+            continue
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO saved_search_matches
+                 (saved_search_id, bill_id, bill_number, title, last_action, first_seen_at)
+               VALUES (?,?,?,?,?,?)""",
+            (saved_search_id, bill_id, row.get("bill_number"), row.get("title"),
+             row.get("last_action"), seen_at),
+        )
+        if cur.rowcount:
+            new_matches.append({
+                "bill_id": bill_id,
+                "bill_number": row.get("bill_number"),
+                "title": row.get("title"),
+                "last_action": row.get("last_action"),
+            })
+    conn.execute(
+        "UPDATE saved_searches SET last_run_at = ? WHERE id = ?", (seen_at, saved_search_id)
+    )
+    return new_matches
+
+
+def list_unreported_matches(conn, user_id):
+    """New matches this user hasn't been told about yet, grouped by saved
+    search — what the digest email reports and what the search page
+    counts. Ordered oldest-first within a search so a digest reads in the
+    order things appeared."""
+    rows = conn.execute(
+        """SELECT m.id, m.saved_search_id, m.bill_id, m.bill_number, m.title,
+                  m.last_action, m.first_seen_at, s.name AS search_name, s.client_id,
+                  c.name AS client_name
+           FROM saved_search_matches m
+           JOIN saved_searches s ON s.id = m.saved_search_id
+           LEFT JOIN clients c ON c.id = s.client_id
+           WHERE s.user_id = ? AND m.reported = 0
+           ORDER BY s.name, m.first_seen_at, m.id""",
+        (user_id,),
+    ).fetchall()
+    grouped = {}
+    for row in rows:
+        entry = grouped.setdefault(row["saved_search_id"], {
+            "saved_search_id": row["saved_search_id"],
+            "name": row["search_name"],
+            "client_name": row["client_name"],
+            "matches": [],
+        })
+        entry["matches"].append({
+            "id": row["id"], "bill_id": row["bill_id"], "bill_number": row["bill_number"],
+            "title": row["title"], "last_action": row["last_action"],
+            "first_seen_at": row["first_seen_at"],
+        })
+    return list(grouped.values())
+
+
+def mark_matches_reported(conn, match_ids):
+    """Flipped only after a digest has actually gone out, so an SMTP
+    outage postpones the news rather than losing it."""
+    if not match_ids:
+        return 0
+    placeholders = ",".join("?" for _ in match_ids)
+    cur = conn.execute(
+        f"UPDATE saved_search_matches SET reported = 1 WHERE id IN ({placeholders})",
+        tuple(match_ids),
+    )
+    return cur.rowcount
+
+
+def mark_search_seen(conn, user_id, saved_search_id):
+    """The in-app equivalent of a digest going out: opening a saved
+    search is seeing its new matches, so the count clears."""
+    cur = conn.execute(
+        """UPDATE saved_search_matches SET reported = 1
+           WHERE saved_search_id = (
+             SELECT id FROM saved_searches WHERE id = ? AND user_id = ?
+           )""",
+        (saved_search_id, user_id),
+    )
+    return cur.rowcount
+
 
 
 # ── Bill-to-client links — many-to-many, since a bill can matter to

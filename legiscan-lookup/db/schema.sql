@@ -132,6 +132,56 @@ CREATE TABLE IF NOT EXISTS bill_change_events (
 CREATE INDEX IF NOT EXISTS idx_bill_change_events_bill_id
   ON bill_change_events(bill_id, detected_at DESC);
 
+-- Saved searches — the structural hole this app had until now.
+--
+-- Monitoring only ever applied to bills someone had already flagged, so
+-- the daily job could not, by design, see the bill introduced last week
+-- that nobody has noticed yet — which is exactly the one that hurts a
+-- client. A saved search is a query the refresh job re-runs every day,
+-- reporting whatever is new since the last run.
+--
+-- `client_id` is optional and is what a new match gets auto-assigned to
+-- when the user flags it: one saved search per client covers most of a
+-- firm's needs. Unlike position_history.client_id (a historical record
+-- that has to outlive the client), this is a live association, so it is
+-- a real reference and delete_client() clears it.
+CREATE TABLE IF NOT EXISTS saved_searches (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL REFERENCES users(id),
+  name        TEXT NOT NULL,
+  query       TEXT NOT NULL,
+  client_id   INTEGER REFERENCES clients(id),
+  created_at  TEXT,
+  last_run_at TEXT,
+  UNIQUE(user_id, name)
+);
+
+-- Every bill a saved search has ever matched, so "new since last run"
+-- means something. Without this the job would have to either re-report
+-- the same 119 results every morning or keep a high-water mark by date,
+-- and LegiScan's relevance ordering is not a date.
+--
+-- bill_number/title are stored alongside the id because a match is
+-- reported in an email before anyone has opened the bill — this app has
+-- no bills row for it yet, and fetching one would be a getBill call per
+-- match just to write a subject line.
+--
+-- reported flips to 1 once the match has gone out in a digest, so a
+-- failed or unconfigured send doesn't silently swallow the news.
+CREATE TABLE IF NOT EXISTS saved_search_matches (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  saved_search_id INTEGER NOT NULL REFERENCES saved_searches(id),
+  bill_id         INTEGER NOT NULL,
+  bill_number     TEXT,
+  title           TEXT,
+  last_action     TEXT,
+  first_seen_at   TEXT NOT NULL,
+  reported        INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(saved_search_id, bill_id)
+);
+CREATE INDEX IF NOT EXISTS idx_saved_search_matches_search
+  ON saved_search_matches(saved_search_id, first_seen_at DESC);
+
 -- The stored watch-list. One shared list (no accounts system exists yet) —
 -- one row per bill someone's added. `last_checked_at` is what the daily
 -- job updates whether or not anything actually changed on the bill.
