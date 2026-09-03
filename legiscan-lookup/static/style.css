@@ -1174,3 +1174,23 @@
   }
   .saved-name:hover { color: var(--accent); text-decoration: underline; }
   .saved-meta { font-size: 0.74rem; color: var(--slate); margin-top: 0.15rem; }
+
+  /* ── Letters ──
+     The editor's body field. Monospace-ish measure and generous leading
+     because this is a document being read as a document, not a form
+     field — and a fixed max-width so a wide window doesn't stretch lines
+     to a length nobody proofreads accurately. */
+  textarea.letter-body {
+    width: 100%; max-width: 46rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85rem; line-height: 1.65; white-space: pre-wrap;
+  }
+  /* Printing a letter should produce the letter, not the app around it
+     — the sidebar, topbar and every control are furniture on paper. */
+  @media print {
+    .app-sidebar, .app-topbar, .card-actions, .page-head, .panel-head .sub, #error { display: none !important; }
+    .app-main { padding: 0 !important; }
+    textarea.letter-body {
+      border: 0; max-width: none; font-size: 0.95rem;
+      font-family: Georgia, 'Times New Roman', serif; height: auto;
+    }
+  }

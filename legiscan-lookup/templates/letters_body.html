@@ -1,0 +1,162 @@
+<div class="page-head">
+  <div>
+    <h1>Letters</h1>
+    <p class="sub">Position letters, seeded from the bill, the client and the next hearing. Rotunda writes them; you send them.</p>
+  </div>
+</div>
+<div id="error" role="alert" aria-live="assertive"></div>
+
+<div class="card">
+  <div class="bill-title" style="margin-bottom:0.8rem">Start a letter</div>
+  <form id="new-letter-f">
+    <label for="letter-bill" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Bill</label>
+    <select id="letter-bill" required style="flex:1;min-width:12rem">
+      <option value="">Pick one of your flagged bills…</option>
+    </select>
+    <label for="letter-client" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Client</label>
+    <select id="letter-client">
+      <option value="">No client</option>
+    </select>
+    <button type="submit">Draft it →</button>
+  </form>
+  <div class="sub" style="margin-top:0.6rem">The bill number, title, position and next hearing are filled in for you. The argument is yours.</div>
+</div>
+
+<div class="panel" style="margin-top:1rem">
+  <div class="panel-head"><div class="title">Your letters</div></div>
+  <div id="loading" class="show" style="padding:1rem 1.15rem"><span class="spinner"></span>Loading…</div>
+  <div id="list"></div>
+</div>
+
+<script src="{{CONFIRM_DELETE_SRC}}"></script>
+<script src="{{POSITION_HISTORY_SRC}}"></script>
+<script src="{{TITLE_CASE_SRC}}"></script>
+<script>
+const errorEl = document.getElementById('error');
+const listEl = document.getElementById('list');
+const billSelect = document.getElementById('letter-bill');
+const clientSelect = document.getElementById('letter-client');
+let flaggedBills = [];
+
+function fmtStamp(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function escapeText(text) {
+  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// The client picker only ever offers clients already assigned to the
+// chosen bill. A letter written on behalf of a client who isn't on the
+// bill would be a letter with no position behind it — and assigning the
+// client is a thing to do on the bill, not buried in a drafting form.
+function renderClientOptions() {
+  const bill = flaggedBills.find(b => String(b.bill_id) === billSelect.value);
+  const clients = bill ? (bill.assigned_clients || []) : [];
+  clientSelect.innerHTML = '<option value="">No client</option>' + clients.map(c =>
+    `<option value="${c.id}">${titleCaseName(c.name)} · ${positionLabel(c.position)}</option>`
+  ).join('');
+  // One assigned client is the overwhelmingly common case, and it's
+  // certainly the one meant — preselected rather than made to be picked.
+  if (clients.length === 1) clientSelect.value = String(clients[0].id);
+}
+
+billSelect.addEventListener('change', renderClientOptions);
+
+async function load() {
+  try {
+    const [lettersRes, flaggedRes] = await Promise.all([
+      fetch('/api/letters'),
+      fetch('/api/flagged'),
+    ]);
+    if (lettersRes.status === 401) { window.location.href = '/login'; return; }
+    const letters = await lettersRes.json();
+    if (!lettersRes.ok) throw new Error(letters.error || 'Could not load your letters');
+    flaggedBills = flaggedRes.ok ? await flaggedRes.json() : [];
+    billSelect.innerHTML = '<option value="">Pick one of your flagged bills…</option>' +
+      flaggedBills.map(b => `<option value="${b.bill_id}">${b.state} ${b.bill_number} — ${escapeText(b.title || '')}</option>`).join('');
+    renderClientOptions();
+    render(letters);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    document.getElementById('loading').className = '';
+  }
+}
+
+function render(letters) {
+  if (!letters.length) {
+    listEl.innerHTML = '<p class="empty">No letters yet. Pick a bill above and Rotunda will fill in the header block for you.</p>';
+    return;
+  }
+  listEl.innerHTML = `
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>Letter</th><th>Bill</th><th>Client</th><th>Last edited</th><th></th></tr></thead>
+      <tbody>
+      ${letters.map(l => `
+        <tr>
+          <td><a href="/draft/letters/edit?id=${l.id}">${escapeText(l.subject)}</a></td>
+          <td class="chamber">${escapeText(l.bill_label || '')}</td>
+          <td>${l.client_name ? `${titleCaseName(l.client_name)}${l.position ? ` <span class="position-badge ${l.position}">${positionLabel(l.position)}</span>` : ''}` : '<span class="sub">—</span>'}</td>
+          <td class="date">${fmtStamp(l.updated_at)}</td>
+          <td style="text-align:right;white-space:nowrap">
+            <a class="secondary" href="/draft/letters/edit?id=${l.id}">Open</a>
+            <button type="button" class="icon-btn" onclick="removeLetter(${l.id})" aria-label="Delete letter" title="Delete">×</button>
+          </td>
+        </tr>
+      `).join('')}
+      </tbody>
+    </table>
+    </div>
+  `;
+}
+
+document.getElementById('new-letter-f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorEl.className = '';
+  const button = e.target.querySelector('button');
+  button.disabled = true;
+  try {
+    const res = await fetch('/api/letters', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bill_id: Number(billSelect.value),
+        client_id: clientSelect.value ? Number(clientSelect.value) : null,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not start that letter');
+    // Straight into the editor: the point of generating a draft is that
+    // there's something to edit, and a list row saying "created" would
+    // be one more click before anyone sees it.
+    window.location.href = `/draft/letters/edit?id=${data.id}`;
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+    button.disabled = false;
+  }
+});
+
+async function removeLetter(letterId) {
+  const ok = await confirmDelete('Delete letter?', 'Delete this letter? This can’t be undone.');
+  if (!ok) return;
+  errorEl.className = '';
+  try {
+    const res = await fetch(`/api/letters?id=${letterId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not delete that letter');
+    render(data);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+load();
+</script>

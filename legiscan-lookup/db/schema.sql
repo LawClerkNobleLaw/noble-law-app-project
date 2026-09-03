@@ -414,6 +414,40 @@ CREATE INDEX IF NOT EXISTS idx_position_history_bill
 CREATE INDEX IF NOT EXISTS idx_position_history_client
   ON position_history(user_id, client_id, changed_at DESC);
 
+-- Position letters — the deliverable a lobbyist actually hands to a
+-- member's office, and the step that justifies keeping position data in
+-- this app at all.
+--
+-- Seeded from the bill, the client, the position and the next hearing,
+-- then edited freely: `body` is whatever the user ended up with, not a
+-- template plus variables. Regenerating a seed would overwrite what they
+-- wrote, so nothing here ever does.
+--
+-- Same boundary as prepared_filings: this app writes documents, it does
+-- not send them. There is no recipient field and no send action —
+-- printing or copying it out is the whole delivery path.
+--
+-- client_id and bill_id are recorded with the names/labels alongside
+-- them for the same reason position_history does it: a letter is a
+-- document that was written on a date and has to stay readable
+-- afterwards, whatever happens to the client record later.
+CREATE TABLE IF NOT EXISTS letters (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id      INTEGER NOT NULL REFERENCES users(id),
+  bill_id      INTEGER,
+  bill_label   TEXT,                      -- "CA SB1159" as it read when written
+  client_id    INTEGER,
+  client_name  TEXT,
+  position     TEXT,                      -- the stance at the time of writing
+  subject      TEXT NOT NULL,
+  body         TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_letters_user ON letters(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_letters_bill ON letters(user_id, bill_id);
+CREATE INDEX IF NOT EXISTS idx_letters_client ON letters(user_id, client_id);
+
 -- "Prepare my disclosure form" — one row per draft/prepared filing.
 -- field_data is a JSON snapshot of every value used to fill the PDF at
 -- the moment it was generated, not a live pointer back to the profile/
