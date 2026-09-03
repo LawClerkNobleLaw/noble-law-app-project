@@ -1124,3 +1124,200 @@ def sign_off_prepared_filing(conn, user_id, filing_id, signed_name, confirmed_ac
         (signed_name, filing_id, user_id),
     )
     return get_prepared_filing(conn, user_id, filing_id)
+
+
+# ── Dashboard — the signed-in landing page's single read. ──
+#
+# Pure composition of readers that already exist above (flagged bills,
+# hearings, prepared filings, clients) plus one new query for the
+# change feed. No new tables, no LegiScan call: everything here is
+# already in the database because the daily refresh job put it there.
+# The composition lives in Python rather than in the page's JS because
+# every deadline on this page has to be counted from California's date
+# (today_in_california), same reason _next_hearings_for_bills already
+# precomputes days_until instead of letting the browser subtract.
+
+# How far ahead the "hearings coming up" tile looks. Two weeks rather
+# than one: a lobbyist's preparation window for a committee hearing is
+# longer than the "Hearing this week" filter /flagged already offers,
+# and a tile that only ever said 0 or 1 wouldn't be worth a quarter of
+# the row.
+HEARING_HORIZON_DAYS = 14
+
+# A filing inside this many days is worth interrupting the user about.
+# Matches the .due-chip.soon threshold the disclosures list already uses.
+FILING_SOON_DAYS = 14
+
+
+def recent_bill_changes(conn, user_id, limit=8):
+    """The newest changes the refresh job recorded across this user's
+    flagged bills, newest first — the dashboard's activity feed.
+
+    Unlike _latest_changes_for_bills (one row per bill, for a table
+    column), this is a flat chronological feed across all of them: the
+    same bill can appear twice if it moved twice, because "what has
+    happened lately" is the question here, not "where does each bill
+    stand". Empty on a database that predates bill_change_events, or
+    before the first refresh run finds anything move."""
+    rows = conn.execute(
+        """SELECT c.bill_id, c.detected_at, c.change_type, c.summary, c.description,
+                  c.event_date, b.state, b.bill_number, b.title
+           FROM bill_change_events c
+           JOIN flagged_bills f ON f.bill_id = c.bill_id AND f.user_id = ?
+           JOIN bills b ON b.id = c.bill_id
+           ORDER BY c.detected_at DESC, c.id DESC
+           LIMIT ?""",
+        (user_id, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _attention_items(flagged, filings, today):
+    """The one merged queue the dashboard leads with: everything with a
+    deadline attached, from whichever part of the app it came from,
+    ordered by how soon it bites.
+
+    The point of merging is that these three kinds of work are only ever
+    urgent relative to each other, and until now lived on three separate
+    pages — a filing overdue by two days and a hearing on Thursday could
+    not be compared without opening both. `days` is the single sort key
+    that makes them comparable; a bill with no client assigned has no
+    date at all, so it sorts last (None → +inf) and appears as cleanup
+    once the dated work is clear rather than as an interruption."""
+    items = []
+
+    for filing in filings:
+        days = filing.get("days_until_due")
+        if filing["status"] != "draft" or days is None or days > FILING_SOON_DAYS:
+            continue
+        label = f"Form {filing['form_type']}"
+        if filing.get("period_label"):
+            label += f" — {filing['period_label']}"
+        items.append({
+            "kind": "filing",
+            "days": days,
+            "title": label,
+            "detail": "Prepared filing, not yet signed off",
+            "href": f"/disclosures/review?id={filing['id']}",
+        })
+
+    for bill in flagged:
+        hearing = bill.get("next_hearing")
+        if hearing and hearing.get("days_until") is not None and hearing["days_until"] <= 7:
+            items.append({
+                "kind": "hearing",
+                "days": hearing["days_until"],
+                "title": f"{bill['state']} {bill['bill_number']}",
+                "detail": hearing.get("description") or hearing.get("event_type") or "Hearing scheduled",
+                "date": hearing.get("date"),
+                "time": hearing.get("time"),
+                "location": hearing.get("location"),
+                "href": f"/report?bill_id={bill['bill_id']}",
+            })
+        if not bill.get("assigned_clients"):
+            items.append({
+                "kind": "unassigned",
+                "days": None,
+                "title": f"{bill['state']} {bill['bill_number']}",
+                "detail": "No client assigned",
+                "href": f"/report?bill_id={bill['bill_id']}",
+            })
+
+    items.sort(key=lambda i: (i["days"] is None, i["days"] if i["days"] is not None else 0))
+    return items
+
+
+def _client_rollup(flagged, clients):
+    """Per-client counts of this user's flagged bills, split by the
+    position they took on each — plus a synthetic "Unassigned" entry.
+
+    Built from the assigned_clients already attached to each flagged
+    bill rather than by re-querying bill_client_links, so the rollup can
+    never disagree with the list the same page is showing. Every client
+    appears, including ones with no bills yet: a client the firm has
+    signed but hasn't linked to anything is exactly the gap this is
+    meant to make visible."""
+    rollup = {
+        c["id"]: {"client_id": c["id"], "name": c["name"],
+                  "support": 0, "oppose": 0, "watch": 0, "total": 0}
+        for c in clients
+    }
+    unassigned = 0
+    for bill in flagged:
+        assigned = bill.get("assigned_clients") or []
+        if not assigned:
+            unassigned += 1
+            continue
+        for link in assigned:
+            entry = rollup.get(link["id"])
+            if not entry:
+                continue
+            position = link.get("position") or "watch"
+            if position in ("support", "oppose", "watch"):
+                entry[position] += 1
+            entry["total"] += 1
+
+    rows = sorted(rollup.values(), key=lambda r: (-r["total"], r["name"].lower()))
+    return {"clients": rows, "unassigned": unassigned}
+
+
+def dashboard_summary(conn, user_id, today=None):
+    """Everything the dashboard renders, in one call.
+
+    One endpoint rather than the page firing four fetches at four
+    existing APIs: the tiles, the attention queue and the client rollup
+    are each derived from more than one of those sources, so splitting
+    them client-side would mean the page can't draw anything until all
+    four land, and would give three different answers if a refresh ran
+    between them."""
+    today = today or today_in_california()
+    flagged = list_flagged_bills(conn, user_id, today)
+    hearings = list_hearings_for_flagged_bills(conn, user_id, today)
+    filings = list_prepared_filings(conn, user_id)
+    clients = list_clients(conn, user_id)
+
+    # _row_to_prepared_filing counts days_until_due from
+    # today_in_california() directly, with no way to pass a date in — fine
+    # on the disclosures list, which has only that one kind of deadline,
+    # but here it would mean the filing countdowns and the hearing
+    # countdowns were measured from two different clocks whenever `today`
+    # is supplied (which is how these are tested). Recomputed against the
+    # resolved `today` so every number on this page agrees.
+    for filing in filings:
+        if filing.get("due_date"):
+            filing["days_until_due"] = _days_between(today, filing["due_date"])
+
+    # Only dated hearings can be counted against a horizon; an undated
+    # one is real (the calendar shows it) but can't be "within 14 days".
+    upcoming = hearings["upcoming"]
+    hearings_soon = sum(
+        1 for h in upcoming
+        if h.get("date") and (_days_between(today, h["date"]) or 0) <= HEARING_HORIZON_DAYS
+    )
+
+    drafts = [f for f in filings if f["status"] == "draft"]
+    dated_drafts = sorted(
+        (f for f in drafts if f.get("days_until_due") is not None),
+        key=lambda f: f["days_until_due"],
+    )
+    rollup = _client_rollup(flagged, clients)
+
+    return {
+        "today": today,
+        "stats": {
+            "flagged": len(flagged),
+            "clients": len(clients),
+            "hearings_soon": hearings_soon,
+            "hearing_horizon_days": HEARING_HORIZON_DAYS,
+            "unassigned": rollup["unassigned"],
+            "filing_drafts": len(drafts),
+            # None when no draft carries a due date yet — the tile says so
+            # in words rather than showing a countdown it can't compute.
+            "nearest_due_days": dated_drafts[0]["days_until_due"] if dated_drafts else None,
+        },
+        "attention": _attention_items(flagged, filings, today),
+        "recent": recent_bill_changes(conn, user_id),
+        "hearings": upcoming[:5],
+        "by_client": rollup["clients"],
+        "unassigned": rollup["unassigned"],
+    }

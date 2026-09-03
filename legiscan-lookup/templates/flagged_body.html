@@ -57,7 +57,6 @@ const searchEl = document.getElementById('flagged-search');
 const sortSelectEl = document.getElementById('sort-by');
 let allClients = [];
 let currentRows = [];
-let preparedFilings = [];
 let activeFilter = 'all';
 
 // A pure front-end re-sort of whatever GET /api/flagged already
@@ -158,26 +157,18 @@ if (sortSelectEl) {
 }
 
 const ICON_FLAG = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 1v12M2 2h8l-2 2.5L10 7H2" stroke-linejoin="round"/></svg>';
-const ICON_CLIENTS = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5.5" cy="4.5" r="2.5"/><path d="M1 12c0-2.5 2-4.2 4.5-4.2S10 9.5 10 12" stroke-linecap="round"/></svg>';
 const ICON_ALERT = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M7 4.5v3" stroke-linecap="round"/><circle cx="7" cy="9.8" r="0.6" fill="currentColor" stroke="none"/></svg>';
-const ICON_DISCLOSURE = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="1.5" width="8" height="11" rx="1"/><path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
+/* Two tiles, not four. Active clients and Disclosures moved to the
+   dashboard (see DASHBOARD_BODY), which is where numbers about the whole
+   account belong now that there is such a page — on this one they
+   described things the table underneath doesn't contain, and the four of
+   them said the same four things the dashboard says one click away.
+   These two survive because they're both counts *of the rows below*:
+   how many there are, and how many still need work. */
 function renderStats() {
   if (!currentRows.length) { statsEl.innerHTML = ''; return; }
   const unassigned = currentRows.filter(r => !(r.assigned_clients || []).length).length;
-  const pending = preparedFilings.filter(f => f.status === 'draft').length;
-  // The nearest filing deadline outranks the draft count on this tile: a
-  // filing date is the one deadline here with a statutory consequence,
-  // and until now it appeared nowhere outside the filing itself. Only
-  // filings that actually carry a due date can be nearest — days_until_due
-  // is null until a qualifying date is entered.
-  const dated = preparedFilings.filter(f => f.days_until_due !== null && f.days_until_due !== undefined);
-  const nearest = dated.sort((a, b) => a.days_until_due - b.days_until_due)[0];
-  let filingFoot;
-  if (nearest && nearest.days_until_due < 0) filingFoot = `Overdue by ${-nearest.days_until_due} day${nearest.days_until_due === -1 ? '' : 's'}`;
-  else if (nearest && nearest.days_until_due === 0) filingFoot = 'One is due today';
-  else if (nearest) filingFoot = `Next due in ${nearest.days_until_due} day${nearest.days_until_due === 1 ? '' : 's'}`;
-  else filingFoot = pending ? 'Drafted, awaiting your sign-off' : 'None waiting on you';
   statsEl.innerHTML = `
     <div class="stat-card">
       <div class="stat-icon">${ICON_FLAG}</div>
@@ -186,22 +177,10 @@ function renderStats() {
       <div class="stat-foot">Refreshed once a day</div>
     </div>
     <div class="stat-card">
-      <div class="stat-icon">${ICON_CLIENTS}</div>
-      <div class="stat-label">Active clients</div>
-      <div class="stat-value">${allClients.length}</div>
-      <div class="stat-foot">Clients you're tracking bills for</div>
-    </div>
-    <div class="stat-card">
       <div class="stat-icon">${ICON_ALERT}</div>
       <div class="stat-label">Needs a client</div>
       <div class="stat-value">${unassigned}</div>
       <div class="stat-foot">Flagged bills with no client assigned</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-icon">${ICON_DISCLOSURE}</div>
-      <div class="stat-label">Disclosures</div>
-      <div class="stat-value">${pending}</div>
-      <div class="stat-foot">${filingFoot}</div>
     </div>
   `;
 }
@@ -252,8 +231,8 @@ if (searchEl) {
 
 async function load() {
   try {
-    const [flaggedRes, clientsRes, filingsRes] = await Promise.all([
-      fetch('/api/flagged'), fetch('/api/clients'), fetch('/api/prepared-filings'),
+    const [flaggedRes, clientsRes] = await Promise.all([
+      fetch('/api/flagged'), fetch('/api/clients'),
     ]);
     if (flaggedRes.status === 401) {
       window.location.href = '/login';
@@ -261,7 +240,6 @@ async function load() {
     }
     allClients = await clientsRes.json();
     currentRows = await flaggedRes.json();
-    preparedFilings = filingsRes.ok ? await filingsRes.json() : [];
     renderStats();
     renderFreshness();
     renderTabs();

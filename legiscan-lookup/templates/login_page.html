@@ -73,7 +73,7 @@ form.addEventListener('submit', async (e) => {
     // another host) — anything else falls back to /flagged rather than
     // risk turning this into an open redirect.
     const next = new URLSearchParams(window.location.search).get('next');
-    window.location.href = (next && next.startsWith('/') && !next.startsWith('//')) ? next : '/flagged';
+    window.location.href = (next && next.startsWith('/') && !next.startsWith('//')) ? next : '/dashboard';
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';
