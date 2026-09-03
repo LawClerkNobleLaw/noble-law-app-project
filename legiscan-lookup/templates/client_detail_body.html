@@ -25,7 +25,24 @@
   <div id="bills"></div>
 </div>
 
+<div class="panel" style="margin-top:1rem" id="letters-panel" hidden>
+  <div class="panel-head"><div class="title">Letters</div></div>
+  <div style="padding:0.4rem 1.15rem 1rem" id="letters"></div>
+</div>
+
+<div class="panel" style="margin-top:1rem" id="history-panel" hidden>
+  <div class="panel-head">
+    <div>
+      <div class="title">Position history</div>
+      <div class="sub">Every change to this client's stance, on any bill, newest first.</div>
+    </div>
+  </div>
+  <div style="padding:0.4rem 1.15rem 1rem" id="history"></div>
+</div>
+
 <script src="{{BILL_STATUS_SRC}}"></script>
+<script src="{{TOAST_SRC}}"></script>
+<script src="{{POSITION_HISTORY_SRC}}"></script>
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script src="{{TITLE_CASE_SRC}}"></script>
 <script src="{{ROW_MENU_SRC}}"></script>
@@ -103,7 +120,7 @@ async function removeClient() {
 }
 
 function positionSelect(billId, position) {
-  return `<select class="position-select ${position}" data-saved="${position}" onchange="setPosition(${billId}, this)" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${POSITIONS.map(([value, label]) =>
+  return `<select class="position-select ${position}" data-saved="${position}" data-bill="${billId}" onchange="setPosition(${billId}, this)" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${POSITIONS.map(([value, label]) =>
     `<option value="${value}" ${position === value ? 'selected' : ''}>${label}</option>`
   ).join('')}</select>`;
 }
@@ -154,6 +171,8 @@ async function load() {
     if (!res.ok) throw new Error(data.error || 'Could not load client');
     renderClient(data);
     renderBills(data.bills);
+    renderHistory(data.position_history);
+    renderLetters();
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';
@@ -162,7 +181,10 @@ async function load() {
   }
 }
 
-async function setPosition(billId, selectEl) {
+// `undoOf` marks a call that's putting a position back, so it doesn't
+// offer an undo of its own — same shape as setPosition in
+// bill_clients.js, which this page's own version predates.
+async function setPosition(billId, selectEl, undoOf) {
   const newPosition = selectEl.value;
   const savedPosition = selectEl.dataset.saved;
   errorEl.className = '';
@@ -179,6 +201,7 @@ async function setPosition(billId, selectEl) {
       throw new Error(data.error || 'Could not update position');
     }
     selectEl.dataset.saved = newPosition;
+    announceChange(billId, savedPosition, newPosition, undoOf);
     load();
   } catch (err) {
     selectEl.value = savedPosition;
@@ -189,12 +212,70 @@ async function setPosition(billId, selectEl) {
   }
 }
 
+// Say what changed and leave a way back — a position write on this page
+// was as silent as the one on the flagged list (see the toast in
+// bill_clients.js for the reasoning).
+function announceChange(billId, fromPosition, toPosition, undoOf) {
+  const b = currentBills.find(x => x.bill_id === billId);
+  const label = b ? `${b.state} ${b.bill_number}` : 'this bill';
+  if (undoOf) {
+    showToast(`Put back: ${positionLabel(toPosition)} on ${label}.`);
+    return;
+  }
+  showToast(`${label} set to ${positionLabel(toPosition)}.`, {
+    actionLabel: 'Undo',
+    onAction: () => {
+      // The table re-rendered after the change, so find the select again
+      // rather than holding on to the node this was called from.
+      const el = document.querySelector(`select.position-select[data-bill="${billId}"]`);
+      if (!el) return;
+      el.value = fromPosition;
+      setPosition(billId, el, true);
+    },
+  });
+}
+
+// One more fetch rather than another field on /api/clients/detail: a
+// letter is its own thing, and the client page shouldn't gain a
+// dependency on the drafting feature just to list what exists.
+async function renderLetters() {
+  const panel = document.getElementById('letters-panel');
+  let letters = [];
+  try {
+    const res = await fetch(`/api/letters?client_id=${clientId}`);
+    if (res.ok) letters = await res.json();
+  } catch (err) { /* The rest of the page is unaffected. */ }
+  panel.hidden = !letters.length;
+  document.getElementById('letters').innerHTML = letters.map(l => `
+    <div class="saved-row" style="padding-left:0;padding-right:0">
+      <div class="saved-main">
+        <a class="saved-name" href="/draft/letters/edit?id=${l.id}">${escapeHtml(l.subject)}</a>
+        <div class="saved-meta">${escapeHtml(l.bill_label || '')}${l.position ? ' · ' + positionLabel(l.position) : ''}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function escapeHtml(text) {
+  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderHistory(rows) {
+  const panel = document.getElementById('history-panel');
+  panel.hidden = !(rows || []).length;
+  document.getElementById('history').innerHTML = positionHistoryHtml(rows, { showBill: true });
+}
+
 async function removeBill(billId) {
   // Same confirmDelete() dialog as removeClient() above (see
   // CONFIRM_DELETE_JS).
   const b = currentBills.find(x => x.bill_id === billId);
   const label = b ? `${b.state} ${b.bill_number}` : 'this bill';
-  const ok = await confirmDelete('Remove bill?', `Remove ${label} from this client? This can't be undone.`);
+  const stance = b && b.position ? ` This drops their ${positionLabel(b.position)} position.` : '';
+  const ok = await confirmDelete(
+    'Remove bill?',
+    `Remove ${label} from ${currentClientName || 'this client'}?${stance} The change stays in the position history.`
+  );
   if (!ok) return;
   errorEl.className = '';
   try {
@@ -227,6 +308,9 @@ addBillForm.addEventListener('submit', async (e) => {
     if (!res.ok) throw new Error(data.error || 'Could not add bill');
     addBillForm.reset();
     renderBills(data.bills);
+    // The add-bill response carries only the bill list, so the newly
+    // recorded first position wouldn't show until a manual refresh.
+    load();
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';

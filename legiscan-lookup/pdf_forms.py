@@ -24,10 +24,10 @@ actually collects — left blank rather than guessed, and surfaced in the
 UI rather than hidden:
   - Part II Section B (subcontracted clients) — our data model has no
     concept of "lobbying through another firm's contract."
-  - Part I's continuation rows for additional individual lobbyists —
-    this app has one profile per account; there's no multi-lobbyist
-    roster feature (yet) to fill more than the account holder's own
-    name into "INDIVIDUAL LOBBYISTS 1".
+  - Individual lobbyists beyond the 22 slots this fills (the form's own
+    six on Part I plus the first continuation block of sixteen). Past
+    that the real form needs hand-written continuation sheets, which
+    this app doesn't generate — same rule as the nine client rows.
 
 Never touched, on purpose: the real `/Sig` field ("Signature_5"). This
 app's sign-off is a typed name + a checkbox, recorded in
@@ -164,13 +164,30 @@ def max_client_rows():
     return len(CLIENT_ROW_FIELDS)
 
 
-def values_for_form_601(profile, clients, account_email, sign_off=None, today=None):
+# Where a firm's lobbyists go on the real form: six slots on Part I,
+# then a continuation block of sixteen. Named out individually rather
+# than built from a pattern, same as HEADER_FIELDS — "INDIVIDUAL
+# LOBBYISTS 1" and "PART I  Individual Lobbyists ContinuedRow1" are not
+# the same naming scheme, and the second one has two spaces in it.
+LOBBYIST_FIELDS = (
+    ["INDIVIDUAL LOBBYISTS %d" % n for n in range(1, 7)]
+    + ["PART I  Individual Lobbyists ContinuedRow%d" % n for n in range(1, 17)]
+)
+
+
+def values_for_form_601(profile, clients, account_email, sign_off=None, today=None,
+                        lobbyists=None):
     """Builds the {field_name: value} dict for fill_form(FORM_601_TEMPLATE, ...).
 
     `profile` is a dict from db.get_profile(). `clients` is a list of
     dicts from db.list_clients() — only the first 9 are placed (the
     number of client rows the real form provides before it would need
     hand-written continuation sheets, which this app doesn't generate).
+    `lobbyists` is the firm's roster (db.list_org_lobbyists) — this form
+    exists to register a firm's lobbyists, and until an organization sat
+    above the account there was only ever one name to put here. An empty
+    roster still falls back to the registrant's own name, which is right
+    for a firm of one and is what every existing filing was built from.
     `sign_off` is None (draft, nothing signed yet) or
     {"signed_name": ..., "signed_at": "YYYY-MM-DD"} — Part III's fields
     stay blank until this is provided, which is what makes an unsigned
@@ -187,8 +204,17 @@ def values_for_form_601(profile, clients, account_email, sign_off=None, today=No
         "TELEPHONE": phone_rest,
         "MAILING ADDRESS  If different than above": _mailing_address_line(profile),
         "EMAIL": account_email or "",
-        "INDIVIDUAL LOBBYISTS 1": profile.get("legal_name") or "",
     }
+
+    names = [
+        (l.get("name") or "").strip()
+        for l in (lobbyists or [])
+        if (l.get("name") or "").strip()
+    ]
+    if not names and profile.get("legal_name"):
+        names = [profile["legal_name"]]
+    for field, name in zip(LOBBYIST_FIELDS, names):
+        values[field] = name
     for h in HEADER_FIELDS:
         values[h["name"]] = profile.get("legal_name") or ""
         values[h["page"]] = h["n"]

@@ -198,7 +198,11 @@ def test_validate_field_data_requires_business_fields(conn):
     joined = " ".join(errors)
     assert "Street address is required." in errors
     assert "Email is required." in errors
-    assert "Individual lobbyist (your legal name) is required." in errors
+    # Only the first of the six lobbyist slots is required — a 601 with
+    # nobody named on it isn't a registration, but a firm of one leaves
+    # the other five blank.
+    assert "Individual lobbyist 1 is required." in errors
+    assert not any("Individual lobbyist 2" in e for e in errors)
 
 
 def test_validate_field_data_does_not_require_client_row_fields():

@@ -132,6 +132,56 @@ CREATE TABLE IF NOT EXISTS bill_change_events (
 CREATE INDEX IF NOT EXISTS idx_bill_change_events_bill_id
   ON bill_change_events(bill_id, detected_at DESC);
 
+-- Saved searches — the structural hole this app had until now.
+--
+-- Monitoring only ever applied to bills someone had already flagged, so
+-- the daily job could not, by design, see the bill introduced last week
+-- that nobody has noticed yet — which is exactly the one that hurts a
+-- client. A saved search is a query the refresh job re-runs every day,
+-- reporting whatever is new since the last run.
+--
+-- `client_id` is optional and is what a new match gets auto-assigned to
+-- when the user flags it: one saved search per client covers most of a
+-- firm's needs. Unlike position_history.client_id (a historical record
+-- that has to outlive the client), this is a live association, so it is
+-- a real reference and delete_client() clears it.
+CREATE TABLE IF NOT EXISTS saved_searches (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL REFERENCES users(id),
+  name        TEXT NOT NULL,
+  query       TEXT NOT NULL,
+  client_id   INTEGER REFERENCES clients(id),
+  created_at  TEXT,
+  last_run_at TEXT,
+  UNIQUE(user_id, name)
+);
+
+-- Every bill a saved search has ever matched, so "new since last run"
+-- means something. Without this the job would have to either re-report
+-- the same 119 results every morning or keep a high-water mark by date,
+-- and LegiScan's relevance ordering is not a date.
+--
+-- bill_number/title are stored alongside the id because a match is
+-- reported in an email before anyone has opened the bill — this app has
+-- no bills row for it yet, and fetching one would be a getBill call per
+-- match just to write a subject line.
+--
+-- reported flips to 1 once the match has gone out in a digest, so a
+-- failed or unconfigured send doesn't silently swallow the news.
+CREATE TABLE IF NOT EXISTS saved_search_matches (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  saved_search_id INTEGER NOT NULL REFERENCES saved_searches(id),
+  bill_id         INTEGER NOT NULL,
+  bill_number     TEXT,
+  title           TEXT,
+  last_action     TEXT,
+  first_seen_at   TEXT NOT NULL,
+  reported        INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(saved_search_id, bill_id)
+);
+CREATE INDEX IF NOT EXISTS idx_saved_search_matches_search
+  ON saved_search_matches(saved_search_id, first_seen_at DESC);
+
 -- The stored watch-list. One shared list (no accounts system exists yet) —
 -- one row per bill someone's added. `last_checked_at` is what the daily
 -- job updates whether or not anything actually changed on the bill.
@@ -193,6 +243,51 @@ CREATE TABLE IF NOT EXISTS bill_lobbying_link (
   notes            TEXT
 );
 
+-- The firm. Everything a firm's work product consists of — its clients,
+-- the bills it tracks, the positions it holds, the filings it prepares,
+-- the letters it writes — belongs to one of these rather than to
+-- whichever person happened to type it in.
+--
+-- Introduced while every organization still has exactly one seat, on
+-- purpose. The customer is a firm and the data model was one person: a
+-- second lobbyist at the same firm could not see the client's position,
+-- and Form 601, which exists to register a firm's lobbyists, could only
+-- ever list one. That is the kind of thing that gets more expensive to
+-- fix with every week of real filing history, so the layer goes in
+-- before the seats do.
+CREATE TABLE IF NOT EXISTS organizations (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  created_at TEXT
+);
+
+-- The firm's lobbyists, as Form 601 needs them listed. Separate from
+-- users: a firm registers lobbyists who may not have a login here, and
+-- someone with a login (an assistant, an associate) is not necessarily a
+-- registered lobbyist. `user_id` links the two when they are the same
+-- person, and is NULL when they aren't.
+CREATE TABLE IF NOT EXISTS org_lobbyists (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  org_id     INTEGER NOT NULL REFERENCES organizations(id),
+  user_id    INTEGER REFERENCES users(id),
+  name       TEXT NOT NULL,
+  cert_id    TEXT,                    -- optional CA SOS lobbyist certification ID
+  created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_org_lobbyists_org ON org_lobbyists(org_id);
+
+-- Which bills each PERSON has looked at. Split out of flagged_bills when
+-- the flag itself became the firm's rather than the individual's: the
+-- flag is "our firm tracks this", the view is "I have read this", and
+-- one lobbyist opening a bill must not clear their colleague's dot.
+CREATE TABLE IF NOT EXISTS bill_views (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id        INTEGER NOT NULL REFERENCES users(id),
+  bill_id        INTEGER NOT NULL REFERENCES bills(id),
+  last_viewed_at TEXT NOT NULL,
+  UNIQUE(user_id, bill_id)
+);
+
 -- Individual accounts, layered INSIDE the site's existing shared
 -- LOOKUP_USER/PASSWORD login (see app.py's module docstring) — that
 -- outer login still gates the whole site; this is a second, personal
@@ -202,6 +297,10 @@ CREATE TABLE IF NOT EXISTS users (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   email          TEXT NOT NULL UNIQUE,
   password_hash  TEXT NOT NULL,
+  -- Which firm this person works at. Every account gets one at sign-up
+  -- (see accounts.create_user) — a solo lobbyist is a firm of one, not a
+  -- special case with a NULL here.
+  org_id         INTEGER REFERENCES organizations(id),
   created_at     TEXT
 );
 
@@ -235,24 +334,34 @@ CREATE TABLE IF NOT EXISTS lobbyist_profiles (
   created_at         TEXT
 );
 
--- "Flagged bills" (the user-facing term) — a personal, per-user list,
--- unlike `watchlist` above which is one shared list with no owner.
+-- "Flagged bills" (the user-facing term) — the firm's list, unlike
+-- `watchlist` above which is one global list with no owner at all.
+-- user_id is who flagged it; ownership is that person's organization
+-- (see db.ORG_SCOPE), so a colleague sees the same bills.
 -- Reuses that same underlying machinery rather than duplicating it:
 -- flagging a bill still upserts it into `bills` and adds it to the
 -- shared `watchlist` (so the daily refresh job keeps it fresh) — this
--- table only adds the "which user cares about this bill" layer on top.
--- Many-to-many: one bill can be flagged by many users, one user can
--- flag many bills.
+-- table only adds the "which firm cares about this bill" layer on top.
+-- Many-to-many: one bill can be flagged by many firms, one firm can flag
+-- many bills.
 CREATE TABLE IF NOT EXISTS flagged_bills (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id),
   bill_id    INTEGER NOT NULL REFERENCES bills(id),
   flagged_at TEXT,
-  -- The lobbyist's own free-text note on this bill. Per user, not per
-  -- bill: two firms tracking the same bill have nothing to say to each
-  -- other, and this sits alongside their flag rather than on the shared
-  -- `bills` row the refresh job overwrites.
+  -- The firm's own free-text note on this bill. Per flag, not per bill:
+  -- two firms tracking the same bill have nothing to say to each other,
+  -- and this sits alongside their flag rather than on the shared `bills`
+  -- row the refresh job overwrites. Read and edited by anyone at the
+  -- firm, same as the flag it hangs off.
   notes      TEXT,
+  -- When this user last opened this bill's report. What makes the
+  -- flagged list a to-do instead of an inventory: anything in
+  -- bill_change_events detected after this instant is unread, and the
+  -- row carries a dot until the user goes and looks. NULL means never
+  -- opened, which is treated as "everything recorded is unread" — the
+  -- honest reading, since the user has demonstrably not seen any of it.
+  last_viewed_at TEXT,
   UNIQUE(user_id, bill_id)
 );
 CREATE INDEX IF NOT EXISTS idx_flagged_bills_user_id ON flagged_bills(user_id);
@@ -288,7 +397,7 @@ CREATE INDEX IF NOT EXISTS idx_clients_user_id ON clients(user_id);
 
 -- Which of a user's own clients a flagged bill is being tracked for.
 -- Many-to-many on purpose — a bill can matter to more than one client.
--- Both bill_id and client_id are scoped to user_id at the application
+-- Both bill_id and client_id are scoped to the organization at the application
 -- layer (db.link_bill_to_client checks the client is actually theirs
 -- and the bill is actually one they've flagged before inserting), not
 -- just left to the foreign keys, since SQLite FKs alone can't express
@@ -304,9 +413,92 @@ CREATE TABLE IF NOT EXISTS bill_client_links (
   bill_id   INTEGER NOT NULL REFERENCES bills(id),
   client_id INTEGER NOT NULL REFERENCES clients(id),
   position  TEXT NOT NULL DEFAULT 'watch',
+  -- The date this position took effect, as opposed to the moment
+  -- somebody clicked the dropdown. They're usually the same day and
+  -- occasionally aren't: a position agreed with the client on Monday and
+  -- entered on Thursday took effect Monday, and "what was our position
+  -- when we testified in June" is a question about the former.
+  -- Defaults to the California date of the change; editable after.
+  effective_date TEXT,
   linked_at TEXT,
   UNIQUE(user_id, bill_id, client_id)
 );
+
+-- Append-only record of every position this user has held for a client
+-- on a bill. bill_client_links carries the current answer and is
+-- overwritten in place; this carries how it got there.
+--
+-- The reason it exists is a question that has a right answer and, before
+-- this table, no way to reach it: "what was our position when we
+-- testified in June?" A support-to-oppose flip is the most consequential
+-- single click in this product, and it used to leave no trace at all.
+--
+-- A row with to_position NULL is the client being taken off the bill
+-- entirely. The link row is deleted; this one survives it, which is the
+-- point — a removal is exactly the event someone would later need to
+-- account for.
+--
+-- changed_by is the user who made the change. Identical to user_id
+-- today, since an account is a single person (see P1-14 in the product
+-- audit — an organization above the user is coming), and recorded
+-- separately now so that when it stops being identical there is history
+-- to read rather than a column added after the fact.
+CREATE TABLE IF NOT EXISTS position_history (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id        INTEGER NOT NULL REFERENCES users(id),
+  bill_id        INTEGER NOT NULL REFERENCES bills(id),
+  -- Deliberately NOT a foreign key, and paired with the name as it read
+  -- at the time. A record of what a firm's position was has to outlive
+  -- the client row it referred to: with a real reference, deleting a
+  -- client would either be blocked by this table or take the history
+  -- with it, and both of those are worse than a dangling id. Same
+  -- snapshot reasoning as prepared_filings.field_data.
+  client_id      INTEGER NOT NULL,
+  client_name    TEXT,
+  from_position  TEXT,                       -- NULL on the first assignment
+  to_position    TEXT,                       -- NULL when the client was removed
+  effective_date TEXT,
+  changed_at     TEXT NOT NULL,
+  changed_by     INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_position_history_bill
+  ON position_history(user_id, bill_id, changed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_position_history_client
+  ON position_history(user_id, client_id, changed_at DESC);
+
+-- Position letters — the deliverable a lobbyist actually hands to a
+-- member's office, and the step that justifies keeping position data in
+-- this app at all.
+--
+-- Seeded from the bill, the client, the position and the next hearing,
+-- then edited freely: `body` is whatever the user ended up with, not a
+-- template plus variables. Regenerating a seed would overwrite what they
+-- wrote, so nothing here ever does.
+--
+-- Same boundary as prepared_filings: this app writes documents, it does
+-- not send them. There is no recipient field and no send action —
+-- printing or copying it out is the whole delivery path.
+--
+-- client_id and bill_id are recorded with the names/labels alongside
+-- them for the same reason position_history does it: a letter is a
+-- document that was written on a date and has to stay readable
+-- afterwards, whatever happens to the client record later.
+CREATE TABLE IF NOT EXISTS letters (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id      INTEGER NOT NULL REFERENCES users(id),
+  bill_id      INTEGER,
+  bill_label   TEXT,                      -- "CA SB1159" as it read when written
+  client_id    INTEGER,
+  client_name  TEXT,
+  position     TEXT,                      -- the stance at the time of writing
+  subject      TEXT NOT NULL,
+  body         TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_letters_user ON letters(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_letters_bill ON letters(user_id, bill_id);
+CREATE INDEX IF NOT EXISTS idx_letters_client ON letters(user_id, client_id);
 
 -- "Prepare my disclosure form" — one row per draft/prepared filing.
 -- field_data is a JSON snapshot of every value used to fill the PDF at
@@ -332,6 +524,13 @@ CREATE TABLE IF NOT EXISTS prepared_filings (
   signed_name        TEXT,
   confirmed_accurate INTEGER NOT NULL DEFAULT 0,      -- 0/1
   signed_at          TEXT,
+  -- Which account signed off, as opposed to which name was typed into
+  -- the box. Now that a filing belongs to the firm rather than to one
+  -- person, "prepared by A, signed off by B" is a thing that can happen,
+  -- and the filing is the one place in this app where being able to say
+  -- who attested to what has a statutory consequence rather than a
+  -- client-relations one.
+  signed_by          INTEGER REFERENCES users(id),
   -- Both added for the in-place HTML editor (see
   -- docs/disclosure-html-editor-plan.md) — neither existed when this
   -- filing model was PDF-preview-only.

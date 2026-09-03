@@ -79,8 +79,21 @@ def create_user(conn, email, password):
         "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, datetime('now'))",
         (email, _hash_password(password)),
     )
+    user_id = cur.lastrowid
+    # Every account belongs to a firm from the moment it exists — a solo
+    # lobbyist is a firm of one, not a special case with no organization
+    # (see the organizations table in schema.sql). Named from the email
+    # for now; sign-up step 2 collects the real legal name a moment later
+    # and save_profile below renames it. Written here rather than through
+    # db.py for the same reason every other statement in this module is:
+    # accounts.py owns its own tables' SQL.
+    org = conn.execute(
+        "INSERT INTO organizations (name, created_at) VALUES (?, datetime('now'))",
+        (email,),
+    )
+    conn.execute("UPDATE users SET org_id = ? WHERE id = ?", (org.lastrowid, user_id))
     conn.commit()
-    return cur.lastrowid
+    return user_id
 
 
 _DUMMY_HASH = _hash_password("no-such-user-timing-decoy")
@@ -170,6 +183,17 @@ def save_profile(conn, user_id, fields):
             fields.get("bus_phone"), fields.get("existing_filer_id") or None,
         ),
     )
+    # The registrant's legal name is the firm's name as they gave it to
+    # the state, so it's also the organization's — otherwise the firm
+    # would go on being called by whoever's email address happened to
+    # create the account (see create_user).
+    legal_name = (fields.get("legal_name") or "").strip()
+    if legal_name:
+        conn.execute(
+            """UPDATE organizations SET name = ?
+               WHERE id = (SELECT org_id FROM users WHERE id = ?)""",
+            (legal_name, user_id),
+        )
     conn.commit()
 
 

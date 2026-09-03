@@ -90,6 +90,7 @@ import accounts
 import config
 import db
 import disclosure_fields
+import letter_drafts
 import mailer
 import pdf_forms
 import refresh_watchlist
@@ -104,6 +105,12 @@ PORT = config.PORT
 # __file__ rather than the working directory so `python3 app.py` from
 # anywhere (and Render's own start command) finds them the same way.
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+# How many bills one "flag selected" can take. Each is its own getBill
+# call against LegiScan (see /api/flag-bulk), so this is a quota and
+# latency bound, not a UI one — a request for fifty would sit there
+# for the better part of a minute.
+MAX_BULK_FLAG = 25
 
 JS_CONTENT_TYPE = "application/javascript; charset=utf-8"
 
@@ -527,6 +534,8 @@ STYLE = STYLE.replace("__BRAND_MARK_SVG_B64__", BRAND_MARK_SVG_B64)
 BILL_TABLES_JS = _read_static_text("js/bill_tables.js")
 HEARING_TIME_JS = _read_static_text("js/hearing_time.js")
 BILL_STATUS_JS = _read_static_text("js/bill_status.js")
+POSITION_HISTORY_JS = _read_static_text("js/position_history.js")
+TOAST_JS = _read_static_text("js/toast.js")
 BILL_CLIENTS_JS = _read_static_text("js/bill_clients.js")
 CLIENT_QUICKADD_JS = _read_static_text("js/client_quickadd.js")
 CONFIRM_DELETE_JS = _read_static_text("js/confirm_delete.js")
@@ -543,6 +552,8 @@ STATIC_ASSETS = {
     "js/bill_tables.js": (BILL_TABLES_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/hearing_time.js": (HEARING_TIME_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/bill_status.js": (BILL_STATUS_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/position_history.js": (POSITION_HISTORY_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/toast.js": (TOAST_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/bill_clients.js": (BILL_CLIENTS_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/client_quickadd.js": (CLIENT_QUICKADD_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/confirm_delete.js": (CONFIRM_DELETE_JS.encode("utf-8"), JS_CONTENT_TYPE),
@@ -554,6 +565,8 @@ STYLE_HREF = _asset_url("style.css")
 BILL_TABLES_SRC = _asset_url("js/bill_tables.js")
 HEARING_TIME_SRC = _asset_url("js/hearing_time.js")
 BILL_STATUS_SRC = _asset_url("js/bill_status.js")
+POSITION_HISTORY_SRC = _asset_url("js/position_history.js")
+TOAST_SRC = _asset_url("js/toast.js")
 BILL_CLIENTS_SRC = _asset_url("js/bill_clients.js")
 CLIENT_QUICKADD_SRC = _asset_url("js/client_quickadd.js")
 CONFIRM_DELETE_SRC = _asset_url("js/confirm_delete.js")
@@ -709,6 +722,10 @@ SHELL_NAV_ITEMS = [
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
      '<path d="M2.3 11.7l1.8-.4L11 4.4a1 1 0 000-1.4l-.9-.9a1 1 0 00-1.4 0L1.8 9l-.4 1.8z"/></svg>',
      [
+         ("/draft/letters", "Letters",
+          '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+          '<rect x="1.5" y="3" width="11" height="8" rx="1"/>'
+          '<path d="M1.9 3.6L7 7.8l5.1-4.2" stroke-linejoin="round"/></svg>'),
          ("/disclosures", "Disclosures",
           '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
           '<rect x="3" y="1.5" width="8" height="11" rx="1"/>'
@@ -1045,6 +1062,10 @@ LANDING_PAGE = _render_template(
 LOOKUP_BODY = _render_template(
     "lookup_body.html",
     BILL_STATUS_SRC=BILL_STATUS_SRC,
+    CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
+    POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
+    TITLE_CASE_SRC=TITLE_CASE_SRC,
+    TOAST_SRC=TOAST_SRC,
     top_nav=''.join(('<div class="skeleton-row">\n      <div class="skeleton-bar" style="width:10%"></div>\n      <div class="skeleton-bar" style="width:45%"></div>\n      <div class="skeleton-bar" style="width:14%"></div>\n      <div class="skeleton-bar" style="width:12%"></div>\n    </div>' for _ in range(3))),
 )
 
@@ -1115,7 +1136,10 @@ PROFILE_PAGE = _render_template(
 )
 
 
-PROFILE_BODY = _render_template("profile_body.html")
+PROFILE_BODY = _render_template(
+    "profile_body.html",
+    CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
+)
 
 PROFILE_VIEW_PAGE = page("Your profile — Rotunda", "/profile", PROFILE_BODY)
 
@@ -1139,6 +1163,8 @@ FLAGGED_BODY = _render_template(
     "flagged_body.html",
     HEARING_TIME_SRC=HEARING_TIME_SRC,
     BILL_STATUS_SRC=BILL_STATUS_SRC,
+    POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
+    TOAST_SRC=TOAST_SRC,
     BILL_CLIENTS_SRC=BILL_CLIENTS_SRC,
     CLIENT_QUICKADD_SRC=CLIENT_QUICKADD_SRC,
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
@@ -1198,6 +1224,8 @@ CLIENTS_PAGE = page("Clients — Rotunda", "/clients", CLIENTS_BODY)
 CLIENT_DETAIL_BODY = _render_template(
     "client_detail_body.html",
     BILL_STATUS_SRC=BILL_STATUS_SRC,
+    POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
+    TOAST_SRC=TOAST_SRC,
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
     TITLE_CASE_SRC=TITLE_CASE_SRC,
     ROW_MENU_SRC=ROW_MENU_SRC,
@@ -1222,6 +1250,8 @@ REPORT_BODY = _render_template(
     BILL_TABLES_SRC=BILL_TABLES_SRC,
     HEARING_TIME_SRC=HEARING_TIME_SRC,
     BILL_STATUS_SRC=BILL_STATUS_SRC,
+    POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
+    TOAST_SRC=TOAST_SRC,
     BILL_CLIENTS_SRC=BILL_CLIENTS_SRC,
     CLIENT_QUICKADD_SRC=CLIENT_QUICKADD_SRC,
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
@@ -1229,6 +1259,28 @@ REPORT_BODY = _render_template(
 )
 
 REPORT_PAGE = page("Bill report — Rotunda", "/flagged", REPORT_BODY)
+
+
+# Draft > Letters — the position letter a lobbyist actually hands to a
+# member's office. The Draft section used to contain no drafting: its
+# only child was Disclosures, so the one deliverable that justifies
+# keeping position data in this app had to be written somewhere else,
+# from data this app was already holding. See letter_drafts.py for what
+# a new one starts out saying, and the letters table in schema.sql for
+# the two boundaries: nothing is regenerated over what the user wrote,
+# and nothing is sent.
+LETTERS_BODY = _render_template(
+    "letters_body.html",
+    CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
+    POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
+    TITLE_CASE_SRC=TITLE_CASE_SRC,
+)
+
+LETTERS_PAGE = page("Letters — Rotunda", "/draft/letters", LETTERS_BODY)
+
+LETTER_EDIT_BODY = _render_template("letter_edit_body.html")
+
+LETTER_EDIT_PAGE = page("Letter — Rotunda", "/draft/letters", LETTER_EDIT_BODY)
 
 
 # "Prepare my disclosure form" — /disclosures (pick a form, generate a
@@ -2077,7 +2129,14 @@ class Handler(BaseHTTPRequestHandler):
                         (client["existing_filer_id"],),
                     ).fetchone()
                     entity_id = row["id"] if row else None
-                self._send_json(200, {"client": client, "bills": bills, "entity_id": entity_id})
+                self._send_json(200, {
+                    "client": client, "bills": bills, "entity_id": entity_id,
+                    # Every stance this user has taken for this client, on
+                    # any bill — including bills they've since been taken
+                    # off, which is exactly what makes the record worth
+                    # keeping (see db.list_position_history).
+                    "position_history": db.list_position_history(conn, user_id, client_id=client_id),
+                })
             finally:
                 conn.close()
             return
@@ -2133,6 +2192,54 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(404, {"error": "No bill found with that ID."})
                     return
                 self._send_json(200, report)
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/draft/letters":
+            if not self._require_user_for_page():
+                return
+            self._send_html(200, LETTERS_PAGE)
+            return
+
+        if parsed.path == "/draft/letters/edit":
+            if not self._require_user_for_page():
+                return
+            self._send_html(200, LETTER_EDIT_PAGE)
+            return
+
+        if parsed.path == "/api/letters":
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to see your letters.")
+                if not user_id:
+                    return
+                bill_id = (qs.get("bill_id") or [""])[0]
+                client_id = (qs.get("client_id") or [""])[0]
+                self._send_json(200, db.list_letters(
+                    conn, user_id,
+                    bill_id=int(bill_id) if bill_id.isdigit() else None,
+                    client_id=int(client_id) if client_id.isdigit() else None,
+                ))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/letters/one":
+            letter_id = (qs.get("id") or [""])[0]
+            if not letter_id.isdigit():
+                self._send_json(400, {"error": "Missing or invalid id parameter."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to read your letters.")
+                if not user_id:
+                    return
+                letter = db.get_letter(conn, user_id, int(letter_id))
+                if not letter:
+                    self._send_json(404, {"error": "No letter with that ID."})
+                    return
+                self._send_json(200, letter)
             finally:
                 conn.close()
             return
@@ -2303,6 +2410,28 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
             return
 
+        if parsed.path == "/api/org-lobbyists":
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to see your firm's lobbyists.")
+                if not user_id:
+                    return
+                self._send_json(200, db.list_org_lobbyists(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/saved-searches":
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to see your saved searches.")
+                if not user_id:
+                    return
+                self._send_json(200, db.list_saved_searches(conn, user_id))
+            finally:
+                conn.close()
+            return
+
         if parsed.path == "/api/search":
             # The merged /lookup page's one search endpoint — routes to
             # a bill-number search or a free-text one depending on the
@@ -2321,10 +2450,33 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 data = smart_search(q, page=page)
-                self._send_json(200, data)
             except Exception:
                 traceback.print_exc()
                 self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
+                return
+            # Annotate each row with what this user already tracks. A
+            # search of 119 results across three pages otherwise asks
+            # them to re-evaluate bills they settled last week — the flag
+            # state is one indexed read away, and the row can carry it.
+            # Signed-out visitors get the results unannotated rather than
+            # an error; search doesn't require an account.
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+                if user_id:
+                    tracking = db.tracking_for_bills(
+                        conn, user_id, [r["bill_id"] for r in data.get("results", []) if r.get("bill_id")]
+                    )
+                    for row in data.get("results", []):
+                        tracked = tracking.get(row.get("bill_id"))
+                        row["flagged"] = bool(tracked)
+                        row["clients"] = tracked["clients"] if tracked else []
+                    data["signed_in"] = True
+                else:
+                    data["signed_in"] = False
+            finally:
+                conn.close()
+            self._send_json(200, data)
             return
 
         self._send_json(404, {"error": "Not found."})
@@ -2473,6 +2625,239 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        if parsed.path == "/api/org-lobbyists":
+            # The firm's roster, which is what Form 601's Part I is a list
+            # of. Kept on Profile rather than inside the disclosure flow:
+            # it's a fact about the firm, not about one filing, and every
+            # 601 from here on reads it.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage your firm's lobbyists.")
+                if not user_id:
+                    return
+                try:
+                    db.add_org_lobbyist(conn, user_id, body.get("name"), body.get("cert_id"))
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                conn.commit()
+                self._send_json(200, db.list_org_lobbyists(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/letters":
+            # Start a letter. The seed is built server-side from the bill
+            # report this user can already see (see letter_drafts) rather
+            # than assembled in the browser — the wording of the thing
+            # this app puts a lobbyist's name under belongs in one place
+            # with the rest of the document domain, not in a template.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            bill_id = body.get("bill_id")
+            if not bill_id:
+                self._send_json(400, {"error": "Pick a bill to write about."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to draft a letter.")
+                if not user_id:
+                    return
+                report = db.get_bill_report(conn, user_id, int(bill_id))
+                if not report:
+                    self._send_json(404, {"error": "No bill found with that ID."})
+                    return
+                client_id = body.get("client_id")
+                client = None
+                if client_id:
+                    client = next(
+                        (c for c in report.get("assigned_clients", []) if c["id"] == int(client_id)),
+                        None,
+                    )
+                    if not client:
+                        self._send_json(400, {"error": "That client isn't assigned to this bill."})
+                        return
+                # The soonest hearing, which is what a letter written
+                # ahead of a hearing names. get_bill_report already
+                # filters these to date >= today and orders them.
+                hearing = (report.get("upcoming_hearings") or [None])[0]
+                seed = letter_drafts.build_seed(
+                    report, client,
+                    position=(client or {}).get("position"),
+                    hearing=hearing,
+                    profile=accounts.get_profile(conn, user_id),
+                )
+                letter_id = db.create_letter(conn, user_id, {
+                    "bill_id": report["bill_id"],
+                    "bill_label": f"{report.get('state') or ''} {report.get('bill_number') or ''}".strip(),
+                    "client_id": (client or {}).get("id"),
+                    "client_name": (client or {}).get("name"),
+                    "position": (client or {}).get("position"),
+                    "subject": seed["subject"],
+                    "body": seed["body"],
+                })
+                conn.commit()
+                self._send_json(200, {"id": letter_id})
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/letters/save":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            letter_id = body.get("id")
+            if not letter_id:
+                self._send_json(400, {"error": "Missing id."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to edit your letters.")
+                if not user_id:
+                    return
+                if not db.update_letter(conn, user_id, int(letter_id),
+                                        body.get("subject"), body.get("body")):
+                    self._send_json(404, {"error": "No letter with that ID."})
+                    return
+                conn.commit()
+                self._send_json(200, db.get_letter(conn, user_id, int(letter_id)))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/saved-searches":
+            # Saving a query so the daily job re-runs it (see
+            # saved_searches in schema.sql). The optional client is what a
+            # new match gets assigned to when the user flags it — one
+            # saved search per client covers most of a firm's needs.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to save a search.")
+                if not user_id:
+                    return
+                client_id = body.get("client_id")
+                try:
+                    db.create_saved_search(
+                        conn, user_id, body.get("name"), body.get("query"),
+                        int(client_id) if client_id else None,
+                    )
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                conn.commit()
+                self._send_json(200, db.list_saved_searches(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/saved-searches/seen":
+            # Opening a saved search is seeing its new matches, same as a
+            # digest going out — the count clears either way, so the two
+            # can't disagree about what the user has been told.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            saved_search_id = body.get("id")
+            if not saved_search_id:
+                self._send_json(400, {"error": "Missing id."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage saved searches.")
+                if not user_id:
+                    return
+                db.mark_search_seen(conn, user_id, int(saved_search_id))
+                conn.commit()
+                self._send_json(200, db.list_saved_searches(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/flag-bulk":
+            # Triage of a new-bill sweep is a bulk activity: a session is
+            # thirty bills skimmed and four flagged. Doing that one at a
+            # time through /api/flag meant four page round trips plus
+            # three re-searches, so this takes the whole selection at
+            # once — and optionally assigns every one of them to a client
+            # in the same request, since "flag these four for UCSA" is
+            # the actual thought behind the selection.
+            #
+            # Still one getBill per bill (see /api/flag on why the detail
+            # is re-fetched rather than trusted from the browser), which
+            # is the real cost and why the selection is capped. What this
+            # saves is the navigation, not the API calls.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            raw_ids = body.get("bill_ids")
+            if not isinstance(raw_ids, list) or not raw_ids:
+                self._send_json(400, {"error": "Pick at least one bill to flag."})
+                return
+            try:
+                bill_ids = [int(b) for b in raw_ids]
+            except (ValueError, TypeError):
+                self._send_json(400, {"error": "bill_ids must be numbers."})
+                return
+            if len(bill_ids) > MAX_BULK_FLAG:
+                self._send_json(400, {
+                    "error": f"Flag up to {MAX_BULK_FLAG} bills at a time. "
+                             "Each one is a separate lookup against LegiScan."
+                })
+                return
+
+            client_id = body.get("client_id")
+            position = body.get("position") or "watch"
+
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to flag bills.")
+                if not user_id:
+                    return
+                flagged, failed = [], []
+                for bill_id in bill_ids:
+                    try:
+                        bill = get_bill_detail(bill_id)
+                    except Exception:
+                        # One unreachable bill shouldn't lose the other
+                        # three. Reported per-bill below rather than
+                        # failing the whole request.
+                        traceback.print_exc()
+                        failed.append(bill_id)
+                        continue
+                    db.upsert_bill(conn, bill)
+                    db.flag_bill(conn, user_id, bill_id)
+                    if client_id:
+                        try:
+                            db.link_bill_to_client(conn, user_id, bill_id, int(client_id), position)
+                        except ValueError as e:
+                            self._send_json(400, {"error": str(e)})
+                            return
+                    flagged.append(bill_id)
+                conn.commit()
+                self._send_json(200, {"flagged": flagged, "failed": failed})
+            finally:
+                conn.close()
+            return
+
         if parsed.path == "/api/clients":
             try:
                 body = self._read_json_body()
@@ -2516,8 +2901,17 @@ class Handler(BaseHTTPRequestHandler):
                 if not user_id:
                     return
                 position = body.get("position") or "watch"
+                # None (not "") means "leave the effective date alone" —
+                # see db.link_bill_to_client, which only moves it when the
+                # position itself changed. An empty string from a cleared
+                # date input is normalized to that same None rather than
+                # being written as a blank date.
+                effective_date = (body.get("effective_date") or "").strip() or None
                 try:
-                    db.link_bill_to_client(conn, user_id, bill_id, client_id, position)
+                    db.link_bill_to_client(
+                        conn, user_id, bill_id, client_id, position,
+                        effective_date=effective_date,
+                    )
                 except ValueError as e:
                     self._send_json(400, {"error": str(e)})
                     return
@@ -2562,6 +2956,45 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 conn.commit()
                 self._send_json(200, {"notes": notes})
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/bill-viewed":
+            # "I have now looked at this bill" — clears its unread dot on
+            # the flagged list (see db.mark_bill_viewed). Sent by the bill
+            # report once it has actually rendered, not on the way in, so
+            # a request that errored out doesn't count as having been read.
+            #
+            # A POST rather than a side effect of GET /api/report: reading
+            # a report is also how the digest email's links work and how a
+            # search result opens, and a GET that quietly mutates state is
+            # the kind of thing a link prefetcher fires for free.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            bill_id = body.get("bill_id")
+            if not bill_id:
+                self._send_json(400, {"error": "Missing bill_id."})
+                return
+            try:
+                bill_id = int(bill_id)
+            except (ValueError, TypeError):
+                self._send_json(400, {"error": "bill_id must be a number."})
+                return
+
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to track what you've read.")
+                if not user_id:
+                    return
+                # False for a bill this user hasn't flagged — reported as
+                # such rather than as an error; see mark_bill_viewed.
+                marked = db.mark_bill_viewed(conn, user_id, bill_id)
+                conn.commit()
+                self._send_json(200, {"marked": marked})
             finally:
                 conn.close()
             return
@@ -2684,7 +3117,15 @@ class Handler(BaseHTTPRequestHandler):
                 client_row_ids = None
                 if form_type == "601":
                     field_data = pdf_forms.values_for_form_601(
-                        profile, clients, user_row["email"], sign_off=None, today=datetime.date.today()
+                        profile, clients, user_row["email"], sign_off=None,
+                        today=datetime.date.today(),
+                        # Form 601 exists to register a firm's lobbyists.
+                        # Until an organization sat above the account
+                        # there was only ever one name to put here; an
+                        # empty roster still falls back to the
+                        # registrant's own, which is right for a firm of
+                        # one (see pdf_forms.values_for_form_601).
+                        lobbyists=db.list_org_lobbyists(conn, user_id),
                     )
                     client_row_ids = [c["id"] for c in clients[:pdf_forms.max_client_rows()]]
 
@@ -2903,6 +3344,68 @@ class Handler(BaseHTTPRequestHandler):
     def _do_DELETE(self):
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
+
+        if parsed.path == "/api/org-lobbyists":
+            lobbyist_id = (qs.get("id") or [""])[0]
+            if not lobbyist_id.isdigit():
+                self._send_json(400, {"error": "Missing or invalid id parameter."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage your firm's lobbyists.")
+                if not user_id:
+                    return
+                if not db.delete_org_lobbyist(conn, user_id, int(lobbyist_id)):
+                    self._send_json(404, {"error": "No lobbyist with that ID."})
+                    return
+                conn.commit()
+                self._send_json(200, db.list_org_lobbyists(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/letters":
+            letter_id = (qs.get("id") or [""])[0]
+            if not letter_id.isdigit():
+                self._send_json(400, {"error": "Missing or invalid id parameter."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage your letters.")
+                if not user_id:
+                    return
+                if not db.delete_letter(conn, user_id, int(letter_id)):
+                    self._send_json(404, {"error": "No letter with that ID."})
+                    return
+                conn.commit()
+                self._send_json(200, db.list_letters(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/saved-searches":
+            saved_search_id = (qs.get("id") or [""])[0]
+            if not saved_search_id:
+                self._send_json(400, {"error": "Missing id parameter."})
+                return
+            try:
+                saved_search_id = int(saved_search_id)
+            except ValueError:
+                self._send_json(400, {"error": "id must be a number."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage saved searches.")
+                if not user_id:
+                    return
+                if not db.delete_saved_search(conn, user_id, saved_search_id):
+                    self._send_json(404, {"error": "No saved search with that ID."})
+                    return
+                conn.commit()
+                self._send_json(200, db.list_saved_searches(conn, user_id))
+            finally:
+                conn.close()
+            return
 
         if parsed.path == "/api/flag":
             bill_id = (qs.get("bill_id") or [""])[0]

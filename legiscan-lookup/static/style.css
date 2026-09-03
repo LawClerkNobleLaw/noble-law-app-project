@@ -486,6 +486,12 @@
   .position-badge.support { background: var(--good-soft); color: var(--good); }
   .position-badge.oppose { background: var(--error-soft); color: var(--error); }
   .position-badge.watch { background: var(--accent-soft); color: var(--accent); }
+  /* A stance that no longer applies: the one it was changed away from,
+     and the "removed from the bill" terminus. Both are history, so
+     neither carries the live colour — an Oppose that ended in June
+     shouldn't be as loud on the page as the Oppose in force today. */
+  .position-badge.was { background: transparent; color: var(--slate); border: 1px solid var(--rule); font-weight: 600; }
+  .position-badge.removed { background: transparent; color: var(--slate); border: 1px dashed var(--rule); }
   select.position-select.support { border-color: var(--good); color: var(--good); }
   select.position-select.oppose { border-color: var(--error); color: var(--error); }
   select.position-select.watch { border-color: var(--accent); color: var(--accent); }
@@ -880,6 +886,33 @@
      a change this app watched happen) is a weaker claim, so it's set
      apart from a real observation instead of looking identical to one. */
   .change-what.none { font-style: italic; }
+  /* Conversely, a change this user hasn't opened yet is the one line on
+     the row that's actually news, and shouldn't be set in the same
+     muted grey as five rows of history. */
+  .change-what.unread { color: var(--ink); font-weight: 600; }
+
+  /* The unread marker on a flagged row (see unreadDot() in
+     FLAGGED_BODY). A count in a pill rather than a bare dot: the number
+     is already known, and "3 changes you haven't seen" is a more useful
+     thing to have said than "something happened here". Sized off the
+     bill identifier it sits beside so it reads as a marker on that line
+     rather than as a badge of its own. */
+  .unread-dot {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 1.05rem; height: 1.05rem; padding: 0 0.28rem; margin-right: 0.35rem;
+    border-radius: var(--radius-pill); background: var(--error); color: var(--surface);
+    font-size: 0.62rem; font-weight: 700; line-height: 1; vertical-align: middle;
+  }
+
+  /* Visually hidden, still read aloud. The clip-rect incantation was
+     already inline on half a dozen labels in the templates; this is the
+     same thing with a name, for the places (an unread count, a status
+     marker) where the visible form is a shape or a colour and the
+     sentence behind it has to exist somewhere. */
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
 
   /* ── Dashboard ──
      The signed-in landing page. Deliberately introduces almost nothing:
@@ -1039,4 +1072,125 @@
     .app-sidebar.show { transform: translateX(0); }
     .icon-btn.app-topbar-menu-btn { display: flex; }
     .stat-grid { grid-template-columns: 1fr 1fr; }
+  }
+
+    /* ── Position history ──
+     Append-only record of every stance change (see position_history in
+     schema.sql), on the bill report and the client record. An ordered
+     list rather than a table: each entry is one sentence with a
+     timestamp under it, and four columns of mostly-empty cells was the
+     wrong shape for that. */
+  ol.position-history { list-style: none; margin: 0; padding: 0; }
+  .position-history-row { padding: var(--space-2) 0; border-bottom: 1px solid var(--rule); }
+  .position-history-row:last-child { border-bottom: 0; }
+  .position-history-what { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  .position-history-subject { font-weight: 600; font-size: 0.85rem; }
+  .position-arrow { color: var(--slate); }
+  .position-history-when { font-size: 0.74rem; color: var(--slate); margin-top: 0.15rem; }
+
+  /* "In force since <date>" under a client chip on the bill report —
+     under it, not in it: the chip is already a name, a dropdown and a
+     remove button wide, and a fourth control in that row pushed the
+     client's name onto two lines. */
+  .client-assignment { margin-bottom: 0.55rem; }
+  .client-assignment .client-chip { margin-bottom: 0; }
+  .chip-effective { display: flex; align-items: center; gap: 0.35rem; margin: 0.25rem 0 0 0.65rem; }
+  .chip-effective label { font-size: 0.7rem; color: var(--slate); }
+  .chip-effective input[type="date"] { font-size: 0.72rem; padding: 0.15rem 0.35rem; width: auto; }
+
+  /* ── Toast ──
+     One at a time, bottom left, out of the way of the sidebar and of
+     anything a page pins to its own bottom right. Carries the undo for a
+     position change (see toast.js), so it has to be reachable by
+     keyboard and readable long enough to act on. */
+  .toast {
+    position: fixed; left: 1rem; bottom: 1rem; z-index: 60;
+    display: flex; align-items: center; gap: var(--space-3);
+    max-width: min(28rem, calc(100vw - 2rem));
+    background: var(--ink); color: var(--surface);
+    padding: var(--space-3) 0.9rem; border-radius: var(--radius-md);
+    box-shadow: 0 10px 30px -12px rgba(0,0,0,0.5);
+    font-size: 0.82rem;
+  }
+  .toast-text { flex: 1; }
+  .toast-action {
+    background: transparent; color: inherit; border: 1px solid currentColor;
+    font-size: 0.75rem; font-weight: 700; padding: 0.2rem 0.55rem;
+    border-radius: var(--radius-pill); cursor: pointer; flex: none;
+  }
+  .toast-close {
+    background: transparent; color: inherit; border: 0; font-size: 1rem;
+    line-height: 1; padding: 0 0.15rem; cursor: pointer; opacity: 0.7; flex: none;
+  }
+  .toast-close:hover { opacity: 1; }
+  @media (prefers-reduced-motion: no-preference) {
+    .toast { animation: toast-in 140ms ease-out; }
+  }
+  @keyframes toast-in { from { transform: translateY(0.5rem); opacity: 0; } to { transform: none; opacity: 1; } }
+
+  /* ── Search results ──
+     The results table stopped being a read-only list: it now carries a
+     per-row flag control, a selection checkbox, and what the user has
+     already decided about each bill. */
+
+  /* Narrow, fixed columns for the two controls, so the title keeps the
+     slack the way it does on the flagged list. */
+  th.pick-cell, td.pick-cell { width: 1.8rem; padding-right: 0; }
+  td.flag-cell { white-space: nowrap; text-align: right; }
+
+  /* A bill the user already tracks: dimmed rather than hidden, since the
+     useful signal is "you settled this one", not "this isn't a result".
+     The checkbox column is empty on these rows — there's nothing to
+     flag — which is also what keeps "select all that's left" honest. */
+  tr.tracked-row { background: var(--content-bg); }
+  a.result-title { color: inherit; }
+  a.result-title:hover { color: var(--accent); }
+  .result-tracked { margin-top: 0.25rem; display: flex; flex-wrap: wrap; gap: 0.3rem; font-size: 0.72rem; color: var(--slate); }
+
+  /* The bulk-flag bar, above the table, present only while something is
+     selected — an empty "0 selected" toolbar would be permanent
+     furniture for an occasional action. */
+  .selection-bar {
+    display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+    background: var(--accent-soft); color: var(--accent);
+    border-radius: var(--radius-md); padding: var(--space-3) 0.9rem; margin-bottom: 0.75rem;
+  }
+  .selection-count { font-weight: 700; font-size: 0.85rem; }
+  .selection-bar select { font-size: 0.78rem; padding: 0.25rem 0.4rem; }
+
+  /* ── Saved searches ──
+     The list above the search box (see saved_searches in schema.sql).
+     Rows, not cards: each is a name, the query behind it, and a count of
+     what's new — one line of content and one of detail. */
+  .saved-row {
+    display: flex; align-items: flex-start; gap: var(--space-3);
+    padding: var(--space-3) 1.15rem; border-bottom: 1px solid var(--rule);
+  }
+  .saved-row:last-child { border-bottom: 0; }
+  .saved-main { flex: 1; min-width: 0; }
+  .saved-name {
+    background: none; border: 0; padding: 0; cursor: pointer;
+    font-size: 0.9rem; font-weight: 600; color: var(--ink); text-align: left;
+  }
+  .saved-name:hover { color: var(--accent); text-decoration: underline; }
+  .saved-meta { font-size: 0.74rem; color: var(--slate); margin-top: 0.15rem; }
+
+  /* ── Letters ──
+     The editor's body field. Monospace-ish measure and generous leading
+     because this is a document being read as a document, not a form
+     field — and a fixed max-width so a wide window doesn't stretch lines
+     to a length nobody proofreads accurately. */
+  textarea.letter-body {
+    width: 100%; max-width: 46rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85rem; line-height: 1.65; white-space: pre-wrap;
+  }
+  /* Printing a letter should produce the letter, not the app around it
+     — the sidebar, topbar and every control are furniture on paper. */
+  @media print {
+    .app-sidebar, .app-topbar, .card-actions, .page-head, .panel-head .sub, #error { display: none !important; }
+    .app-main { padding: 0 !important; }
+    textarea.letter-body {
+      border: 0; max-width: none; font-size: 0.95rem;
+      font-family: Georgia, 'Times New Roman', serif; height: auto;
+    }
   }

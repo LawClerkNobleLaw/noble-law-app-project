@@ -9,6 +9,26 @@
 <div id="error" role="alert" aria-live="assertive"></div>
 <div id="content"></div>
 
+<div class="panel" style="margin-top:1rem" id="roster-panel" hidden>
+  <div class="panel-head">
+    <div>
+      <div class="title">Lobbyists at this firm</div>
+      <div class="sub">Listed on Part I of every Form 601 you prepare from here.</div>
+    </div>
+  </div>
+  <div id="roster"></div>
+  <div style="padding:0.8rem 1.15rem">
+    <form id="add-lobbyist-f">
+      <label for="lobbyist-name" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Lobbyist name</label>
+      <input id="lobbyist-name" placeholder="Full legal name" required style="flex:1;min-width:10rem">
+      <label for="lobbyist-cert" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Certification ID</label>
+      <input id="lobbyist-cert" placeholder="Certification ID (optional)" style="flex:1;min-width:8rem">
+      <button type="submit">Add</button>
+    </form>
+  </div>
+</div>
+
+<script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script>
 const contentEl = document.getElementById('content');
 const errorEl = document.getElementById('error');
@@ -81,5 +101,92 @@ async function load() {
   }
 }
 
+/* ── The firm's lobbyists ───────────────────────────────────────────────
+ *
+ * Form 601 exists to register a firm's lobbyists, and until an
+ * organization sat above the account there was exactly one name this app
+ * could put on it — the registrant's own. The roster lives here rather
+ * than inside the disclosure flow because it's a fact about the firm,
+ * not about one filing, and every 601 prepared from now on reads it.
+ *
+ * An empty roster is not an error: a solo lobbyist's own name still
+ * fills the first slot, which is what every filing before this did.
+ */
+let roster = [];
+
+async function loadRoster() {
+  try {
+    const res = await fetch('/api/org-lobbyists');
+    if (!res.ok) return;
+    roster = await res.json();
+    renderRoster();
+  } catch (err) { /* The rest of the page is unaffected. */ }
+}
+
+function renderRoster() {
+  document.getElementById('roster-panel').hidden = false;
+  const listEl = document.getElementById('roster');
+  if (!roster.length) {
+    listEl.innerHTML = '<p class="empty" style="padding:0.8rem 1.15rem">No one listed yet. Form 601 falls back to your own registered name.</p>';
+    return;
+  }
+  listEl.innerHTML = roster.map(l => `
+    <div class="saved-row">
+      <div class="saved-main">
+        <div style="font-size:0.9rem;font-weight:600">${escapeText(l.name)}</div>
+        ${l.cert_id ? `<div class="saved-meta">Certification ${escapeText(l.cert_id)}</div>` : ''}
+      </div>
+      <button type="button" class="icon-btn" onclick="removeLobbyist(${l.id})" aria-label="Remove lobbyist" title="Remove">×</button>
+    </div>
+  `).join('');
+}
+
+function escapeText(text) {
+  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+document.getElementById('add-lobbyist-f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorEl.className = '';
+  const nameEl = document.getElementById('lobbyist-name');
+  const certEl = document.getElementById('lobbyist-cert');
+  try {
+    const res = await fetch('/api/org-lobbyists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: nameEl.value, cert_id: certEl.value }),
+    });
+    const list = await res.json();
+    if (!res.ok) throw new Error(list.error || 'Could not add that lobbyist');
+    roster = list;
+    renderRoster();
+    nameEl.value = ''; certEl.value = '';
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+});
+
+async function removeLobbyist(id) {
+  const person = roster.find(l => l.id === id);
+  const ok = await confirmDelete(
+    'Remove lobbyist?',
+    `Remove ${person ? person.name : 'this person'} from the firm's roster? Filings already prepared keep the names they were built with.`
+  );
+  if (!ok) return;
+  errorEl.className = '';
+  try {
+    const res = await fetch(`/api/org-lobbyists?id=${id}`, { method: 'DELETE' });
+    const list = await res.json();
+    if (!res.ok) throw new Error(list.error || 'Could not remove that lobbyist');
+    roster = list;
+    renderRoster();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
 load();
+loadRoster();
 </script>

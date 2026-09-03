@@ -6,6 +6,8 @@
 
 <script src="{{HEARING_TIME_SRC}}"></script>
 <script src="{{BILL_STATUS_SRC}}"></script>
+<script src="{{TOAST_SRC}}"></script>
+<script src="{{POSITION_HISTORY_SRC}}"></script>
 <script src="{{BILL_TABLES_SRC}}"></script>
 <script src="{{CLIENT_QUICKADD_SRC}}"></script>
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
@@ -69,6 +71,7 @@ let allClients = [];
 initBillClients({
   allClients: () => allClients,
   assignedClients: () => (currentReport ? (currentReport.assigned_clients || []) : []),
+  billLabel: () => (currentReport ? `${currentReport.state} ${currentReport.bill_number}` : ''),
   onError: (message) => {
     errorEl.textContent = message || '';
     errorEl.className = message ? 'show' : '';
@@ -85,6 +88,7 @@ initBillClients({
 // detail, and flagging, actually happen — a search result routes
 // straight here whether or not it's ever been flagged before).
 let currentReport = null;
+let billLetters = [];
 
 async function load() {
   if (!billId) {
@@ -94,9 +98,10 @@ async function load() {
     return;
   }
   try {
-    const [reportRes, clientsRes] = await Promise.all([
+    const [reportRes, clientsRes, lettersRes] = await Promise.all([
       fetch(`/api/report?bill_id=${billId}`),
       fetch('/api/clients'),
+      fetch(`/api/letters?bill_id=${billId}`),
     ]);
     if (reportRes.status === 401) { window.location.href = '/login'; return; }
     const data = await reportRes.json();
@@ -104,13 +109,67 @@ async function load() {
     // A signed-out visitor can still reach a report, so an unauthorized
     // client list isn't an error here — it just means no picker.
     allClients = clientsRes.ok ? await clientsRes.json() : [];
+    // Same tolerance as the client list above: a signed-out visitor can
+    // reach a report, and has no letters.
+    billLetters = lettersRes.ok ? await lettersRes.json() : [];
     render(data);
+    markViewed(data);
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';
   } finally {
     document.getElementById('loading').className = '';
   }
+}
+
+// The button PR #38 had to leave out: Draft > Letters didn't exist yet,
+// so it would have had nothing to open. Seeds from this bill, its first
+// assigned client's position, and its next hearing (see
+// letter_drafts.build_seed) and goes straight to the editor.
+//
+// One assigned client is the common case and is used without asking.
+// With several, the letters page's own picker is the right place to
+// choose — this button is a shortcut, not a form.
+async function draftLetter() {
+  const assigned = (currentReport && currentReport.assigned_clients) || [];
+  if (assigned.length > 1) {
+    window.location.href = '/draft/letters';
+    return;
+  }
+  errorEl.className = '';
+  try {
+    const res = await fetch('/api/letters', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bill_id: Number(billId),
+        client_id: assigned.length ? assigned[0].id : null,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not start that letter');
+    window.location.href = `/draft/letters/edit?id=${data.id}`;
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+// Clearing this bill's unread dot on the flagged list. Fired after the
+// report has actually rendered — a load that threw never gets here, so a
+// failed page doesn't count as having been read.
+//
+// Deliberately unawaited and deliberately silent on failure: this is
+// bookkeeping about what the user has seen, and an error toast about it
+// would be louder than the thing it's reporting. Nothing on this page
+// depends on the response.
+function markViewed(report) {
+  if (!report || !report.flagged) return;
+  fetch('/api/bill-viewed', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bill_id: Number(billId) }),
+  }).catch(() => {});
 }
 
 // The highlighted "Current Status" callout above the full history
@@ -274,6 +333,7 @@ function render(r) {
       <div class="card-actions">
         ${r.flagged
           ? `<span class="status-badge">🚩 Flagged</span>
+             <button type="button" class="secondary" onclick="draftLetter()">Draft letter</button>
              <button type="button" class="secondary" onclick="window.print()">Print</button>
              <button type="button" class="danger" onclick="unflag()">Unflag</button>`
           : '<button id="flag-btn" class="secondary" onclick="openFlagModal()">Flag this bill</button>'}
@@ -284,16 +344,42 @@ function render(r) {
       <div class="panel-head"><div class="title">Assigned client${(r.assigned_clients || []).length === 1 ? '' : 's'}</div></div>
       <div style="padding:1rem 1.15rem">
         ${r.flagged
-          ? billClientCellHtml(r.bill_id)
+          ? billClientCellHtml(r.bill_id, { showEffectiveDate: true })
           : '<p class="empty">Flag this bill to assign it to a client.</p>'}
       </div>
     </div>
+
+    ${billLetters.length ? `
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">Letters on this bill</div></div>
+      <div id="letters-list" style="padding:0.4rem 1.15rem 1rem">
+        ${billLetters.map(l => `
+          <div class="saved-row" style="padding-left:0;padding-right:0">
+            <div class="saved-main">
+              <a class="saved-name" href="/draft/letters/edit?id=${l.id}">${escapeNotes(l.subject)}</a>
+              <div class="saved-meta">${l.client_name ? escapeNotes(l.client_name) + ' · ' : ''}Last edited ${escapeNotes((l.updated_at || '').slice(0, 10))}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>` : ''}
+
+    ${r.flagged && (r.position_history || []).length ? `
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head">
+        <div>
+          <div class="title">Position history</div>
+          <div class="sub">Every change to a client's stance on this bill, newest first.</div>
+        </div>
+      </div>
+      <div style="padding:0.4rem 1.15rem 1rem">${positionHistoryHtml(r.position_history)}</div>
+    </div>` : ''}
 
     ${r.flagged ? `
     <div class="panel" style="margin-top:1rem">
       <div class="panel-head"><div class="title">Your notes</div></div>
       <div style="padding:1rem 1.15rem">
-        <label for="bill-notes" class="sub" style="display:block;margin-bottom:0.35rem">Private to your account. Saves when you click away.</label>
+        <label for="bill-notes" class="sub" style="display:block;margin-bottom:0.35rem">Shared with your firm. Saves when you click away.</label>
         <textarea id="bill-notes" rows="4" style="width:100%" placeholder="What you're watching for on this bill, who you've talked to, what you told them…"
                   onblur="saveNotes(this)">${escapeNotes(r.notes || '')}</textarea>
         <div class="sub" id="notes-status" style="margin-top:0.35rem"></div>

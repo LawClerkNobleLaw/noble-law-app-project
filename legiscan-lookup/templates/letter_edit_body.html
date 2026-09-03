@@ -1,0 +1,108 @@
+<div class="page-head"><div><a href="/draft/letters" class="sub">← Letters</a></div></div>
+<div id="error" role="alert" aria-live="assertive"></div>
+<div id="loading" class="show"><span class="spinner"></span>Loading…</div>
+<div id="letter" hidden>
+  <div class="card">
+    <div class="bill-id" id="context"></div>
+    <label for="letter-subject" class="sub" style="display:block;margin:0.6rem 0 0.2rem">Subject line</label>
+    <input id="letter-subject" style="width:100%" onblur="save()">
+    <div class="card-actions">
+      <button type="button" class="secondary" onclick="window.print()">Print</button>
+      <button type="button" class="secondary" onclick="copyLetter()">Copy text</button>
+      <span class="sub" id="save-status" aria-live="polite"></span>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:1rem">
+    <div class="panel-head">
+      <div>
+        <div class="title">Letter</div>
+        <div class="sub">Saves when you click away. Rotunda never sends this — print it or copy it out.</div>
+      </div>
+    </div>
+    <div style="padding:1rem 1.15rem">
+      <label for="letter-body" class="sr-only">Letter text</label>
+      <textarea id="letter-body" rows="26" class="letter-body" onblur="save()"></textarea>
+    </div>
+  </div>
+</div>
+
+<script>
+const errorEl = document.getElementById('error');
+const letterId = new URLSearchParams(window.location.search).get('id');
+const subjectEl = document.getElementById('letter-subject');
+const bodyEl = document.getElementById('letter-body');
+const statusEl = document.getElementById('save-status');
+let current = null;
+
+async function load() {
+  if (!letterId) {
+    errorEl.textContent = 'Missing id in the URL.';
+    errorEl.className = 'show';
+    document.getElementById('loading').className = '';
+    return;
+  }
+  try {
+    const res = await fetch(`/api/letters/one?id=${letterId}`);
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load that letter');
+    current = data;
+    subjectEl.value = data.subject || '';
+    bodyEl.value = data.body || '';
+    // The bill and client this was written about, as they read when it
+    // was written (see the letters table in schema.sql) — context, not a
+    // live link to something that may have moved since.
+    const bits = [data.bill_label, data.client_name].filter(Boolean);
+    document.getElementById('context').textContent = bits.join(' · ') || 'No bill attached';
+    document.getElementById('letter').hidden = false;
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    document.getElementById('loading').className = '';
+  }
+}
+
+// Saves on blur rather than per keystroke — same shape as the bill
+// report's notes field, and a letter is written in one sitting. The
+// status line says so instead of leaving the user guessing.
+async function save() {
+  if (!current) return;
+  if (subjectEl.value === current.subject && bodyEl.value === current.body) return;
+  errorEl.className = '';
+  statusEl.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/letters/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: Number(letterId), subject: subjectEl.value, body: bodyEl.value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save that letter');
+    current = data;
+    statusEl.textContent = 'Saved.';
+  } catch (err) {
+    statusEl.textContent = '';
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+// A letter's destination is an email or a letterhead in some other
+// application, so the useful export is the text itself. Falls back to
+// selecting it when the clipboard API isn't available (an insecure
+// origin, an older browser) rather than silently doing nothing.
+async function copyLetter() {
+  try {
+    await navigator.clipboard.writeText(bodyEl.value);
+    statusEl.textContent = 'Copied.';
+  } catch (err) {
+    bodyEl.focus();
+    bodyEl.select();
+    statusEl.textContent = 'Selected — press ⌘C to copy.';
+  }
+}
+
+load();
+</script>

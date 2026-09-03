@@ -16,16 +16,24 @@ What it does, in order:
      newly scheduled hearing, new vote — then saves the fresh
      status/sponsors/history/amendments/hearings/votes via the same
      db.upsert_bill() the live app uses when a bill is first added.
-  4. Once every watched bill's been checked, hands the whole day's
+  4. Re-runs every saved search (see saved_searches in schema.sql) and
+     records anything that wasn't matching yesterday. This is the only
+     part of the job that can see a bill nobody has flagged, which is
+     the point of it — the bill that hurts a client is usually the one
+     introduced last week that nobody has noticed yet.
+  5. Once every watched bill's been checked, hands the whole day's
      changes to digest.py, which emails one "what changed" digest per
-     user per day — only to users who actually have a change on one of
-     THEIR flagged bills, nobody else.
-  5. Appends one plain-English line to logs/refresh.log summarizing the
+     user per day — only to users who actually have news, whether that's
+     a change on one of THEIR flagged bills or a new saved-search match.
+  6. Appends one plain-English line to logs/refresh.log summarizing the
      run, so it can be checked without reading any code.
 
 Quota math: LegiScan's free tier is 30,000 queries/month. Even a 200-bill
 watch list checked once a day for 30 days is 6,000 queries/month — about
 20% of the free tier, with a lot of room before this needs a paid plan.
+Saved searches add one query each per day (only the first page — a
+hundredth-ranked relevance match is not news), so a firm with one saved
+search per client adds a few hundred a month, not thousands.
 
 Reuses legiscan_client.py (the same "talk to LegiScan" code the live app
 uses) and db.py (the same database code) — nothing here is duplicated.
@@ -36,7 +44,7 @@ import time
 
 import db
 import digest
-from legiscan_client import get_bill_detail
+from legiscan_client import get_bill_detail, smart_search
 
 # db.DB_DIR (not a path relative to this file) so the log lives on the
 # same disk as the SQLite file — on Render, the code checkout gets
@@ -94,14 +102,45 @@ def refresh_one(conn, bill_id):
     return changed, digest_changes
 
 
+def refresh_saved_searches(conn):
+    """Re-run every saved search and record what's new since last time.
+
+    One LegiScan query per saved search per day, first page only: these
+    are relevance-ordered, and a bill that only appears on page three of
+    a broad query is not the news this feature exists to deliver.
+
+    Errors are per-search. One unreachable query shouldn't cost the
+    others their run, and it certainly shouldn't cost the bill refresh
+    above its digest."""
+    searches = db.list_saved_searches_for_run(conn)
+    if not searches:
+        return {"searches": 0, "new": 0, "errors": 0}
+
+    new_count = 0
+    error_count = 0
+    for search in searches:
+        try:
+            results = smart_search(search["query"]).get("results", [])
+        except Exception as e:
+            conn.rollback()
+            error_count += 1
+            log(f"  error — saved search {search['id']} ({search['name']}): {e}")
+            continue
+        new_matches = db.record_saved_search_matches(conn, search["id"], results)
+        conn.commit()
+        new_count += len(new_matches)
+    return {"searches": len(searches), "new": new_count, "errors": error_count}
+
+
 def main():
     db.init_db()
     conn = db.get_connection()
     try:
+        # An empty watch list is no longer an early return: a user can
+        # have saved searches and nothing flagged yet, and that's exactly
+        # the account saved searches are most useful to. The summary line
+        # below already says "checked 0 bill(s)" on its own.
         bill_ids = db.list_watchlist_bill_ids(conn)
-        if not bill_ids:
-            log("checked 0 bills — watch list is empty")
-            return {"checked": 0, "changed": 0, "errors": 0, "digest": None}
 
         changed_count = 0
         error_count = 0
@@ -131,6 +170,12 @@ def main():
         for err in errors:
             log(f"  error — {err}")
 
+        search_summary = refresh_saved_searches(conn)
+        log(
+            f"saved searches: {search_summary['searches']} run, "
+            f"{search_summary['new']} new match(es), {search_summary['errors']} error(s)"
+        )
+
         digest_summary = digest.send_all_digests(conn, changes_by_bill)
         log(
             f"digest: {digest_summary['sent']} sent, "
@@ -142,6 +187,7 @@ def main():
             "checked": len(bill_ids),
             "changed": changed_count,
             "errors": error_count,
+            "saved_searches": search_summary,
             "digest": digest_summary,
         }
     finally:

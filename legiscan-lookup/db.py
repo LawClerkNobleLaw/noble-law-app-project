@@ -77,6 +77,54 @@ def init_db(conn=None):
             conn.close()
 
 
+# ── Whose data is it ────────────────────────────────────────────────────
+#
+# The firm's, not the individual's. Clients, flagged bills, positions,
+# prepared filings, letters and saved searches are all the work product
+# of an organization; the person who typed a given row in is recorded on
+# it, and is not who it belongs to. See the organizations table in
+# schema.sql for why this went in while every org still has one seat.
+#
+# Rather than adding an org_id to nine tables and backfilling it, the
+# ownership predicate resolves through the user who created the row:
+# "rows created by anyone in my organization". Same answer, one migration
+# instead of nine, and every row keeps saying who acted — which is what
+# the position history and the filing sign-off need anyway.
+#
+# The COALESCE(org_id, -id) pair is what makes a user with no
+# organization (a database mid-migration, or a test that inserts a user
+# directly) match only their own rows instead of matching every other
+# org-less user's: a NULL org falls back to a value unique to that user.
+# Negative because ids are positive, so the two spaces can't collide.
+#
+# One `?` in, in the same position the old `user_id = ?` had, so every
+# call site's parameter tuple is unchanged.
+
+def _org_scope(column="user_id"):
+    return (f"{column} IN (SELECT id FROM users "
+            "WHERE COALESCE(org_id, -id) = "
+            "(SELECT COALESCE(org_id, -id) FROM users WHERE id = ?))")
+
+
+ORG_SCOPE = _org_scope()
+
+
+def org_id_for_user(conn, user_id):
+    """This user's organization, or None on a database that predates
+    them. Only needed by callers that write org-owned rows directly
+    (the lobbyist roster); everything else scopes through ORG_SCOPE."""
+    row = conn.execute("SELECT org_id FROM users WHERE id = ?", (user_id,)).fetchone()
+    return row["org_id"] if row else None
+
+
+def create_organization(conn, name):
+    cur = conn.execute(
+        "INSERT INTO organizations (name, created_at) VALUES (?, datetime('now'))",
+        (name or "My firm",),
+    )
+    return cur.lastrowid
+
+
 def _migrate(conn):
     """Hand-rolled migrations for columns added after a table already
     existed on someone's machine — CREATE TABLE IF NOT EXISTS in
@@ -87,6 +135,8 @@ def _migrate(conn):
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(bill_client_links)")}
     if "position" not in cols:
         conn.execute("ALTER TABLE bill_client_links ADD COLUMN position TEXT NOT NULL DEFAULT 'watch'")
+    if "effective_date" not in cols:
+        conn.execute("ALTER TABLE bill_client_links ADD COLUMN effective_date TEXT")
 
     client_cols = {row["name"] for row in conn.execute("PRAGMA table_info(clients)")}
     for col in ("effective_date", "contract_period", "agencies_lobbied", "bus_phone"):
@@ -100,11 +150,65 @@ def _migrate(conn):
     flagged_cols = {row["name"] for row in conn.execute("PRAGMA table_info(flagged_bills)")}
     if "notes" not in flagged_cols:
         conn.execute("ALTER TABLE flagged_bills ADD COLUMN notes TEXT")
+    if "last_viewed_at" not in flagged_cols:
+        conn.execute("ALTER TABLE flagged_bills ADD COLUMN last_viewed_at TEXT")
 
     filing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(prepared_filings)")}
     for col in ("pdf_field_data_hash", "client_row_ids", "trigger_date", "due_date"):
         if col not in filing_cols:
             conn.execute(f"ALTER TABLE prepared_filings ADD COLUMN {col} TEXT")
+    if "signed_by" not in filing_cols:
+        conn.execute("ALTER TABLE prepared_filings ADD COLUMN signed_by INTEGER REFERENCES users(id)")
+
+    user_cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+    if "org_id" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN org_id INTEGER REFERENCES organizations(id)")
+    _backfill_organizations(conn)
+    _migrate_bill_views(conn)
+
+
+def _backfill_organizations(conn):
+    """Give every account without one an organization of its own.
+
+    One org per existing user, not one org for everybody: these accounts
+    predate the concept, and there is nothing in the data that says two
+    of them are the same firm. Merging on a guess (a shared email domain,
+    a matching legal_name) would put one lobbyist's clients in front of
+    another's, which is the one mistake this whole layer exists to make
+    impossible.
+
+    Named from the registrant's own legal_name where a profile exists,
+    since that is the firm's name as they gave it to the state, and from
+    the email otherwise."""
+    rows = conn.execute(
+        """SELECT u.id, u.email, p.legal_name
+           FROM users u LEFT JOIN lobbyist_profiles p ON p.user_id = u.id
+           WHERE u.org_id IS NULL"""
+    ).fetchall()
+    for row in rows:
+        name = (row["legal_name"] or "").strip() or (row["email"] or "").strip() or "My firm"
+        org_id = create_organization(conn, name)
+        conn.execute("UPDATE users SET org_id = ? WHERE id = ?", (org_id, row["id"]))
+
+
+def _migrate_bill_views(conn):
+    """Move "I have read this bill" out of flagged_bills and into
+    bill_views.
+
+    The flag became the firm's; being up to date stayed the person's. On
+    one row per user this is a straight copy — the column is left in
+    place rather than dropped, since SQLite's DROP COLUMN is recent
+    enough to be worth not depending on and a stale column costs nothing
+    but the note in schema.sql saying it's dead."""
+    flagged_cols = {row["name"] for row in conn.execute("PRAGMA table_info(flagged_bills)")}
+    if "last_viewed_at" not in flagged_cols:
+        return
+    conn.execute(
+        """INSERT OR IGNORE INTO bill_views (user_id, bill_id, last_viewed_at)
+           SELECT user_id, bill_id, last_viewed_at FROM flagged_bills
+           WHERE last_viewed_at IS NOT NULL"""
+    )
+    conn.execute("UPDATE flagged_bills SET last_viewed_at = NULL WHERE last_viewed_at IS NOT NULL")
 
 
 # ── Change detection for the daily digest email — see digest.py. Both
@@ -366,11 +470,11 @@ def flag_bill(conn, user_id, bill_id):
 
 
 def unflag_bill(conn, user_id, bill_id):
-    conn.execute("DELETE FROM flagged_bills WHERE user_id = ? AND bill_id = ?", (user_id, bill_id))
+    conn.execute(f"DELETE FROM flagged_bills WHERE {ORG_SCOPE} AND bill_id = ?", (user_id, bill_id))
     # Any client assignments for this (user, bill) go with it — an
     # unflagged bill shouldn't leave a dangling "assigned to client X"
     # relationship the UI no longer has anywhere to show.
-    conn.execute("DELETE FROM bill_client_links WHERE user_id = ? AND bill_id = ?", (user_id, bill_id))
+    conn.execute(f"DELETE FROM bill_client_links WHERE {ORG_SCOPE} AND bill_id = ?", (user_id, bill_id))
     still_flagged_by_someone = conn.execute(
         "SELECT 1 FROM flagged_bills WHERE bill_id = ?", (bill_id,)
     ).fetchone()
@@ -476,9 +580,78 @@ def _latest_changes_for_bills(conn, bill_ids):
     return latest
 
 
+def _unread_counts_for_bills(conn, user_id, bill_ids):
+    """How many recorded changes on each of these bills this user hasn't
+    seen yet, keyed by bill_id — the flagged list's unread dot.
+
+    "Seen" means this person opened the bill's report since the change was
+    detected (bill_views.last_viewed_at, written by mark_bill_viewed). A
+    bill they have never opened counts every change on it, rather than
+    starting at zero: the point of the dot is to say "you have not looked
+    at this", and a never-opened bill is the strongest case of that.
+
+    The flag is the firm's and the dot is the reader's, so this joins
+    bill_views on the individual while the flagged list around it is
+    scoped to the organization. Two lobbyists at the same firm see the
+    same bills and their own dots.
+
+    Reading the digest email doesn't clear anything. It can't — the mark
+    happens on the report page, and the email links to it, so following
+    the link is what clears the bill. That's the intended path.
+
+    Counting rows rather than storing a flag means this stays correct
+    with no writes on the refresh side: the daily job appends to
+    bill_change_events exactly as before and knows nothing about who has
+    read what."""
+    if not bill_ids:
+        return {}
+    placeholders = ",".join("?" for _ in bill_ids)
+    rows = conn.execute(
+        f"""SELECT f.bill_id, COUNT(e.id) AS unread
+            FROM flagged_bills f
+            LEFT JOIN bill_views v ON v.bill_id = f.bill_id AND v.user_id = ?
+            JOIN bill_change_events e
+              ON e.bill_id = f.bill_id
+             AND (v.last_viewed_at IS NULL OR e.detected_at > v.last_viewed_at)
+            WHERE {_org_scope("f.user_id")} AND f.bill_id IN ({placeholders})
+            GROUP BY f.bill_id""",
+        (user_id, user_id, *bill_ids),
+    ).fetchall()
+    return {row["bill_id"]: row["unread"] for row in rows}
+
+
+def tracking_for_bills(conn, user_id, bill_ids):
+    """bill_id -> {"flagged": True, "clients": [...]} for whichever of
+    these bills this user already tracks — what search results are
+    annotated with so a results page knows what the user has already
+    settled.
+
+    Takes LegiScan bill_ids (the same ids `bills.id` is keyed on) and
+    silently returns nothing for the ones this app has never seen, which
+    on a broad search is most of them. Cheap on purpose: two indexed
+    reads over the user's own rows, no LegiScan call, no per-row work —
+    a hundred-result page has to be able to afford this."""
+    if not bill_ids:
+        return {}
+    placeholders = ",".join("?" for _ in bill_ids)
+    flagged = {
+        row["bill_id"] for row in conn.execute(
+            f"""SELECT bill_id FROM flagged_bills
+                WHERE {ORG_SCOPE} AND bill_id IN ({placeholders})""",
+            (user_id, *bill_ids),
+        )
+    }
+    if not flagged:
+        return {}
+    clients_by_bill = clients_for_bills(conn, user_id, sorted(flagged))
+    return {
+        bill_id: {"flagged": True, "clients": clients_by_bill.get(bill_id, [])}
+        for bill_id in flagged
+    }
+
 def list_flagged_bills(conn, user_id, today=None):
     rows = conn.execute(
-        """SELECT f.bill_id, f.flagged_at, w.last_checked_at,
+        f"""SELECT f.bill_id, f.flagged_at, v.last_viewed_at, w.last_checked_at,
                   b.state, b.bill_number, b.title, b.status_label, b.status_date, b.url,
                   b.amend_by_date,
                   (SELECT MAX(h.date) FROM bill_status_history h
@@ -486,9 +659,12 @@ def list_flagged_bills(conn, user_id, today=None):
            FROM flagged_bills f
            JOIN bills b ON b.id = f.bill_id
            LEFT JOIN watchlist w ON w.bill_id = f.bill_id
-           WHERE f.user_id = ?
+           LEFT JOIN bill_views v ON v.bill_id = f.bill_id AND v.user_id = ?
+           WHERE {_org_scope("f.user_id")}
            ORDER BY b.bill_number""",
-        (user_id,),
+        # Twice: once for "has this reader seen it", once for "does this
+        # reader's firm track it". Same person, two different questions.
+        (user_id, user_id),
     ).fetchall()
     result = [dict(r) for r in rows]
     bill_ids = [r["bill_id"] for r in result]
@@ -496,6 +672,7 @@ def list_flagged_bills(conn, user_id, today=None):
     today = today or today_in_california()
     next_hearings = _next_hearings_for_bills(conn, bill_ids, today)
     latest_changes = _latest_changes_for_bills(conn, bill_ids)
+    unread = _unread_counts_for_bills(conn, user_id, bill_ids)
     for r in result:
         r["assigned_clients"] = clients_by_bill.get(r["bill_id"], [])
         # None for a bill with nothing scheduled — the column says so in
@@ -503,6 +680,9 @@ def list_flagged_bills(conn, user_id, today=None):
         r["next_hearing"] = next_hearings.get(r["bill_id"])
         # None until the refresh job has seen this bill move at least once.
         r["last_change"] = latest_changes.get(r["bill_id"])
+        # How many recorded changes this user hasn't looked at yet. 0 is
+        # the resting state, and the only state that renders no dot.
+        r["unread_count"] = unread.get(r["bill_id"], 0)
         # bills.amend_by_date is the user's own hand-entered amendment
         # deadline (nothing to do with LegiScan). Counted here off the
         # same California `today` the hearing countdown uses, rather than
@@ -569,11 +749,11 @@ def list_hearings_for_flagged_bills(conn, user_id, today=None):
     the current day from the same clock the split was made with instead
     of re-deriving it from whatever timezone the browser is in."""
     rows = conn.execute(
-        """SELECT h.id, h.bill_id, h.event_type, h.date, h.time, h.location, h.description,
+        f"""SELECT h.id, h.bill_id, h.event_type, h.date, h.time, h.location, h.description,
                   b.state, b.bill_number, b.title
            FROM bill_hearings h
            JOIN bills b ON b.id = h.bill_id
-           JOIN flagged_bills f ON f.bill_id = h.bill_id AND f.user_id = ?""",
+           JOIN flagged_bills f ON f.bill_id = h.bill_id AND {_org_scope("f.user_id")}""",
         (user_id,),
     ).fetchall()
 
@@ -592,7 +772,7 @@ def list_hearings_for_flagged_bills(conn, user_id, today=None):
     past.sort(key=lambda h: (h["date"] or "", h["time"] or ""), reverse=True)
 
     flagged_count = conn.execute(
-        "SELECT COUNT(*) FROM flagged_bills WHERE user_id = ?", (user_id,)
+        f"SELECT COUNT(*) FROM flagged_bills WHERE {ORG_SCOPE}", (user_id,)
     ).fetchone()[0]
 
     return {
@@ -625,19 +805,19 @@ def list_sponsor_vote_rollup(conn, user_id):
     doing so would be a new integration, not reuse of what's already
     stored, so it's deliberately out of scope here."""
     sponsor_rows = conn.execute(
-        """SELECT s.name, s.party, s.role, s.bill_id, b.state, b.bill_number, b.title
+        f"""SELECT s.name, s.party, s.role, s.bill_id, b.state, b.bill_number, b.title
            FROM bill_sponsors s
            JOIN bills b ON b.id = s.bill_id
-           JOIN flagged_bills f ON f.bill_id = s.bill_id AND f.user_id = ?
+           JOIN flagged_bills f ON f.bill_id = s.bill_id AND {_org_scope("f.user_id")}
            ORDER BY s.name""",
         (user_id,),
     ).fetchall()
 
     votes_by_bill = {}
     for r in conn.execute(
-        """SELECT v.bill_id, v.date, v.chamber, v.description, v.yea, v.nay, v.nv, v.absent, v.total, v.passed
+        f"""SELECT v.bill_id, v.date, v.chamber, v.description, v.yea, v.nay, v.nv, v.absent, v.total, v.passed
            FROM votes v
-           JOIN flagged_bills f ON f.bill_id = v.bill_id AND f.user_id = ?
+           JOIN flagged_bills f ON f.bill_id = v.bill_id AND {_org_scope("f.user_id")}
            ORDER BY v.date""",
         (user_id,),
     ).fetchall():
@@ -668,9 +848,35 @@ def list_users_with_flagged_bills(conn):
     return [(r["user_id"], r["email"]) for r in rows]
 
 
+def list_recipients(conn):
+    """[(user_id, email), ...] for every user the daily digest might have
+    something to say to — anyone with a flagged bill or a saved search.
+
+    Superset of list_users_with_flagged_bills, which it replaces as the
+    digest's starting point: a user with nothing flagged but a saved
+    search is exactly the account saved searches exist for, and the old
+    list skipped them entirely. The narrowing to "actually has news
+    today" still happens in build_user_digest.
+
+    Matched through the organization, not the individual, for the same
+    reason the flagged list is: a colleague who has never personally
+    clicked a flag still works at a firm whose bills moved this morning,
+    and the digest is what tells them."""
+    rows = conn.execute(
+        """SELECT DISTINCT u.id AS user_id, u.email FROM users u
+           WHERE EXISTS (
+                   SELECT 1 FROM flagged_bills f JOIN users o ON o.id = f.user_id
+                    WHERE COALESCE(o.org_id, -o.id) = COALESCE(u.org_id, -u.id))
+              OR EXISTS (
+                   SELECT 1 FROM saved_searches s JOIN users o ON o.id = s.user_id
+                    WHERE COALESCE(o.org_id, -o.id) = COALESCE(u.org_id, -u.id))"""
+    ).fetchall()
+    return [(r["user_id"], r["email"]) for r in rows]
+
+
 def list_flagged_bill_ids_for_user(conn, user_id):
     return {r["bill_id"] for r in conn.execute(
-        "SELECT bill_id FROM flagged_bills WHERE user_id = ?", (user_id,)
+        f"SELECT bill_id FROM flagged_bills WHERE {ORG_SCOPE}", (user_id,)
     ).fetchall()}
 
 
@@ -710,7 +916,7 @@ def create_client(conn, user_id, fields):
 
 def list_clients(conn, user_id):
     rows = conn.execute(
-        "SELECT * FROM clients WHERE user_id = ? ORDER BY name", (user_id,)
+        f"SELECT * FROM clients WHERE {ORG_SCOPE} ORDER BY name", (user_id,)
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -719,7 +925,7 @@ def get_client(conn, user_id, client_id):
     """Scoped to user_id, same reasoning as delete_client — one account
     can't view another's client just by guessing/incrementing an id."""
     row = conn.execute(
-        "SELECT * FROM clients WHERE id = ? AND user_id = ?", (client_id, user_id)
+        f"SELECT * FROM clients WHERE id = ? AND {ORG_SCOPE}", (client_id, user_id)
     ).fetchone()
     return dict(row) if row else None
 
@@ -730,11 +936,11 @@ def get_client_bills(conn, user_id, client_id):
     one goes bill -> clients; this one goes client -> bills), for the
     client detail page."""
     rows = conn.execute(
-        """SELECT b.id AS bill_id, b.state, b.bill_number, b.title,
-                  b.status_label, b.status_date, b.url, l.position
+        f"""SELECT b.id AS bill_id, b.state, b.bill_number, b.title,
+                  b.status_label, b.status_date, b.url, l.position, l.effective_date
            FROM bill_client_links l
            JOIN bills b ON b.id = l.bill_id
-           WHERE l.user_id = ? AND l.client_id = ?
+           WHERE {_org_scope("l.user_id")} AND l.client_id = ?
            ORDER BY b.bill_number""",
         (user_id, client_id),
     ).fetchall()
@@ -749,11 +955,11 @@ def update_client(conn, user_id, client_id, fields):
     three fields could only ever be set at creation time, which would
     leave every already-existing client permanently gapped."""
     conn.execute(
-        """UPDATE clients
+        f"""UPDATE clients
            SET name = ?, bus_addr1 = ?, bus_city = ?, bus_st = ?, bus_zip4 = ?, bus_phone = ?,
                interests = ?, existing_filer_id = ?, effective_date = ?,
                contract_period = ?, agencies_lobbied = ?
-           WHERE id = ? AND user_id = ?""",
+           WHERE id = ? AND {ORG_SCOPE}""",
         (
             fields.get("name"), fields.get("bus_addr1"), fields.get("bus_city"),
             fields.get("bus_st"), fields.get("bus_zip4"), fields.get("bus_phone"),
@@ -774,8 +980,234 @@ def delete_client(conn, user_id, client_id):
     the request outright the moment a client was actually assigned to a
     bill — deleting a client should just take its assignments with it,
     not block on them."""
-    conn.execute("DELETE FROM bill_client_links WHERE client_id = ? AND user_id = ?", (client_id, user_id))
-    conn.execute("DELETE FROM clients WHERE id = ? AND user_id = ?", (client_id, user_id))
+    conn.execute(f"DELETE FROM bill_client_links WHERE client_id = ? AND {ORG_SCOPE}", (client_id, user_id))
+    # A saved search pointing at this client keeps running — it's the
+    # user's query, and only the auto-assign target goes with the client.
+    conn.execute(
+        f"UPDATE saved_searches SET client_id = NULL WHERE client_id = ? AND {ORG_SCOPE}",
+        (client_id, user_id),
+    )
+    conn.execute(f"DELETE FROM clients WHERE id = ? AND {ORG_SCOPE}", (client_id, user_id))
+
+
+
+# ── The firm's lobbyists — Form 601's Part I. Separate from users
+# because a firm registers lobbyists who may not have a login here, and
+# an account holder (an assistant, an associate) isn't necessarily a
+# registered lobbyist. See org_lobbyists in schema.sql. ──
+
+def list_org_lobbyists(conn, user_id):
+    """The roster for this user's firm, in the order it was entered —
+    which is the order it will appear on the form, and therefore an order
+    the user can reason about."""
+    rows = conn.execute(
+        """SELECT l.id, l.name, l.cert_id, l.user_id, l.created_at
+           FROM org_lobbyists l
+           WHERE l.org_id = (SELECT org_id FROM users WHERE id = ?)
+           ORDER BY l.id""",
+        (user_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_org_lobbyist(conn, user_id, name, cert_id=None):
+    """Raises ValueError (safe to show the user) on a blank name or an
+    account with no organization — the latter can't happen after
+    _backfill_organizations, and failing loudly beats writing a roster
+    row nobody can ever read back."""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Enter the lobbyist's name.")
+    org_id = org_id_for_user(conn, user_id)
+    if not org_id:
+        raise ValueError("This account isn't attached to a firm yet.")
+    cur = conn.execute(
+        """INSERT INTO org_lobbyists (org_id, name, cert_id, created_at)
+           VALUES (?,?,?,datetime('now'))""",
+        (org_id, name, (cert_id or "").strip() or None),
+    )
+    return cur.lastrowid
+
+
+def delete_org_lobbyist(conn, user_id, lobbyist_id):
+    cur = conn.execute(
+        """DELETE FROM org_lobbyists
+           WHERE id = ? AND org_id = (SELECT org_id FROM users WHERE id = ?)""",
+        (lobbyist_id, user_id),
+    )
+    return cur.rowcount > 0
+
+
+# ── Saved searches — a query the daily job re-runs, reporting what's new
+# since the last run. See the table comments in schema.sql for why this
+# exists at all: without it, monitoring only ever covers bills someone
+# has already flagged, and the bill that hurts a client is the one
+# introduced last week that nobody has noticed. ──
+
+def create_saved_search(conn, user_id, name, query, client_id=None):
+    """Raises ValueError (safe to show the user) on a blank name/query,
+    a client that isn't theirs, or a name they've already used."""
+    name = (name or "").strip()
+    query = (query or "").strip()
+    if not name:
+        raise ValueError("Give this search a name.")
+    if not query:
+        raise ValueError("There's no search to save.")
+    if client_id:
+        owns = conn.execute(
+            f"SELECT 1 FROM clients WHERE id = ? AND {ORG_SCOPE}", (client_id, user_id)
+        ).fetchone()
+        if not owns:
+            raise ValueError("That client doesn't belong to your account.")
+    existing = conn.execute(
+        f"SELECT id FROM saved_searches WHERE {ORG_SCOPE} AND name = ?", (user_id, name)
+    ).fetchone()
+    if existing:
+        raise ValueError(f"You already have a saved search called \u201c{name}\u201d.")
+    cur = conn.execute(
+        """INSERT INTO saved_searches (user_id, name, query, client_id, created_at)
+           VALUES (?,?,?,?,datetime('now'))""",
+        (user_id, name, query, client_id or None),
+    )
+    return cur.lastrowid
+
+
+def delete_saved_search(conn, user_id, saved_search_id):
+    """The recorded matches go with it. They only exist to answer "what's
+    new for this search", so they mean nothing once the search is gone —
+    unlike position_history, which is a record of what the firm did."""
+    owns = conn.execute(
+        f"SELECT 1 FROM saved_searches WHERE id = ? AND {ORG_SCOPE}", (saved_search_id, user_id)
+    ).fetchone()
+    if not owns:
+        return False
+    conn.execute("DELETE FROM saved_search_matches WHERE saved_search_id = ?", (saved_search_id,))
+    conn.execute(f"DELETE FROM saved_searches WHERE id = ? AND {ORG_SCOPE}", (saved_search_id, user_id))
+    return True
+
+
+def list_saved_searches(conn, user_id):
+    """This user's saved searches with the client's name resolved and a
+    count of matches found since they last looked — what the search page
+    lists, and what makes a saved search worth opening."""
+    rows = conn.execute(
+        f"""SELECT s.id, s.name, s.query, s.client_id, s.created_at, s.last_run_at,
+                  c.name AS client_name,
+                  (SELECT COUNT(*) FROM saved_search_matches m
+                    WHERE m.saved_search_id = s.id AND m.reported = 0) AS new_match_count
+           FROM saved_searches s
+           LEFT JOIN clients c ON c.id = s.client_id
+           WHERE {_org_scope("s.user_id")}
+           ORDER BY s.name""",
+        (user_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_saved_searches_for_run(conn):
+    """Every saved search across every account, for the daily job. Not
+    user-scoped on purpose — this is the one caller that runs on nobody's
+    behalf in particular."""
+    return [dict(r) for r in conn.execute(
+        "SELECT id, user_id, name, query, client_id FROM saved_searches ORDER BY id"
+    )]
+
+
+def record_saved_search_matches(conn, saved_search_id, rows, seen_at=None):
+    """Store this run's results and return only the ones never seen
+    before, newest run first.
+
+    The whole point of the table is this diff. A saved search for
+    "artificial intelligence" matches 119 bills every morning; what the
+    user needs to hear about is the one that wasn't there yesterday.
+
+    INSERT OR IGNORE against the UNIQUE(saved_search_id, bill_id) rather
+    than a SELECT-then-INSERT: two runs racing (the local launchd job and
+    a hosted cron hitting the same disk) would otherwise both decide a
+    bill was new and report it twice."""
+    seen_at = seen_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    new_matches = []
+    for row in rows:
+        bill_id = row.get("bill_id")
+        if not bill_id:
+            continue
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO saved_search_matches
+                 (saved_search_id, bill_id, bill_number, title, last_action, first_seen_at)
+               VALUES (?,?,?,?,?,?)""",
+            (saved_search_id, bill_id, row.get("bill_number"), row.get("title"),
+             row.get("last_action"), seen_at),
+        )
+        if cur.rowcount:
+            new_matches.append({
+                "bill_id": bill_id,
+                "bill_number": row.get("bill_number"),
+                "title": row.get("title"),
+                "last_action": row.get("last_action"),
+            })
+    conn.execute(
+        "UPDATE saved_searches SET last_run_at = ? WHERE id = ?", (seen_at, saved_search_id)
+    )
+    return new_matches
+
+
+def list_unreported_matches(conn, user_id):
+    """New matches this user hasn't been told about yet, grouped by saved
+    search — what the digest email reports and what the search page
+    counts. Ordered oldest-first within a search so a digest reads in the
+    order things appeared."""
+    rows = conn.execute(
+        f"""SELECT m.id, m.saved_search_id, m.bill_id, m.bill_number, m.title,
+                  m.last_action, m.first_seen_at, s.name AS search_name, s.client_id,
+                  c.name AS client_name
+           FROM saved_search_matches m
+           JOIN saved_searches s ON s.id = m.saved_search_id
+           LEFT JOIN clients c ON c.id = s.client_id
+           WHERE {_org_scope("s.user_id")} AND m.reported = 0
+           ORDER BY s.name, m.first_seen_at, m.id""",
+        (user_id,),
+    ).fetchall()
+    grouped = {}
+    for row in rows:
+        entry = grouped.setdefault(row["saved_search_id"], {
+            "saved_search_id": row["saved_search_id"],
+            "name": row["search_name"],
+            "client_name": row["client_name"],
+            "matches": [],
+        })
+        entry["matches"].append({
+            "id": row["id"], "bill_id": row["bill_id"], "bill_number": row["bill_number"],
+            "title": row["title"], "last_action": row["last_action"],
+            "first_seen_at": row["first_seen_at"],
+        })
+    return list(grouped.values())
+
+
+def mark_matches_reported(conn, match_ids):
+    """Flipped only after a digest has actually gone out, so an SMTP
+    outage postpones the news rather than losing it."""
+    if not match_ids:
+        return 0
+    placeholders = ",".join("?" for _ in match_ids)
+    cur = conn.execute(
+        f"UPDATE saved_search_matches SET reported = 1 WHERE id IN ({placeholders})",
+        tuple(match_ids),
+    )
+    return cur.rowcount
+
+
+def mark_search_seen(conn, user_id, saved_search_id):
+    """The in-app equivalent of a digest going out: opening a saved
+    search is seeing its new matches, so the count clears."""
+    cur = conn.execute(
+        f"""UPDATE saved_search_matches SET reported = 1
+           WHERE saved_search_id = (
+             SELECT id FROM saved_searches WHERE id = ? AND {ORG_SCOPE}
+           )""",
+        (saved_search_id, user_id),
+    )
+    return cur.rowcount
+
 
 
 # ── Bill-to-client links — many-to-many, since a bill can matter to
@@ -784,7 +1216,8 @@ def delete_client(conn, user_id, client_id):
 VALID_POSITIONS = ("support", "oppose", "watch")
 
 
-def link_bill_to_client(conn, user_id, bill_id, client_id, position="watch"):
+def link_bill_to_client(conn, user_id, bill_id, client_id, position="watch",
+                        effective_date=None):
     """Raises ValueError (safe to show the user) if the client isn't
     actually theirs, the bill isn't actually one they've flagged, or
     position isn't one of the three allowed values — all checked
@@ -794,32 +1227,144 @@ def link_bill_to_client(conn, user_id, bill_id, client_id, position="watch"):
     Doubles as the "change position later" path: called again for a
     link that already exists, it updates position on the existing row
     instead of leaving it untouched — same endpoint handles both
-    assigning a client to a bill and changing its stance afterward."""
+    assigning a client to a bill and changing its stance afterward.
+
+    Every call that actually changes something also appends to
+    position_history. A re-save of the same position with the same
+    effective date appends nothing: the user picked the value that was
+    already there, and a log that records non-events is a log nobody
+    reads.
+
+    effective_date defaults to today in California — the position is in
+    force from the day it was set unless the user says otherwise. See the
+    column comment in schema.sql for why the two dates are separate."""
     if position not in VALID_POSITIONS:
         raise ValueError("Position must be support, oppose, or watch.")
     owns_client = conn.execute(
-        "SELECT 1 FROM clients WHERE id = ? AND user_id = ?", (client_id, user_id)
+        f"SELECT 1 FROM clients WHERE id = ? AND {ORG_SCOPE}", (client_id, user_id)
     ).fetchone()
     if not owns_client:
         raise ValueError("That client doesn't belong to your account.")
     has_flagged = conn.execute(
-        "SELECT 1 FROM flagged_bills WHERE user_id = ? AND bill_id = ?", (user_id, bill_id)
+        f"SELECT 1 FROM flagged_bills WHERE {ORG_SCOPE} AND bill_id = ?", (user_id, bill_id)
     ).fetchone()
     if not has_flagged:
         raise ValueError("Flag this bill before assigning it to a client.")
+
+    existing = conn.execute(
+        f"""SELECT position, effective_date FROM bill_client_links
+           WHERE {ORG_SCOPE} AND bill_id = ? AND client_id = ?""",
+        (user_id, bill_id, client_id),
+    ).fetchone()
+    # An existing link keeps its effective date unless the caller sends a
+    # new one; a brand-new one starts today. Changing the position
+    # without saying otherwise moves the date with it — the new stance
+    # took effect when it was taken, not when the client was first added.
+    if effective_date is None:
+        if existing is None or existing["position"] != position:
+            effective_date = today_in_california()
+        else:
+            effective_date = existing["effective_date"]
+
     conn.execute(
-        """INSERT INTO bill_client_links (user_id, bill_id, client_id, position, linked_at)
-           VALUES (?, ?, ?, ?, datetime('now'))
-           ON CONFLICT(user_id, bill_id, client_id) DO UPDATE SET position=excluded.position""",
-        (user_id, bill_id, client_id, position),
+        """INSERT INTO bill_client_links
+             (user_id, bill_id, client_id, position, effective_date, linked_at)
+           VALUES (?, ?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(user_id, bill_id, client_id) DO UPDATE SET
+             position=excluded.position, effective_date=excluded.effective_date""",
+        (user_id, bill_id, client_id, position, effective_date),
+    )
+
+    if existing is not None and existing["position"] == position \
+            and existing["effective_date"] == effective_date:
+        return
+    record_position_change(
+        conn, user_id, bill_id, client_id,
+        from_position=existing["position"] if existing else None,
+        to_position=position,
+        effective_date=effective_date,
     )
 
 
 def unlink_bill_from_client(conn, user_id, bill_id, client_id):
+    """Take a client off a bill. The link row goes; the history of it
+    doesn't — a removal is recorded with to_position NULL, since "we
+    stopped holding a position in September" is exactly the kind of thing
+    someone later has to account for."""
+    existing = conn.execute(
+        f"""SELECT position FROM bill_client_links
+           WHERE {ORG_SCOPE} AND bill_id = ? AND client_id = ?""",
+        (user_id, bill_id, client_id),
+    ).fetchone()
     conn.execute(
-        "DELETE FROM bill_client_links WHERE user_id = ? AND bill_id = ? AND client_id = ?",
+        f"DELETE FROM bill_client_links WHERE {ORG_SCOPE} AND bill_id = ? AND client_id = ?",
         (user_id, bill_id, client_id),
     )
+    if existing is not None:
+        record_position_change(
+            conn, user_id, bill_id, client_id,
+            from_position=existing["position"], to_position=None,
+            effective_date=today_in_california(),
+        )
+
+
+def record_position_change(conn, user_id, bill_id, client_id, from_position,
+                           to_position, effective_date=None, changed_at=None):
+    """Append one row to position_history. Append-only by construction —
+    nothing in this module updates or deletes from that table."""
+    # The name as it read at the time, alongside the id — see the column
+    # comment in schema.sql. A client deleted later leaves a record that
+    # still says who it was about.
+    name_row = conn.execute("SELECT name FROM clients WHERE id = ?", (client_id,)).fetchone()
+    conn.execute(
+        """INSERT INTO position_history
+             (user_id, bill_id, client_id, client_name, from_position, to_position,
+              effective_date, changed_at, changed_by)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (
+            user_id, bill_id, client_id, name_row["name"] if name_row else None,
+            from_position, to_position, effective_date,
+            changed_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            user_id,
+        ),
+    )
+
+
+def list_position_history(conn, user_id, bill_id=None, client_id=None):
+    """This user's position changes, newest first — for the panel on the
+    bill report (one bill, every client) and on the client record (one
+    client, every bill). At least one of bill_id/client_id is expected;
+    with neither, this is the whole account's history, which is what the
+    tests read and what a future export would want.
+
+    Joins the names in rather than returning bare ids: every caller
+    renders "Anthropic PBC on CA SB1159", and the alternative is three
+    round trips per row. The client name falls back to the copy stored on
+    the row itself when the client has since been deleted — the record of
+    a position has to outlive the client it was held for."""
+    where = [_org_scope("h.user_id")]
+    params = [user_id]
+    if bill_id is not None:
+        where.append("h.bill_id = ?")
+        params.append(bill_id)
+    if client_id is not None:
+        where.append("h.client_id = ?")
+        params.append(client_id)
+    rows = conn.execute(
+        f"""SELECT h.id, h.bill_id, h.client_id, h.from_position, h.to_position,
+                   h.effective_date, h.changed_at, h.changed_by,
+                   COALESCE(c.name, h.client_name) AS client_name,
+                   b.state, b.bill_number,
+                   u.email AS changed_by_email
+            FROM position_history h
+            LEFT JOIN clients c ON c.id = h.client_id
+            LEFT JOIN bills b ON b.id = h.bill_id
+            LEFT JOIN users u ON u.id = h.changed_by
+            WHERE {' AND '.join(where)}
+            ORDER BY h.changed_at DESC, h.id DESC""",
+        tuple(params),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def clients_for_bills(conn, user_id, bill_ids):
@@ -829,16 +1374,17 @@ def clients_for_bills(conn, user_id, bill_ids):
         return {}
     placeholders = ",".join("?" * len(bill_ids))
     rows = conn.execute(
-        f"""SELECT l.bill_id, c.id AS client_id, c.name, l.position
+        f"""SELECT l.bill_id, c.id AS client_id, c.name, l.position, l.effective_date
             FROM bill_client_links l JOIN clients c ON c.id = l.client_id
-            WHERE l.user_id = ? AND l.bill_id IN ({placeholders})""",
+            WHERE {_org_scope("l.user_id")} AND l.bill_id IN ({placeholders})""",
         (user_id, *bill_ids),
     ).fetchall()
     by_bill = {}
     for r in rows:
-        by_bill.setdefault(r["bill_id"], []).append(
-            {"id": r["client_id"], "name": r["name"], "position": r["position"]}
-        )
+        by_bill.setdefault(r["bill_id"], []).append({
+            "id": r["client_id"], "name": r["name"], "position": r["position"],
+            "effective_date": r["effective_date"],
+        })
     return by_bill
 
 
@@ -900,12 +1446,17 @@ def get_bill_report(conn, user_id, bill_id):
     # assigned" instead of inferring it from assigned_clients being
     # empty either way.
     flag_row = conn.execute(
-        "SELECT notes FROM flagged_bills WHERE user_id = ? AND bill_id = ?", (user_id, bill_id)
+        f"SELECT notes FROM flagged_bills WHERE {ORG_SCOPE} AND bill_id = ?", (user_id, bill_id)
     ).fetchone()
     result["flagged"] = flag_row is not None
     # Empty string rather than None so the textarea binds cleanly, and
     # only ever this user's own note — see flagged_bills.notes.
     result["notes"] = (flag_row["notes"] if flag_row else None) or ""
+    # Every position this user has ever held on this bill, for the panel
+    # under the assignments. Newest first, and it outlives the
+    # assignments themselves — a client removed from the bill still
+    # appears here, which is the whole reason the table is append-only.
+    result["position_history"] = list_position_history(conn, user_id, bill_id=bill_id)
     return result
 
 
@@ -917,12 +1468,42 @@ def set_bill_notes(conn, user_id, bill_id, notes):
     has nowhere to keep one — the route treats that as an error rather
     than silently discarding what someone typed."""
     cur = conn.execute(
-        "UPDATE flagged_bills SET notes = ? WHERE user_id = ? AND bill_id = ?",
+        f"UPDATE flagged_bills SET notes = ? WHERE {ORG_SCOPE} AND bill_id = ?",
         (notes or None, user_id, bill_id),
     )
     if cur.rowcount == 0:
         raise ValueError("Flag this bill before adding notes to it.")
     return notes or ""
+
+
+def mark_bill_viewed(conn, user_id, bill_id, viewed_at=None):
+    """Record that this PERSON has now looked at this bill, clearing its
+    unread dot for them (see _unread_counts_for_bills).
+
+    Per user, not per firm — and the one thing on the flagged list that
+    still is. The flag says "we track this bill"; the view says "I have
+    read it", and one lobbyist opening a bill must not clear the dot for
+    the colleague who hasn't. Hence its own table (bill_views) rather
+    than a column on the now org-owned flag.
+
+    Stamped in UTC in the same 'YYYY-MM-DDTHH:MM:SSZ' shape
+    record_bill_changes writes detected_at in — the two are compared as
+    plain strings, so they have to agree on format and on zone. A
+    California date would be wrong here for once: this isn't a deadline,
+    it's an instant, and it's only ever measured against another instant
+    recorded by the refresh job.
+
+    Recorded whether or not the bill is flagged. Reading a bill nobody
+    tracks is ordinary (a search result opens the same page), it costs
+    one row, and it means the dot is already right if the firm flags that
+    bill later in the same sitting."""
+    viewed_at = viewed_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn.execute(
+        """INSERT INTO bill_views (user_id, bill_id, last_viewed_at) VALUES (?,?,?)
+           ON CONFLICT(user_id, bill_id) DO UPDATE SET last_viewed_at = excluded.last_viewed_at""",
+        (user_id, bill_id, viewed_at),
+    )
+    return True
 
 
 def set_bill_amend_by_date(conn, bill_id, amend_by_date):
@@ -937,6 +1518,82 @@ def set_bill_amend_by_date(conn, bill_id, amend_by_date):
         "UPDATE bills SET amend_by_date = ? WHERE id = ?",
         (amend_by_date or None, bill_id),
     )
+
+
+# ── Position letters — see letter_drafts.py for what a new one is
+# seeded from. Storage only here: this module knows a letter has a
+# subject and a body, not how either is worded. ──
+
+def create_letter(conn, user_id, fields):
+    """Store a new letter. Everything but subject/body is context
+    recorded for later reading — see the letters table comment in
+    schema.sql for why the names are stored beside the ids."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cur = conn.execute(
+        """INSERT INTO letters
+             (user_id, bill_id, bill_label, client_id, client_name, position,
+              subject, body, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (
+            user_id, fields.get("bill_id"), fields.get("bill_label"),
+            fields.get("client_id"), fields.get("client_name"), fields.get("position"),
+            fields.get("subject") or "Untitled letter", fields.get("body") or "",
+            now, now,
+        ),
+    )
+    return cur.lastrowid
+
+
+def update_letter(conn, user_id, letter_id, subject, body):
+    """Only ever the two fields the user types into. The bill/client
+    context is what the letter was written about and doesn't change
+    because someone edited a paragraph."""
+    cur = conn.execute(
+        f"""UPDATE letters SET subject = ?, body = ?, updated_at = ?
+           WHERE id = ? AND {ORG_SCOPE}""",
+        (
+            subject or "Untitled letter", body or "",
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            letter_id, user_id,
+        ),
+    )
+    return cur.rowcount > 0
+
+
+def get_letter(conn, user_id, letter_id):
+    row = conn.execute(
+        f"SELECT * FROM letters WHERE id = ? AND {ORG_SCOPE}", (letter_id, user_id)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_letters(conn, user_id, bill_id=None, client_id=None):
+    """Newest-edited first. Filtered by bill for the panel on the bill
+    report, by client for the one on the client record, and unfiltered
+    for Draft > Letters itself."""
+    where = [ORG_SCOPE]
+    params = [user_id]
+    if bill_id is not None:
+        where.append("bill_id = ?")
+        params.append(bill_id)
+    if client_id is not None:
+        where.append("client_id = ?")
+        params.append(client_id)
+    rows = conn.execute(
+        f"""SELECT id, bill_id, bill_label, client_id, client_name, position,
+                   subject, created_at, updated_at
+            FROM letters WHERE {' AND '.join(where)}
+            ORDER BY updated_at DESC, id DESC""",
+        tuple(params),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_letter(conn, user_id, letter_id):
+    cur = conn.execute(
+        f"DELETE FROM letters WHERE id = ? AND {ORG_SCOPE}", (letter_id, user_id)
+    )
+    return cur.rowcount > 0
 
 
 # ── "Prepare my disclosure form" — see pdf_forms.py for how field_data
@@ -988,14 +1645,14 @@ def get_prepared_filing(conn, user_id, filing_id):
     """Scoped to user_id — same reasoning as delete_client/unflag_bill:
     never trust a client-supplied ID alone for a per-user record."""
     row = conn.execute(
-        "SELECT * FROM prepared_filings WHERE id = ? AND user_id = ?", (filing_id, user_id)
+        f"SELECT * FROM prepared_filings WHERE id = ? AND {ORG_SCOPE}", (filing_id, user_id)
     ).fetchone()
     return _row_to_prepared_filing(row) if row else None
 
 
 def list_prepared_filings(conn, user_id):
     rows = conn.execute(
-        "SELECT * FROM prepared_filings WHERE user_id = ? ORDER BY created_at DESC", (user_id,)
+        f"SELECT * FROM prepared_filings WHERE {ORG_SCOPE} ORDER BY created_at DESC", (user_id,)
     ).fetchall()
     return [_row_to_prepared_filing(r) for r in rows]
 
@@ -1005,7 +1662,7 @@ def delete_prepared_filing(conn, user_id, filing_id):
     never trust a client-supplied ID alone for a per-user record. No
     cascade needed (unlike delete_client): nothing else references a
     prepared_filings row."""
-    conn.execute("DELETE FROM prepared_filings WHERE id = ? AND user_id = ?", (filing_id, user_id))
+    conn.execute(f"DELETE FROM prepared_filings WHERE id = ? AND {ORG_SCOPE}", (filing_id, user_id))
 
 
 def _edit_prepared_filing_field_data(conn, user_id, filing_id, new_field_data, client_row_ids=None):
@@ -1034,18 +1691,20 @@ def _edit_prepared_filing_field_data(conn, user_id, filing_id, new_field_data, c
         raise ValueError("No prepared filing found.")
     if client_row_ids is None:
         conn.execute(
-            """UPDATE prepared_filings
+            f"""UPDATE prepared_filings
                SET field_data = ?, pdf_field_data_hash = NULL,
-                   status = 'draft', signed_name = NULL, confirmed_accurate = 0, signed_at = NULL
-               WHERE id = ? AND user_id = ?""",
+                   status = 'draft', signed_name = NULL, confirmed_accurate = 0,
+                   signed_at = NULL, signed_by = NULL
+               WHERE id = ? AND {ORG_SCOPE}""",
             (json.dumps(new_field_data), filing_id, user_id),
         )
     else:
         conn.execute(
-            """UPDATE prepared_filings
+            f"""UPDATE prepared_filings
                SET field_data = ?, client_row_ids = ?, pdf_field_data_hash = NULL,
-                   status = 'draft', signed_name = NULL, confirmed_accurate = 0, signed_at = NULL
-               WHERE id = ? AND user_id = ?""",
+                   status = 'draft', signed_name = NULL, confirmed_accurate = 0,
+                   signed_at = NULL, signed_by = NULL
+               WHERE id = ? AND {ORG_SCOPE}""",
             (json.dumps(new_field_data), json.dumps(client_row_ids), filing_id, user_id),
         )
     return get_prepared_filing(conn, user_id, filing_id)
@@ -1076,7 +1735,7 @@ def set_prepared_filing_deadline(conn, user_id, filing_id, trigger_date, due_dat
     overridden due_date is stored exactly as given: the lobbyist's reading
     of their own deadline wins over the app's arithmetic."""
     cur = conn.execute(
-        "UPDATE prepared_filings SET trigger_date = ?, due_date = ? WHERE id = ? AND user_id = ?",
+        f"UPDATE prepared_filings SET trigger_date = ?, due_date = ? WHERE id = ? AND {ORG_SCOPE}",
         (trigger_date or None, due_date or None, filing_id, user_id),
     )
     if cur.rowcount == 0:
@@ -1107,7 +1766,7 @@ def mark_prepared_filing_pdf_generated(conn, user_id, filing_id):
     if not filing:
         raise ValueError("No prepared filing found.")
     conn.execute(
-        "UPDATE prepared_filings SET pdf_field_data_hash = ? WHERE id = ? AND user_id = ?",
+        f"UPDATE prepared_filings SET pdf_field_data_hash = ? WHERE id = ? AND {ORG_SCOPE}",
         (_hash_field_data(filing["field_data"]), filing_id, user_id),
     )
     return get_prepared_filing(conn, user_id, filing_id)
@@ -1130,11 +1789,15 @@ def sign_off_prepared_filing(conn, user_id, filing_id, signed_name, confirmed_ac
     if not filing["pdf_current"]:
         raise ValueError("This filing has changed since the PDF was generated — regenerate it before signing off.")
     conn.execute(
-        """UPDATE prepared_filings
+        f"""UPDATE prepared_filings
            SET status = 'ready_to_file', signed_name = ?, confirmed_accurate = 1,
-               signed_at = datetime('now')
-           WHERE id = ? AND user_id = ?""",
-        (signed_name, filing_id, user_id),
+               signed_at = datetime('now'), signed_by = ?
+           WHERE id = ? AND {ORG_SCOPE}""",
+        # signed_by is the account; signed_name is what they typed. They
+        # are usually the same person, and the point of recording both is
+        # the case where they are not — a filing belongs to the firm now,
+        # so "prepared by one, signed off by another" can happen.
+        (signed_name, user_id, filing_id, user_id),
     )
     return get_prepared_filing(conn, user_id, filing_id)
 
@@ -1173,10 +1836,10 @@ def recent_bill_changes(conn, user_id, limit=8):
     stand". Empty on a database that predates bill_change_events, or
     before the first refresh run finds anything move."""
     rows = conn.execute(
-        """SELECT c.bill_id, c.detected_at, c.change_type, c.summary, c.description,
+        f"""SELECT c.bill_id, c.detected_at, c.change_type, c.summary, c.description,
                   c.event_date, b.state, b.bill_number, b.title
            FROM bill_change_events c
-           JOIN flagged_bills f ON f.bill_id = c.bill_id AND f.user_id = ?
+           JOIN flagged_bills f ON f.bill_id = c.bill_id AND {_org_scope("f.user_id")}
            JOIN bills b ON b.id = c.bill_id
            ORDER BY c.detected_at DESC, c.id DESC
            LIMIT ?""",
