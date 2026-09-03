@@ -1,0 +1,316 @@
+
+<div class="page-head"><div><a href="/disclosures" class="sub">← Disclosures</a></div></div>
+<div id="error" role="alert" aria-live="assertive"></div>
+<div id="loading" class="show"><span class="spinner"></span>Loading…</div>
+<div id="content"></div>
+
+<script src="{{CONFIRM_DELETE_SRC}}"></script>
+<script>
+// A friendly "Aug 21, 2:03 PM" instead of the raw
+// "2026-08-21T14:03:00" ISO string the API returns.
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso.includes('Z') || iso.includes('+') ? iso : iso + 'Z');
+  if (isNaN(d)) return iso;
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[c]);
+}
+
+const errorEl = document.getElementById('error');
+const contentEl = document.getElementById('content');
+const filingId = new URLSearchParams(window.location.search).get('id');
+const FORM_LABELS = { "601": "Form 601 — Lobbying Firm Registration Statement" };
+const ROW_KEYS = ['employer', 'description', 'effective', 'period', 'agencies'];
+
+let filing = null;
+let allClients = [];
+
+function showError(message) {
+  errorEl.textContent = message;
+  errorEl.className = 'show';
+}
+
+async function load() {
+  if (!filingId) {
+    showError('Missing filing id in the URL.');
+    document.getElementById('loading').className = '';
+    return;
+  }
+  try {
+    const [filingRes, clientsRes] = await Promise.all([
+      fetch(`/api/prepared-filings?id=${filingId}`),
+      fetch('/api/clients'),
+    ]);
+    if (filingRes.status === 401 || clientsRes.status === 401) { window.location.href = '/login'; return; }
+    const filingData = await filingRes.json();
+    if (!filingRes.ok) throw new Error(filingData.error || 'Could not load this filing');
+    allClients = await clientsRes.json();
+    filing = filingData;
+    render();
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    document.getElementById('loading').className = '';
+  }
+}
+
+// Every mutation (a field autosave, a client-row selection, generating
+// the PDF, signing off) gets the full updated filing back from the
+// server and just re-renders from it — one source of truth for whether
+// the PDF preview is stale, rather than the frontend trying to track
+// that itself. See docs/disclosure-html-editor-plan.md's "Staleness
+// guard": pdf_current is computed server-side, never assumed here.
+async function postJson(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    const message = (data.field_errors && data.field_errors.length)
+      ? data.field_errors.join(' ')
+      : (data.error || 'Something went wrong.');
+    throw new Error(message);
+  }
+  return data;
+}
+
+async function saveField(inputEl) {
+  const key = inputEl.dataset.fieldKey;
+  const value = inputEl.value;
+  if (value === inputEl.dataset.orig) return;  // dirty-check — nothing actually changed, skip the round trip
+  inputEl.disabled = true;
+  try {
+    filing = await postJson('/api/prepared-filings/field', { id: Number(filingId), field_key: key, value });
+    render();
+  } catch (err) {
+    showError(err.message);
+    inputEl.disabled = false;
+    inputEl.focus();
+  }
+}
+
+async function applyClientRows() {
+  const picks = Array.from(document.querySelectorAll('#client-picker select'))
+    .map(sel => ({ id: Number(sel.dataset.clientId), row: sel.value ? Number(sel.value) : null }))
+    .filter(p => p.row !== null);
+  const rowNumbers = picks.map(p => p.row);
+  if (new Set(rowNumbers).size !== rowNumbers.length) {
+    showError('Two clients can\'t share the same row — pick a different row for each.');
+    return;
+  }
+  picks.sort((a, b) => a.row - b.row);
+  try {
+    filing = await postJson('/api/prepared-filings/select-clients', {
+      id: Number(filingId), client_ids: picks.map(p => p.id),
+    });
+    render();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+async function generatePdf() {
+  const btn = document.getElementById('generate-btn');
+  btn.disabled = true;
+  try {
+    filing = await postJson('/api/prepared-filings/generate-pdf', { id: Number(filingId) });
+    render();
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function signOff(e) {
+  e.preventDefault();
+  const signedName = document.getElementById('signed_name').value.trim();
+  const confirmed = document.getElementById('confirmed_accurate').checked;
+  const btn = document.getElementById('sign-btn');
+  btn.disabled = true;
+  try {
+    filing = await postJson('/api/prepared-filings/sign', {
+      id: Number(filingId), signed_name: signedName, confirmed_accurate: confirmed,
+    });
+    render();
+  } catch (err) {
+    showError(err.message);
+    btn.disabled = false;
+  }
+}
+
+// Same deletion pattern as the Clients section's removeClient() (see
+// CLIENTS_BODY / CLIENT_DETAIL_BODY) — the shared confirmDelete()
+// dialog naming what's about to be lost (no undo, see
+// CONFIRM_DELETE_JS), then a DELETE call, then leave this page since
+// there's nothing left here to show.
+async function removeFiling() {
+  const label = FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type);
+  const signedNote = filing.status === 'ready_to_file' ? ' This also removes its sign-off record.' : '';
+  const ok = await confirmDelete('Remove draft?', `Remove this ${label} draft?${signedNote} This can't be undone.`);
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/prepared-filings?id=${filingId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Could not delete this filing');
+    }
+    window.location.href = '/disclosures';
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+function fieldInputHtml(field, value) {
+  const type = field.kind === 'email' ? 'email' : 'text';
+  const mark = field.required ? ' <span style="color:var(--bad,#c0392b)">*</span>' : '';
+  return `
+    <label style="display:block;margin-bottom:0.8rem">
+      <div class="sub" style="margin:0 0 0.3rem">${escapeHtml(field.label)}${mark}</div>
+      <input type="${type}" data-field-key="${escapeHtml(field.key)}" data-orig="${escapeHtml(value)}"
+             value="${escapeHtml(value)}" style="width:100%" onblur="saveField(this)">
+    </label>`;
+}
+
+function clientsSectionHtml() {
+  const maxRows = filing.max_client_rows;
+  const rowFields = filing.client_row_fields;
+  const rowIds = filing.client_row_ids || [];
+  const rowLabels = filing.field_schema.find(s => s.key === 'clients').row_field_labels;
+
+  let pickerHtml = '';
+  if (allClients.length > maxRows) {
+    pickerHtml = `
+      <div class="card" style="margin-bottom:1rem">
+        <div class="bill-title" style="margin-bottom:0.4rem">Choose which ${maxRows} clients appear on this form</div>
+        <div class="bill-desc" style="margin-bottom:0.8rem">
+          You have ${allClients.length} clients — this form only has ${maxRows} rows. Give the ones that
+          should appear a row number; leave the rest blank.
+        </div>
+        <div id="client-picker">
+          ${allClients.map(c => {
+            const idx = rowIds.indexOf(c.id);
+            const selected = idx === -1 ? '' : String(idx + 1);
+            const options = ['<option value="">—</option>'].concat(
+              Array.from({ length: maxRows }, (_, i) => {
+                const n = String(i + 1);
+                return `<option value="${n}" ${n === selected ? 'selected' : ''}>${n}</option>`;
+              })
+            ).join('');
+            return `<div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.4rem">
+              <select data-client-id="${c.id}" style="width:5rem">${options}</select>
+              <span>${escapeHtml(c.name)}</span>
+            </div>`;
+          }).join('')}
+        </div>
+        <button type="button" class="secondary" style="margin-top:0.6rem" onclick="applyClientRows()">Apply row assignment</button>
+      </div>`;
+  }
+
+  const rowsHtml = rowFields.map((rf, i) => {
+    const clientId = rowIds[i];
+    const client = allClients.find(c => c.id === clientId);
+    const heading = client ? escapeHtml(client.name) : `Row ${i + 1} — empty`;
+    const fieldsHtml = ROW_KEYS.map(k => fieldInputHtml(
+      { key: rf[k], label: rowLabels[k], required: false, kind: 'text' },
+      filing.field_data[rf[k]] || '',
+    )).join('');
+    return `<div class="card" style="margin-bottom:0.8rem"><div class="bill-title" style="margin-bottom:0.6rem">${heading}</div>${fieldsHtml}</div>`;
+  }).join('');
+
+  return pickerHtml + rowsHtml;
+}
+
+function render() {
+  const pdfUrl = `/api/prepared-filings/pdf?id=${filing.id}`;
+  const signed = filing.status === 'ready_to_file';
+  const statusBadge = signed
+    ? '<span class="status-badge good">Signed off</span>'
+    : (filing.pdf_current ? '<span class="status-badge">Draft — PDF up to date</span>' : '<span class="status-badge">Draft — editing</span>');
+
+  const businessSection = filing.field_schema.find(s => s.key === 'business');
+  const businessFieldsHtml = businessSection.fields.map(f => fieldInputHtml(f, filing.field_data[f.key] || '')).join('');
+
+  const pdfSection = filing.pdf_current ? `
+    <div class="card" style="padding:0;overflow:hidden">
+      <iframe src="${pdfUrl}" style="width:100%;height:70vh;border:none" title="Filled ${filing.form_type} preview"></iframe>
+    </div>
+    <div class="card-actions" style="margin:-0.5rem 0 1.5rem">
+      <a class="secondary" href="${pdfUrl}" target="_blank" rel="noopener">Open PDF in a new tab →</a>
+    </div>
+  ` : `
+    <div class="sub" style="margin:0 0 1.5rem">Generate the PDF to preview it before signing off.</div>
+  `;
+
+  const signOffSection = signed ? `
+    <div class="card">
+      <div class="bill-title" style="margin-bottom:0.4rem">Signed off</div>
+      <div class="bill-desc">Confirmed accurate by <strong>${escapeHtml(filing.signed_name)}</strong> on ${fmtDateTime(filing.signed_at)}.</div>
+      <div class="sub" style="margin:0.6rem 0 0">This app has not filed anything. Download the PDF above and file it yourself with the FPPC / Secretary of State. Editing any field above reopens this filing for another round of sign-off.</div>
+    </div>
+  ` : (filing.pdf_current ? `
+    <div class="card">
+      <div class="bill-title" style="margin-bottom:0.4rem">Sign-off — required before this can be marked ready to file</div>
+      <form id="sign-form" onsubmit="signOff(event)">
+        <label style="flex:1 1 100%">
+          <div class="sub" style="margin:0 0 0.3rem">Type your full legal name to confirm</div>
+          <input id="signed_name" required style="width:100%">
+        </label>
+        <label style="flex:1 1 100%;display:flex;align-items:flex-start;gap:0.5rem;margin-top:0.8rem;font-size:0.9rem">
+          <input type="checkbox" id="confirmed_accurate" required style="margin-top:0.2rem;width:auto">
+          <span>I confirm the information in this form is accurate to the best of my knowledge.</span>
+        </label>
+        <button type="submit" id="sign-btn" style="margin-top:1rem">Mark ready to file</button>
+      </form>
+      <div class="sub" style="margin-top:0.8rem">This only marks the draft reviewed on your end — it does not submit or send anything anywhere.</div>
+    </div>
+  ` : '');
+
+  contentEl.innerHTML = `
+    <div class="page-head">
+      <div>
+        <h1>${FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type)}</h1>
+        <p class="sub">${filing.period_label ? 'Period: ' + filing.period_label + ' — ' : ''}Prepared ${fmtDateTime(filing.created_at)}.</p>
+        <div style="margin-top:0.6rem">${statusBadge}</div>
+      </div>
+      <button type="button" class="danger" onclick="removeFiling()">Delete draft</button>
+    </div>
+
+    <div class="card">
+      <div class="bill-title" style="margin-bottom:0.4rem">Known gaps in this draft</div>
+      <div class="bill-desc">
+        This app doesn't collect every field the real form asks for. Left blank on purpose, rather than
+        guessed: subcontracted-client information, and any individual lobbyists beyond your own name. Fill
+        those in by hand on the printed form if they apply to you.
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="section" style="margin-top:0">Business information</h2>
+      <div class="sub" style="margin:0 0 0.8rem">Edits save automatically as you leave each field.</div>
+      ${businessFieldsHtml}
+    </div>
+
+    <div class="card">
+      <h2 class="section" style="margin-top:0">Clients</h2>
+      ${clientsSectionHtml()}
+    </div>
+
+    <div class="card-actions" style="margin:0 0 1rem">
+      <button type="button" id="generate-btn" onclick="generatePdf()">Generate PDF</button>
+    </div>
+
+    ${pdfSection}
+    ${signOffSection}
+  `;
+}
+
+load();
+</script>

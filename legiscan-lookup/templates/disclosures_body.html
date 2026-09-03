@@ -1,0 +1,210 @@
+
+<div class="page-head">
+  <div>
+    <h1>Disclosure Forms</h1>
+    <p class="sub">Prepare a real FPPC disclosure form, pre-filled from your profile and clients. This app never files anything on your behalf — it only prepares the document for you to review, sign off on, and file yourself.</p>
+  </div>
+</div>
+
+<div class="stat-grid" id="stats"></div>
+
+<div class="card">
+  <form id="f">
+    <label style="flex:1 1 100%">
+      <div class="sub" style="margin:0 0 0.3rem">Which form do you need?</div>
+      <select id="form_type" style="width:100%">
+        <option value="601">Form 601 — Lobbying Firm Registration Statement</option>
+        <option value="" disabled>More forms coming later</option>
+      </select>
+    </label>
+    <label id="period_row" style="flex:1 1 100%;display:none">
+      <div class="sub" style="margin:1rem 0 0.3rem">Reporting period</div>
+      <input id="period_label" style="width:100%">
+    </label>
+    <div id="period_note" class="sub" style="flex:1 1 100%;margin:0.6rem 0 0">
+      Form 601 doesn't use a reporting period — it's tied to the current two-year legislative session, filled in automatically.
+    </div>
+    <button type="submit" style="margin-top:1rem">Generate draft →</button>
+  </form>
+</div>
+
+<div id="loading"><span class="spinner"></span>Generating…</div>
+<div id="error" role="alert" aria-live="assertive"></div>
+
+<div class="panel" style="margin-top:1rem">
+  <div class="panel-head"><div class="title">Your prepared filings</div></div>
+  <div id="list"></div>
+</div>
+
+<script src="{{CONFIRM_DELETE_SRC}}"></script>
+<script src="{{ROW_MENU_SRC}}"></script>
+<script>
+// A friendly "Aug 21, 2:03 PM" instead of the raw
+// "2026-08-21T14:03:00" ISO string the API returns.
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso.includes('Z') || iso.includes('+') ? iso : iso + 'Z');
+  if (isNaN(d)) return iso;
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+// Only 601 exists today, but this stays keyed by form_type so adding a
+// form that DOES need a period later is just one more entry here.
+const FORM_META = {
+  "601": { label: "Form 601 — Lobbying Firm Registration Statement", requiresPeriod: false },
+};
+
+const form = document.getElementById('f');
+const formType = document.getElementById('form_type');
+const periodRow = document.getElementById('period_row');
+const periodNote = document.getElementById('period_note');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+const listEl = document.getElementById('list');
+const statsEl = document.getElementById('stats');
+let lastRows = [];  // so removeFiling()'s confirm() can name the form type without a second fetch
+
+const ICON_DISCLOSURE = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="1.5" width="8" height="11" rx="1"/><path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_ALERT = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M7 4.5v3" stroke-linecap="round"/><circle cx="7" cy="9.8" r="0.6" fill="currentColor" stroke="none"/></svg>';
+const ICON_GOOD = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M4.5 7l1.7 1.7L9.7 5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function renderStats(rows) {
+  if (!rows.length) { statsEl.innerHTML = ''; return; }
+  const pending = rows.filter(r => r.status === 'draft').length;
+  const ready = rows.filter(r => r.status === 'ready_to_file').length;
+  statsEl.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-icon">${ICON_DISCLOSURE}</div>
+      <div class="stat-label">Prepared filings</div>
+      <div class="stat-value">${rows.length}</div>
+      <div class="stat-foot">All time</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">${ICON_ALERT}</div>
+      <div class="stat-label">Awaiting sign-off</div>
+      <div class="stat-value">${pending}</div>
+      <div class="stat-foot">${pending ? 'Review and confirm when ready' : 'Nothing waiting on you'}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">${ICON_GOOD}</div>
+      <div class="stat-label">Ready to file</div>
+      <div class="stat-value">${ready}</div>
+      <div class="stat-foot">Signed off, yours to file</div>
+    </div>
+  `;
+}
+
+function syncPeriodField() {
+  const meta = FORM_META[formType.value];
+  const needsPeriod = !!(meta && meta.requiresPeriod);
+  periodRow.style.display = needsPeriod ? 'block' : 'none';
+  periodNote.style.display = needsPeriod ? 'none' : 'block';
+}
+formType.addEventListener('change', syncPeriodField);
+syncPeriodField();
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorEl.className = ''; loadingEl.className = 'show';
+  form.querySelector('button').disabled = true;
+  try {
+    const meta = FORM_META[formType.value];
+    const res = await fetch('/api/prepared-filings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        form_type: formType.value,
+        period_label: (meta && meta.requiresPeriod) ? document.getElementById('period_label').value.trim() : null,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not generate draft');
+    window.location.href = `/disclosures/review?id=${data.id}`;
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    loadingEl.className = '';
+    form.querySelector('button').disabled = false;
+  }
+});
+
+async function load() {
+  try {
+    const res = await fetch('/api/prepared-filings');
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    const rows = await res.json();
+    renderStats(rows);
+    render(rows);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+function render(rows) {
+  lastRows = rows;
+  if (!rows.length) {
+    listEl.innerHTML = '<p class="empty">Nothing prepared yet — use the form above.</p>';
+    return;
+  }
+  listEl.innerHTML = `
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>Form</th><th>Period</th><th>Status</th><th>Created</th><th></th></tr></thead>
+      <tbody>
+      ${rows.map(r => {
+        const meta = FORM_META[r.form_type];
+        const statusBadge = r.status === 'ready_to_file'
+          ? '<span class="status-badge good">Ready to file</span>'
+          : '<span class="status-badge">Draft</span>';
+        return `
+          <tr>
+            <td>${(meta && meta.label) || ('Form ' + r.form_type)}</td>
+            <td>${r.period_label || '—'}</td>
+            <td>${statusBadge}</td>
+            <td class="date">${fmtDateTime(r.created_at)}</td>
+            <td class="row-menu">
+              <a class="secondary" href="/disclosures/review?id=${r.id}" style="margin-right:0.4rem">Review</a>
+              <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'filing-${r.id}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-filing-${r.id}">
+                <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
+              </button>
+              <div class="row-menu-dropdown" id="row-menu-filing-${r.id}">
+                <button type="button" onclick="removeFiling(${r.id})">Delete draft</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('')}
+      </tbody>
+    </table>
+    </div>
+  `;
+}
+
+// Same deletion pattern as CLIENTS_BODY's removeClient() — the shared
+// confirmDelete() dialog naming what's about to be lost (no undo, see
+// CONFIRM_DELETE_JS), then a DELETE call, then reload from the server
+// rather than guessing the new list locally.
+async function removeFiling(id) {
+  const r = lastRows.find(x => x.id === id);
+  const meta = r && FORM_META[r.form_type];
+  const label = (meta && meta.label) || (r ? ('Form ' + r.form_type) : 'this filing');
+  const signedNote = r && r.status === 'ready_to_file' ? ' This also removes its sign-off record.' : '';
+  const ok = await confirmDelete('Remove draft?', `Remove this ${label} draft?${signedNote} This can't be undone.`);
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/prepared-filings?id=${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Could not delete this filing');
+    }
+    load();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+load();
+</script>

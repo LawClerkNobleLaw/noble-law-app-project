@@ -1,0 +1,172 @@
+
+<div class="page-head">
+  <div>
+    <h1>Organization Search</h1>
+    <p class="sub">California lobbying firms, employers, and quarterly disclosures from CAL-ACCESS.</p>
+  </div>
+</div>
+
+<div class="card">
+  <form id="f" style="margin:0 0 1rem">
+    <label for="q" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Firm, employer, or client name</label>
+    <input id="q" placeholder="Firm, employer, or client name" required style="flex:1">
+    <button type="submit">Search</button>
+  </form>
+  <p class="sub" style="margin:0;font-size:0.82rem">
+    <strong>Firm</strong> = hired by clients to lobby on their behalf &nbsp;·&nbsp;
+    <strong>Employer</strong> = lobbies with its own in-house staff &nbsp;·&nbsp;
+    <strong>Coalition</strong> = a group of organizations registered together &nbsp;·&nbsp;
+    <strong>Named as client only</strong> = shows up in someone else's filing, with no independent CAL-ACCESS registration of its own
+  </p>
+</div>
+
+<div id="loading" class="skeleton">
+  <div class="panel">
+    {{top_nav}}
+  </div>
+</div>
+<div id="error" role="alert" aria-live="assertive"></div>
+<div id="results"></div>
+
+<script src="{{TITLE_CASE_SRC}}"></script>
+<script>
+const form = document.getElementById('f');
+const resultsEl = document.getElementById('results');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const q = document.getElementById('q').value.trim();
+  if (!q) return;
+
+  errorEl.className = ''; loadingEl.className = 'skeleton show';
+  form.querySelector('button').disabled = true;
+
+  try {
+    const res = await fetch(`/api/lobbying/search?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Search failed');
+    renderResults(data.results, data.truncated);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    loadingEl.className = 'skeleton';
+    form.querySelector('button').disabled = false;
+  }
+});
+
+function detailUrl(r) {
+  const params = r.id ? `id=${encodeURIComponent(r.id)}` : `name=${encodeURIComponent(r.name)}`;
+  return `/lobbying/detail?${params}`;
+}
+
+function locationOrContext(r) {
+  // Entity-kind rows have a real registered address; client-only rows
+  // (named in someone else's filing, never independently registered)
+  // don't — those would otherwise show blank Location/Status next to
+  // each other for near-identical names (several "Amazon" variants
+  // that are only ever mentioned, not registered), which is exactly
+  // what made them hard to tell apart. Showing how often and how
+  // recently each one was mentioned gives a real distinguishing detail
+  // instead of a blank cell.
+  if (r.entity_type) return [r.city, r.state].filter(Boolean).join(', ');
+  if (r.mention_count) {
+    const latest = r.latest_filed ? r.latest_filed.split(' ')[0] : 'unknown';
+    return `Mentioned ${r.mention_count}×, latest ${latest}`;
+  }
+  return '';
+}
+
+function variantsRow(r) {
+  // r.variants is only ever other spellings of this exact same
+  // organization (see app.py's _cluster_client_mentions) — nothing is
+  // hidden, just collapsed, so every name is still one click away.
+  if (!r.variants || !r.variants.length) return '';
+  const items = r.variants.map(v => `
+    <div class="variant-row">
+      <a href="${detailUrl(v)}">${titleCaseName(v.name)}</a>
+      <span class="sub" style="margin:0">${locationOrContext(v)}</span>
+    </div>
+  `).join('');
+  return `
+    <tr class="variants-row">
+      <td colspan="5">
+        <details>
+          <summary>+ ${r.variants.length} other filing variant${r.variants.length === 1 ? '' : 's'}</summary>
+          <p class="sub" style="margin:0 0 0.5rem">Grouped by name similarity, not a verified match — check each one below.</p>
+          ${items}
+        </details>
+      </td>
+    </tr>
+  `;
+}
+
+// r.entities is a group of separately CAL-ACCESS-registered entities
+// whose names normalize to the same thing (see app.py's
+// _group_duplicate_entities) — e.g. three real "Chevron ... and its
+// subsidiaries" registrations. Unlike variantsRow() above, these are
+// never one organization's alternate spellings; each keeps its own
+// real record, so this only ever collapses them visually, one click
+// away underneath, exactly like variantsRow does for name variants.
+function entityGroupRow(r) {
+  if (r.kind !== 'entity_group') return '';
+  const items = r.entities.map(e => `
+    <div class="variant-row">
+      <a href="${detailUrl(e)}">${titleCaseName(e.name)}</a>
+      <span class="sub" style="margin:0">${[locationOrContext(e), e.registration_status].filter(Boolean).join(' · ')}</span>
+    </div>
+  `).join('');
+  return `
+    <tr class="variants-row">
+      <td colspan="5">
+        <details>
+          <summary>${r.entities.length} separately registered entities named ${titleCaseName(r.name)}</summary>
+          <p class="sub" style="margin:0 0 0.5rem">Each is its own real CAL-ACCESS registration, grouped here by name only — nothing has been merged.</p>
+          ${items}
+        </details>
+      </td>
+    </tr>
+  `;
+}
+
+function renderResults(rows, truncated) {
+  if (!rows.length) {
+    resultsEl.innerHTML = '<p class="empty">No firms, employers, or named clients match that. Try a broader term or check the spelling.</p>';
+    return;
+  }
+  resultsEl.innerHTML = `
+    <div class="panel">
+      <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Name</th><th>Type</th><th>Location</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+        ${rows.map(r => r.kind === 'entity_group' ? `
+          <tr>
+            <td>${titleCaseName(r.name)}</td>
+            <td><span class="tag">${r.entities.length} registered entities</span></td>
+            <td></td>
+            <td></td>
+            <td></td>
+          </tr>
+          ${entityGroupRow(r)}
+        ` : `
+          <tr>
+            <td><a href="${detailUrl(r)}">${titleCaseName(r.name)}</a></td>
+            <td>${r.entity_type ? `<span class="tag">${r.entity_type}</span>` : `<span class="tag">named as client only</span>`}</td>
+            <td>${locationOrContext(r)}</td>
+            <td>${r.registration_status || ''}</td>
+            <td><a class="secondary" href="/clients?prefill_name=${encodeURIComponent(r.name)}${r.id ? `&prefill_entity_id=${r.id}` : ''}">+ Client</a></td>
+          </tr>
+          ${variantsRow(r)}
+        `).join('')}
+        </tbody>
+      </table>
+      </div>
+    </div>
+    ${truncated ? '<p class="sub" style="margin-top:0.75rem">Showing the first 50 matches — narrow your search if you don\'t see what you\'re looking for.</p>' : ''}
+  `;
+}
+
+</script>

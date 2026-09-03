@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Registration details — Rotunda</title>
+<link rel="stylesheet" href="{{STYLE_HREF}}">
+{{FONT_LINKS}}
+{{THEME_INIT_SCRIPT}}
+</head>
+<body>
+{{top_nav}}
+<main>
+<div class="wrap">
+  <h1>Registration details</h1>
+  <div class="step-indicator">
+    <span id="profile-step-dots"><span class="step-dot filled"></span><span class="step-dot filled"></span></span>
+    <p class="sub" style="margin:0">Step 2 of 2 — modeled on CAL-ACCESS Form 601 (Lobbying Firm Registration Statement), so the fields match what you'd already recognize from the state's own form.</p>
+  </div>
+
+  <div class="card">
+  <form id="f">
+    <label style="flex:1 1 100%">
+      <div class="sub" style="margin:0 0 0.3rem">Legal name of firm or individual</div>
+      <input id="legal_name" required style="width:100%">
+    </label>
+
+    <div style="flex:1 1 100%">
+      <div class="sub" style="margin:0 0 0.3rem">Registering as</div>
+      <label style="display:inline-flex;align-items:center;gap:0.4rem;margin-right:1.2rem;font-size:0.9rem">
+        <input type="radio" name="registrant_type" value="individual" style="width:auto" required> Individual lobbyist
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:0.4rem;font-size:0.9rem">
+        <input type="radio" name="registrant_type" value="firm" style="width:auto"> Firm
+      </label>
+    </div>
+
+    <div style="flex:1 1 100%">
+      <h2 class="section" style="margin-top:1.2rem">Business address</h2>
+    </div>
+    <label for="bus_addr1" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Street address</label>
+    <input id="bus_addr1" placeholder="Street address" style="flex:1 1 100%">
+    <label for="bus_city" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">City</label>
+    <input id="bus_city" placeholder="City" style="flex:2">
+    <label for="bus_st" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">State</label>
+    <input id="bus_st" placeholder="State" maxlength="2" style="flex:1;text-transform:uppercase">
+    <label for="bus_zip4" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">ZIP code</label>
+    <input id="bus_zip4" placeholder="ZIP" style="flex:1">
+
+    <div style="flex:1 1 100%">
+      <h2 class="section" style="margin-top:1.2rem">Mailing address</h2>
+      <label style="display:inline-flex;align-items:center;gap:0.4rem;font-size:0.9rem;margin-bottom:0.7rem">
+        <input type="checkbox" id="mail_same" checked style="width:auto"> Same as business address
+      </label>
+    </div>
+    <div id="mail_fields" style="display:none;flex:1 1 100%;gap:0.6rem;flex-wrap:wrap">
+      <label for="mail_addr1" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing street address</label>
+      <input id="mail_addr1" placeholder="Street address" style="flex:1 1 100%">
+      <label for="mail_city" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing city</label>
+      <input id="mail_city" placeholder="City" style="flex:2">
+      <label for="mail_st" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing state</label>
+      <input id="mail_st" placeholder="State" maxlength="2" style="flex:1;text-transform:uppercase">
+      <label for="mail_zip4" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing ZIP code</label>
+      <input id="mail_zip4" placeholder="ZIP" style="flex:1">
+    </div>
+
+    <div style="flex:1 1 100%">
+      <h2 class="section" style="margin-top:1.2rem">Phone number</h2>
+    </div>
+    <input id="bus_phone" placeholder="(916) 555-0100" style="flex:1 1 100%">
+
+    <div style="flex:1 1 100%">
+      <h2 class="section" style="margin-top:1.2rem">California Secretary of State filer ID <span style="text-transform:none;font-weight:400;color:var(--slate)">(optional — if you already have one)</span></h2>
+    </div>
+    <input id="existing_filer_id" placeholder="e.g. 1486088" style="flex:1 1 100%">
+
+    <button type="submit" style="margin-top:1rem">Save and finish →</button>
+  </form>
+  </div>
+
+  <div id="loading"><span class="spinner"></span>Saving…</div>
+  <div id="error" role="alert" aria-live="assertive"></div>
+</div>
+</main>
+
+<script>
+const form = document.getElementById('f');
+const errorEl = document.getElementById('error');
+const loadingEl = document.getElementById('loading');
+const mailSame = document.getElementById('mail_same');
+const mailFields = document.getElementById('mail_fields');
+
+mailSame.addEventListener('change', () => {
+  mailFields.style.display = mailSame.checked ? 'none' : 'flex';
+});
+
+// This same form doubles as "edit profile" (linked from /profile) as
+// well as sign-up step 2 — if a profile already exists, pre-fill it
+// rather than showing a blank form the user has to redo from scratch.
+(async function prefill() {
+  try {
+    const res = await fetch('/api/profile');
+    if (!res.ok) return;
+    const { profile } = await res.json();
+    if (!profile) return;
+    document.getElementById('legal_name').value = profile.legal_name || '';
+    const radio = form.querySelector(`input[name="registrant_type"][value="${profile.registrant_type}"]`);
+    if (radio) radio.checked = true;
+    document.getElementById('bus_addr1').value = profile.bus_addr1 || '';
+    document.getElementById('bus_city').value = profile.bus_city || '';
+    document.getElementById('bus_st').value = profile.bus_st || '';
+    document.getElementById('bus_zip4').value = profile.bus_zip4 || '';
+    mailSame.checked = !!profile.mail_same_as_bus;
+    mailFields.style.display = mailSame.checked ? 'none' : 'flex';
+    document.getElementById('mail_addr1').value = profile.mail_addr1 || '';
+    document.getElementById('mail_city').value = profile.mail_city || '';
+    document.getElementById('mail_st').value = profile.mail_st || '';
+    document.getElementById('mail_zip4').value = profile.mail_zip4 || '';
+    document.getElementById('bus_phone').value = profile.bus_phone || '';
+    document.getElementById('existing_filer_id').value = profile.existing_filer_id || '';
+    form.querySelector('button[type="submit"]').textContent = 'Save changes';
+    document.querySelector('h1').textContent = 'Edit your registration details';
+    document.querySelector('.sub').textContent =
+      'Modeled on CAL-ACCESS Form 601 (Lobbying Firm Registration Statement).';
+    // Editing an existing profile isn't "step 2 of anything" — drop the
+    // signup step dots, and swap the top-nav's "Skip for now" (which
+    // only made sense mid-signup) for a real way back to the profile
+    // page instead of leaving the browser back button as the only exit.
+    const stepDots = document.getElementById('profile-step-dots');
+    if (stepDots) stepDots.style.display = 'none';
+    const skipLink = document.querySelector('nav.top-nav a[href="/flagged"]');
+    if (skipLink) {
+      skipLink.textContent = '← Back to profile';
+      skipLink.href = '/profile';
+    }
+  } catch (err) { /* no profile yet — leave the blank sign-up form as-is */ }
+})();
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const registrantType = form.querySelector('input[name="registrant_type"]:checked');
+
+  errorEl.className = ''; loadingEl.className = 'show';
+  form.querySelector('button').disabled = true;
+
+  try {
+    const res = await fetch('/api/profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        legal_name: document.getElementById('legal_name').value.trim(),
+        registrant_type: registrantType ? registrantType.value : '',
+        bus_addr1: document.getElementById('bus_addr1').value.trim(),
+        bus_city: document.getElementById('bus_city').value.trim(),
+        // .toUpperCase() to match what the field's own CSS
+        // (text-transform:uppercase) already shows on screen — without
+        // it, a user who types "ca" sees "CA" but "ca" is what actually
+        // gets saved, silently out of sync with the displayed value.
+        bus_st: document.getElementById('bus_st').value.trim().toUpperCase(),
+        bus_zip4: document.getElementById('bus_zip4').value.trim(),
+        mail_same_as_bus: mailSame.checked,
+        mail_addr1: document.getElementById('mail_addr1').value.trim(),
+        mail_city: document.getElementById('mail_city').value.trim(),
+        mail_st: document.getElementById('mail_st').value.trim().toUpperCase(),
+        mail_zip4: document.getElementById('mail_zip4').value.trim(),
+        bus_phone: document.getElementById('bus_phone').value.trim(),
+        existing_filer_id: document.getElementById('existing_filer_id').value.trim(),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save');
+    window.location.href = '/profile';
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+    loadingEl.className = '';
+    form.querySelector('button').disabled = false;
+  }
+});
+</script>
+</body>
+</html>

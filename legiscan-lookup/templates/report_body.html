@@ -1,0 +1,398 @@
+
+<div class="page-head"><div><a href="/flagged" class="sub" id="back-link">← Flagged bills</a></div></div>
+<div id="error" role="alert" aria-live="assertive"></div>
+<div id="loading" class="show"><span class="spinner"></span>Loading…</div>
+<div id="report"></div>
+
+<script src="{{BILL_TABLES_SRC}}"></script>
+<script src="{{CLIENT_QUICKADD_SRC}}"></script>
+<script>
+const reportEl = document.getElementById('report');
+const errorEl = document.getElementById('error');
+const billId = new URLSearchParams(window.location.search).get('bill_id');
+
+// The back link and sidebar highlight above are baked at import time as
+// "Flagged bills" (see REPORT_PAGE below and app_shell()'s own
+// docstring on why every page constant here is built once, not
+// per-request) — a fine default, since Flagged Bills is this page's
+// most common entry point, but a search result from /lookup or a
+// client's own bill list land here too. When the link that brought us
+// here passed from_label/from_href (see LOOKUP_BODY's and
+// CLIENT_DETAIL_BODY's report links), swap both to match instead of
+// always claiming Flagged Bills. No params → today's baked default,
+// unchanged.
+(function() {
+  const params = new URLSearchParams(window.location.search);
+  const fromLabel = params.get('from_label');
+  const fromHref = params.get('from_href');
+  if (!fromLabel || !fromHref) return;
+  const backLink = document.getElementById('back-link');
+  backLink.href = fromHref;
+  backLink.textContent = '← ' + fromLabel;
+  // First path segment match (e.g. /clients/detail?id=5 -> "clients"
+  // matches the sidebar's /clients item) rather than a strict equality
+  // check, since fromHref can point at a sub-page of a top-level section.
+  const fromSection = fromHref.split('?')[0].split('/')[1] || '';
+  const navItem = Array.from(document.querySelectorAll('.side-nav-item[data-nav]'))
+    .find(a => (a.dataset.nav.split('/')[1] || '') === fromSection);
+  if (navItem) {
+    document.querySelectorAll('.side-nav-item.active').forEach(a => a.classList.remove('active'));
+    navItem.classList.add('active');
+    // navItem now sits inside a (possibly collapsed) Bills/Lobbying
+    // Activity/Draft group — see render_group() in app_shell() — so
+    // open its ancestor .nav-group too, or the newly-active item would
+    // be marked correctly but stay visually hidden.
+    const group = navItem.closest('.nav-group');
+    if (group) {
+      group.classList.add('open');
+      const parentBtn = group.querySelector('.side-nav-parent');
+      if (parentBtn) parentBtn.setAttribute('aria-expanded', 'true');
+    }
+  }
+})();
+
+const POSITION_LABELS = { support: 'Support', oppose: 'Oppose', watch: 'Watch' };
+// Set by render() each time a report loads — the flag-confirmation
+// modal below reads this instead of re-fetching, same role `current`
+// played in the old /lookup page this modal moved here from (see
+// LOOKUP_BODY's own comment on why: /report is now the one place bill
+// detail, and flagging, actually happen — a search result routes
+// straight here whether or not it's ever been flagged before).
+let currentReport = null;
+
+async function load() {
+  if (!billId) {
+    errorEl.textContent = 'Missing bill_id in the URL.';
+    errorEl.className = 'show';
+    document.getElementById('loading').className = '';
+    return;
+  }
+  try {
+    const res = await fetch(`/api/report?bill_id=${billId}`);
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load report');
+    render(data);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    document.getElementById('loading').className = '';
+  }
+}
+
+// The highlighted "Current Status" callout above the full history
+// table — just the single most recent bill_status_history row (that
+// array already comes back newest-first, see db.get_bill_report()),
+// not a separate query. milestoneClass() is the same function that
+// colors the history table's own rows further down, reused here so
+// this card's left-edge accent means the same thing that table already
+// established (see the CSS comment on .current-status-card).
+function currentStatusCardHtml(history, amendByDate) {
+  const latest = (history || [])[0];
+  if (!latest) return '';
+  return `
+    <div class="current-status-card ${milestoneClass(latest.action)}">
+      <div class="current-status-label">Current Status</div>
+      <div class="current-status-action">${latest.action || 'Unknown'}</div>
+      <div class="current-status-meta">${[latest.date, latest.chamber].filter(Boolean).join(' · ')}</div>
+      <div class="current-status-amend-by">
+        <label for="amend-by-input">Amend by</label>
+        <input type="date" id="amend-by-input" value="${amendByDate || ''}"
+               onchange="saveAmendByDate(this)">
+      </div>
+    </div>
+  `;
+}
+
+// Saves on change (no separate Save button — a date input's own picker
+// already commits the value with one action), same disable/revert/
+// reload-on-success shape as setPosition() above it in this same file.
+// Not synced from LegiScan — see bills.amend_by_date in schema.sql for
+// why this field exists at all only as a manual entry.
+async function saveAmendByDate(inputEl) {
+  const newValue = inputEl.value;
+  const savedValue = inputEl.defaultValue;
+  errorEl.className = '';
+  inputEl.disabled = true;
+  try {
+    const res = await fetch('/api/bill-amend-by-date', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bill_id: Number(billId), amend_by_date: newValue }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Could not save the amendment deadline.');
+    }
+    inputEl.defaultValue = newValue;
+    inputEl.disabled = false;
+  } catch (err) {
+    inputEl.value = savedValue;
+    inputEl.disabled = false;
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+function render(r) {
+  currentReport = r;
+  const historyRows = historyRowsHtml(r.history);
+  const amendmentRows = amendmentRowsHtml(r.amendments);
+  // r.upcoming_hearings, not r.hearings — this page's own field name
+  // (see db.get_bill_report(), which pre-filters to date >= today,
+  // unlike /lookup's live d.hearings); hearingRowsHtml() itself doesn't
+  // care what the array's called, only what's in it.
+  const hearingRows = hearingRowsHtml(r.upcoming_hearings);
+  const voteRows = voteRowsHtml(r.votes);
+
+  const clientBadges = (r.assigned_clients || []).map(c => {
+    const position = c.position || 'watch';
+    return `
+      <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem">
+        <a href="/clients/detail?id=${c.id}">${c.name}</a>
+        <span class="position-badge ${position}">${POSITION_LABELS[position] || position}</span>
+      </div>
+    `;
+  }).join('');
+
+  reportEl.innerHTML = `
+    <div class="card">
+      <div class="bill-id">${r.state} ${r.bill_number}</div>
+      <div class="status-badge">${r.status_label || 'Unknown'}${r.status_date ? ` — as of ${r.status_date}` : ''}</div>
+      <div class="bill-title">${r.title || ''}</div>
+      ${r.description ? `<div class="bill-desc">${r.description}</div>` : ''}
+      ${r.url ? `<a class="bill-link" href="${r.url}" target="_blank" rel="noopener">View on LegiScan →</a>` : ''}
+      <div class="card-actions">
+        ${r.flagged
+          ? '<span class="status-badge">🚩 Flagged</span>'
+          : '<button id="flag-btn" class="secondary" onclick="openFlagModal()">Flag this bill</button>'}
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">Assigned client${(r.assigned_clients || []).length === 1 ? '' : 's'}</div></div>
+      <div style="padding:1rem 1.15rem">
+        ${r.flagged
+          ? (clientBadges || '<p class="empty">Not currently assigned to any of your clients.</p>')
+          : '<p class="empty">Flag this bill to assign it to a client.</p>'}
+      </div>
+    </div>
+
+    ${currentStatusCardHtml(r.history, r.amend_by_date)}
+
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">Status history</div></div>
+      ${historyRows
+        ? `<div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Chamber</th><th>Action</th></tr></thead><tbody>${historyRows}</tbody></table></div>`
+        : '<p class="empty" style="padding:1rem 1.15rem">No status history recorded yet.</p>'}
+    </div>
+
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">Amendment history</div></div>
+      ${amendmentRows
+        ? `<div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Chamber</th><th>Amendment</th></tr></thead><tbody>${amendmentRows}</tbody></table></div>`
+        : '<p class="empty" style="padding:1rem 1.15rem">No amendments recorded.</p>'}
+    </div>
+
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">Upcoming hearings</div></div>
+      ${hearingRows
+        ? `<div style="overflow-x:auto"><table><thead><tr><th>When</th><th>Type</th><th>Details</th></tr></thead><tbody>${hearingRows}</tbody></table></div>`
+        : '<p class="empty" style="padding:1rem 1.15rem">No upcoming hearings scheduled.</p>'}
+    </div>
+
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head"><div class="title">Votes</div></div>
+      ${voteRows
+        ? `<div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Chamber</th><th>Result</th></tr></thead><tbody>${voteRows}</tbody></table></div>`
+        : '<p class="empty" style="padding:1rem 1.15rem">No votes recorded yet.</p>'}
+    </div>
+  `;
+}
+
+// Flagging used to be a single click straight to POST /api/flag, with
+// client/position attached later (and separately) on /flagged via
+// clientCell()/positionSelect(). This modal captures client + position
+// as part of flagging itself, using the same picker (POSITIONS,
+// clientOptionsHtml(), the quick-add panel) as /flagged's own
+// dropdown, see CLIENT_QUICKADD_JS. Moved here from /lookup once
+// search results stopped rendering full detail inline — see
+// LOOKUP_BODY's own comment.
+let flagModalClients = [];
+// Tracks whether POST /api/flag has actually succeeded for the current
+// modal session, so a retry after the client-link half fails doesn't
+// re-POST /api/flag (harmless — db.flag_bill is idempotent — but
+// pointless) and so Cancel after that point doesn't imply the flag
+// itself needs redoing too.
+let flagAlreadySaved = false;
+
+function ensureFlagModal() {
+  if (document.getElementById('flag-modal-backdrop')) return;
+  const backdrop = document.createElement('div');
+  backdrop.id = 'flag-modal-backdrop';
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="flag-modal-title">
+      <div class="modal-head">
+        <div>
+          <div class="title" id="flag-modal-title">Flag this bill</div>
+          <div class="sub" id="flag-modal-bill"></div>
+        </div>
+        <button type="button" class="icon-btn" id="flag-modal-close" aria-label="Close">×</button>
+      </div>
+      <form id="flag-modal-form">
+        <label>
+          <div class="sub" style="margin:0 0 0.3rem">Client</div>
+          <select id="flag-client-select" required onchange="onFlagClientSelectChange(this)">
+            <option value="">Choose a client…</option>
+          </select>
+        </label>
+        <label>
+          <div class="sub" style="margin:0 0 0.3rem">Position</div>
+          <select id="flag-position-select"></select>
+        </label>
+        <div id="flag-modal-error" role="alert" aria-live="assertive"></div>
+        <div class="modal-actions">
+          <button type="submit" id="flag-modal-submit">Confirm Flagged Bill</button>
+          <button type="button" class="secondary" id="flag-modal-cancel">Cancel</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+  document.getElementById('flag-position-select').innerHTML =
+    POSITIONS.map(([value, label]) => `<option value="${value}" ${value === 'watch' ? 'selected' : ''}>${label}</option>`).join('');
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeFlagModal(); });
+  document.getElementById('flag-modal-close').addEventListener('click', closeFlagModal);
+  document.getElementById('flag-modal-cancel').addEventListener('click', closeFlagModal);
+  document.getElementById('flag-modal-form').addEventListener('submit', confirmFlagBill);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (backdrop.classList.contains('show')) closeFlagModal();
+  });
+}
+
+function renderFlagClientSelect(selectedId) {
+  const sel = document.getElementById('flag-client-select');
+  sel.innerHTML = '<option value="">Choose a client…</option>' + clientOptionsHtml(flagModalClients);
+  sel.value = selectedId != null ? String(selectedId) : '';
+}
+
+function onFlagClientSelectChange(selectEl) {
+  if (selectEl.value !== ADD_NEW_CLIENT_VALUE) return;
+  openQuickAddClient(flagModalClients, (updatedClients, created) => {
+    flagModalClients = updatedClients;
+    renderFlagClientSelect(created.id);
+  }, () => {
+    renderFlagClientSelect('');
+  });
+}
+
+async function openFlagModal() {
+  if (!currentReport) return;
+  ensureFlagModal();
+  flagAlreadySaved = false;
+  document.getElementById('flag-modal-bill').textContent =
+    `${currentReport.state} ${currentReport.bill_number}${currentReport.title ? ' — ' + currentReport.title : ''}`;
+  document.getElementById('flag-modal-error').className = '';
+  document.getElementById('flag-position-select').value = 'watch';
+  const submitBtn = document.getElementById('flag-modal-submit');
+  submitBtn.disabled = false;
+  submitBtn.textContent = 'Confirm Flagged Bill';
+  renderFlagClientSelect('');
+  document.getElementById('flag-modal-backdrop').classList.add('show');
+
+  // /report doesn't otherwise need the client list, so it's fetched
+  // lazily here rather than on every page load like /flagged does.
+  const sel = document.getElementById('flag-client-select');
+  sel.disabled = true;
+  try {
+    const res = await fetch('/api/clients');
+    if (res.status === 401) {
+      window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+      return;
+    }
+    flagModalClients = await res.json();
+    renderFlagClientSelect('');
+  } catch (err) {
+    document.getElementById('flag-modal-error').textContent = 'Could not load your clients. Try again.';
+    document.getElementById('flag-modal-error').className = 'show';
+  } finally {
+    sel.disabled = false;
+  }
+}
+
+function closeFlagModal() {
+  const backdrop = document.getElementById('flag-modal-backdrop');
+  if (backdrop) backdrop.classList.remove('show');
+}
+
+async function confirmFlagBill(e) {
+  e.preventDefault();
+  if (!currentReport) return;
+  const errorEl2 = document.getElementById('flag-modal-error');
+  errorEl2.className = '';
+  const clientId = document.getElementById('flag-client-select').value;
+  if (!clientId || clientId === ADD_NEW_CLIENT_VALUE) {
+    errorEl2.textContent = 'Choose a client (or add a new one) before confirming.';
+    errorEl2.className = 'show';
+    return;
+  }
+  const position = document.getElementById('flag-position-select').value;
+  const submitBtn = document.getElementById('flag-modal-submit');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Saving…';
+
+  try {
+    if (!flagAlreadySaved) {
+      const flagRes = await fetch('/api/flag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bill_id: currentReport.bill_id }),
+      });
+      if (flagRes.status === 401) {
+        // Same convention as the server-side redirects in _redirect_to_login()
+        // (see app.py) — carry the report you were looking at through the
+        // login wall via ?next=..., so signing in lands you back on it
+        // instead of a dead end.
+        window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+        return;
+      }
+      const flagData = await flagRes.json();
+      if (!flagRes.ok) throw new Error(flagData.error || 'Could not flag this bill');
+      flagAlreadySaved = true;
+    }
+
+    const linkRes = await fetch('/api/bill-clients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bill_id: currentReport.bill_id, client_id: Number(clientId), position }),
+    });
+    if (!linkRes.ok) {
+      const linkData = await linkRes.json();
+      throw new Error(linkData.error || 'Bill was flagged, but assigning the client failed.');
+    }
+    closeFlagModal();
+    // Re-fetch so the card/assigned-client panel reflect the new
+    // flagged (and now assigned) state instead of staying stale until
+    // the next page load.
+    load();
+  } catch (err) {
+    // Don't let a failure here read as "nothing happened" when the
+    // flag half already went through — say so explicitly, and leave
+    // the modal open so Confirm can be clicked again (it only re-tries
+    // the client-link call at that point, see flagAlreadySaved above)
+    // instead of silently leaving a flagged-but-unassigned bill.
+    errorEl2.textContent = flagAlreadySaved
+      ? `${err.message} The bill is flagged — try again, or finish this later from your Flagged Bills list.`
+      : err.message;
+    errorEl2.className = 'show';
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Confirm Flagged Bill';
+  }
+}
+
+load();
+</script>

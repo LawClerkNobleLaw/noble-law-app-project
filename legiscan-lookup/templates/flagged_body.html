@@ -1,0 +1,454 @@
+
+<div class="page-head">
+  <div>
+    <h1>Flagged Bills</h1>
+    <p class="sub">Bills you've personally flagged — stored and re-checked daily the same way the shared watch list is, just scoped to your account.</p>
+  </div>
+  <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+    <a href="/flagged/calendar" class="secondary">Hearing calendar →</a>
+    <a href="/flagged/sponsors" class="secondary">Sponsors &amp; votes →</a>
+    <div class="filter-tabs" id="tabs"></div>
+  </div>
+</div>
+<div id="error" role="alert" aria-live="assertive"></div>
+<div class="stat-grid" id="stats"></div>
+
+<div class="panel">
+  <div class="panel-head">
+    <div class="title">Flagged Bills</div>
+    <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+      <div class="search-box">
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="5" r="3.5"/><path d="M8 8l2 2" stroke-linecap="round"/></svg>
+        <label for="flagged-search" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Filter your flagged bills</label>
+        <input id="flagged-search" type="text" placeholder="Filter your flagged bills...">
+      </div>
+      <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.75rem;color:var(--slate)">
+        Sort by
+        <select id="sort-by" style="font-size:0.78rem;padding:0.3rem 0.5rem">
+          <option value="bill_number">Bill number</option>
+          <option value="title">Alphabetical</option>
+          <option value="client">Client</option>
+          <option value="activity">Most recent activity</option>
+        </select>
+      </label>
+    </div>
+  </div>
+  <div id="loading" class="show" style="padding:1rem 1.15rem"><span class="spinner"></span>Loading…</div>
+  <div id="list"></div>
+</div>
+
+<script src="{{CLIENT_QUICKADD_SRC}}"></script>
+<script src="{{CONFIRM_DELETE_SRC}}"></script>
+<script src="{{TITLE_CASE_SRC}}"></script>
+<script src="{{ROW_MENU_SRC}}"></script>
+<script>
+const listEl = document.getElementById('list');
+const loadingEl = document.getElementById('loading');
+const errorEl = document.getElementById('error');
+const tabsEl = document.getElementById('tabs');
+const statsEl = document.getElementById('stats');
+const searchEl = document.getElementById('flagged-search');
+const sortSelectEl = document.getElementById('sort-by');
+let allClients = [];
+let currentRows = [];
+let preparedFilings = [];
+let activeFilter = 'all';
+
+// A pure front-end re-sort of whatever GET /api/flagged already
+// returned (currentRows) — no extra API call/param, since the whole
+// list is already in memory for filtering/search anyway. currentRows
+// itself stays in the server's own order (db.list_flagged_bills's
+// ORDER BY b.bill_number), which is exactly what the 'bill_number'
+// option wants, so that one's a no-op instead of re-implementing
+// SQLite's own string ordering here. Persisted across reloads —
+// same localStorage pattern THEME_INIT_SCRIPT uses for the dark-mode
+// toggle, just scoped to this page's own key.
+const SORT_STORAGE_KEY = 'flaggedBills.sortBy';
+let sortBy = localStorage.getItem(SORT_STORAGE_KEY) || 'bill_number';
+if (sortSelectEl) sortSelectEl.value = sortBy;
+
+function firstClientName(r) {
+  const names = (r.assigned_clients || []).map(c => c.name).sort((a, b) => a.localeCompare(b));
+  return names[0] || '';
+}
+
+function sortRows(rows) {
+  if (sortBy === 'title') {
+    return rows.slice().sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  }
+  if (sortBy === 'client') {
+    // Unassigned bills (no client name to sort by) fall to the end
+    // rather than sorting first the way an empty string normally would.
+    return rows.slice().sort((a, b) => {
+      const an = firstClientName(a), bn = firstClientName(b);
+      if (!an && bn) return 1;
+      if (an && !bn) return -1;
+      return an.localeCompare(bn);
+    });
+  }
+  if (sortBy === 'activity') {
+    // latest_activity_date is the newest bill_status_history date for
+    // that bill (see db.list_flagged_bills) — newest first, and bills
+    // with no recorded history yet sort to the end rather than first.
+    return rows.slice().sort((a, b) => {
+      const ad = a.latest_activity_date || '', bd = b.latest_activity_date || '';
+      if (!ad && bd) return 1;
+      if (ad && !bd) return -1;
+      return bd.localeCompare(ad);
+    });
+  }
+  return rows;
+}
+
+if (sortSelectEl) {
+  sortSelectEl.addEventListener('change', () => {
+    sortBy = sortSelectEl.value;
+    localStorage.setItem(SORT_STORAGE_KEY, sortBy);
+    applyFilters();
+  });
+}
+
+const ICON_FLAG = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 1v12M2 2h8l-2 2.5L10 7H2" stroke-linejoin="round"/></svg>';
+const ICON_CLIENTS = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5.5" cy="4.5" r="2.5"/><path d="M1 12c0-2.5 2-4.2 4.5-4.2S10 9.5 10 12" stroke-linecap="round"/></svg>';
+const ICON_ALERT = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M7 4.5v3" stroke-linecap="round"/><circle cx="7" cy="9.8" r="0.6" fill="currentColor" stroke="none"/></svg>';
+const ICON_DISCLOSURE = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="1.5" width="8" height="11" rx="1"/><path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function renderStats() {
+  if (!currentRows.length) { statsEl.innerHTML = ''; return; }
+  const unassigned = currentRows.filter(r => !(r.assigned_clients || []).length).length;
+  const pending = preparedFilings.filter(f => f.status === 'draft').length;
+  statsEl.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-icon">${ICON_FLAG}</div>
+      <div class="stat-label">Flagged bills</div>
+      <div class="stat-value">${currentRows.length}</div>
+      <div class="stat-foot">Refreshed once a day</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">${ICON_CLIENTS}</div>
+      <div class="stat-label">Active clients</div>
+      <div class="stat-value">${allClients.length}</div>
+      <div class="stat-foot">Clients you're tracking bills for</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">${ICON_ALERT}</div>
+      <div class="stat-label">Needs a client</div>
+      <div class="stat-value">${unassigned}</div>
+      <div class="stat-foot">Flagged bills with no client assigned</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">${ICON_DISCLOSURE}</div>
+      <div class="stat-label">Disclosures</div>
+      <div class="stat-value">${pending}</div>
+      <div class="stat-foot">${pending ? 'Drafted, awaiting your sign-off' : 'None waiting on you'}</div>
+    </div>
+  `;
+}
+
+const FILTERS = [['all', 'All'], ['support', 'Support'], ['oppose', 'Oppose'], ['watch', 'Watch']];
+
+function matchesFilter(r, filter) {
+  if (filter === 'all') return true;
+  return (r.assigned_clients || []).some(c => (c.position || 'watch') === filter);
+}
+
+function matchesSearch(r, q) {
+  if (!q) return true;
+  return `${r.bill_number || ''} ${r.title || ''}`.toLowerCase().includes(q);
+}
+
+function applyFilters() {
+  const q = (searchEl ? searchEl.value : '').trim().toLowerCase();
+  render(sortRows(currentRows.filter(r => matchesFilter(r, activeFilter) && matchesSearch(r, q))));
+}
+
+function setFilter(filter) {
+  activeFilter = filter;
+  renderTabs();
+  applyFilters();
+}
+
+function renderTabs() {
+  if (!currentRows.length) {
+    tabsEl.innerHTML = '';
+    return;
+  }
+  tabsEl.innerHTML = FILTERS.map(([value, label]) => {
+    const n = currentRows.filter(r => matchesFilter(r, value)).length;
+    return `<button type="button" class="filter-tab ${value === activeFilter ? 'active' : ''}" onclick="setFilter('${value}')">${label}<span class="n">${n}</span></button>`;
+  }).join('');
+}
+
+if (searchEl) {
+  searchEl.addEventListener('input', applyFilters);
+}
+
+async function load() {
+  try {
+    const [flaggedRes, clientsRes, filingsRes] = await Promise.all([
+      fetch('/api/flagged'), fetch('/api/clients'), fetch('/api/prepared-filings'),
+    ]);
+    if (flaggedRes.status === 401) {
+      window.location.href = '/login';
+      return;
+    }
+    allClients = await clientsRes.json();
+    currentRows = await flaggedRes.json();
+    preparedFilings = filingsRes.ok ? await filingsRes.json() : [];
+    renderStats();
+    renderTabs();
+    applyFilters();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    loadingEl.className = '';
+  }
+}
+
+// A friendly "Aug 24, 2:03 PM" instead of the raw
+// "2026-08-24T14:03:00" ISO string the API returns.
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso.includes('Z') || iso.includes('+') ? iso : iso + 'Z');
+  if (isNaN(d)) return iso;
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+async function unflag(billId) {
+  // Unflagging drops the bill's tracked position/client context with no
+  // undo — same real confirmation as removeClient() (see
+  // CONFIRM_DELETE_JS), not the browser's own confirm().
+  const r = currentRows.find(x => x.bill_id === billId);
+  const label = r ? `${r.state} ${r.bill_number}` : 'this bill';
+  const clientNote = r && (r.assigned_clients || []).length
+    ? ' This also removes its assigned client(s) and saved position(s).'
+    : '';
+  const ok = await confirmDelete('Unflag this bill?', `Unflag ${label}?${clientNote} This can't be undone.`);
+  if (!ok) return;
+  errorEl.className = '';
+  try {
+    const res = await fetch(`/api/flag?bill_id=${billId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Could not unflag bill');
+    }
+    load();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+async function assignClient(billId, selectEl) {
+  const clientId = selectEl.value;
+  if (!clientId) return;
+  errorEl.className = '';
+  selectEl.disabled = true;
+  try {
+    const res = await fetch('/api/bill-clients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bill_id: billId, client_id: Number(clientId) }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Could not assign client');
+    }
+    load();
+  } catch (err) {
+    selectEl.disabled = false;
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+async function unassignClient(billId, clientId, btnEl) {
+  // Same confirmDelete() dialog as removeClient() (see CONFIRM_DELETE_JS).
+  const r = currentRows.find(x => x.bill_id === billId);
+  const c = r && (r.assigned_clients || []).find(x => x.id === clientId);
+  const ok = await confirmDelete('Remove client?', `Remove ${c ? c.name : 'this client'} from this bill? This can't be undone.`);
+  if (!ok) return;
+  errorEl.className = '';
+  btnEl.disabled = true;
+  try {
+    const res = await fetch(`/api/bill-clients?bill_id=${billId}&client_id=${clientId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Could not remove assignment');
+    }
+    load();
+  } catch (err) {
+    btnEl.disabled = false;
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+async function setPosition(billId, clientId, selectEl) {
+  const newPosition = selectEl.value;
+  const savedPosition = selectEl.dataset.saved;
+  errorEl.className = '';
+  // Optimistic repaint so the picked color shows right away — reverted
+  // in the catch below if the server rejects the change, so a failed
+  // save can no longer look identical to a successful one.
+  selectEl.className = 'position-select ' + newPosition;
+  selectEl.disabled = true;
+  try {
+    const res = await fetch('/api/bill-clients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bill_id: billId, client_id: clientId, position: newPosition }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Could not update position');
+    }
+    selectEl.dataset.saved = newPosition;
+    load();
+  } catch (err) {
+    selectEl.value = savedPosition;
+    selectEl.className = 'position-select ' + savedPosition;
+    selectEl.disabled = false;
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+function positionSelect(r, c) {
+  const position = c.position || 'watch';
+  const options = POSITIONS.map(([value, label]) =>
+    `<option value="${value}" ${position === value ? 'selected' : ''}>${label}</option>`
+  ).join('');
+  return `<select class="position-select ${position}" data-saved="${position}" onchange="setPosition(${r.bill_id}, ${c.id}, this)" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${options}</select>`;
+}
+
+// Two different jobs live in this cell: the chips change an *existing*
+// assignment's position (or remove it); the select below them *adds a
+// new* client. They used to look like two competing ways to do the same
+// thing — see .client-chip/.add-client-select in STYLE for the visual
+// fix (behavior/handlers here are unchanged).
+function clientCell(r) {
+  const chips = (r.assigned_clients || []).map(c => `
+    <div class="client-chip">
+      <a href="/clients/detail?id=${c.id}">${titleCaseName(c.name)}</a>
+      ${positionSelect(r, c)}
+      <button type="button" class="icon-btn" onclick="unassignClient(${r.bill_id}, ${c.id}, this)" aria-label="Remove client from this bill" title="Remove client" style="height:1.5rem;width:1.5rem;color:var(--slate)">×</button>
+    </div>
+  `).join('');
+
+  const assignedIds = new Set((r.assigned_clients || []).map(c => c.id));
+  const available = allClients.filter(c => !assignedIds.has(c.id));
+  const placeholder = allClients.length ? (available.length ? '+ Add client' : 'All clients assigned') : 'No clients yet…';
+  return `
+    <div>${chips}</div>
+    <select class="add-client-select" onchange="handleClientCellSelect(${r.bill_id}, this)" style="margin-top:0.2rem">
+      <option value="">${placeholder}</option>
+      ${clientOptionsHtml(available)}
+    </select>
+  `;
+}
+
+// Selecting an existing client assigns it right away, same as before —
+// selecting "+ Add new client" (always the last option, see
+// clientOptionsHtml() in CLIENT_QUICKADD_JS) opens the quick-add panel
+// instead, then assigns whatever it creates to this row's bill, since
+// that's the whole reason to reach the quick-add form from here rather
+// than from /clients directly.
+function handleClientCellSelect(billId, selectEl) {
+  const value = selectEl.value;
+  if (value !== ADD_NEW_CLIENT_VALUE) {
+    // Same "reset right away, don't wait for the network round trip"
+    // behavior the old inline onchange="assignClient(...); this.value=''"
+    // had — assignClient() below is async and doesn't await here.
+    assignClient(billId, selectEl);
+    selectEl.value = '';
+    return;
+  }
+  openQuickAddClient(allClients, (updatedClients, created) => {
+    allClients = updatedClients;
+    assignNewClientToBill(billId, created.id);
+  }, () => {
+    selectEl.value = '';
+  });
+}
+
+async function assignNewClientToBill(billId, clientId) {
+  errorEl.className = '';
+  try {
+    const res = await fetch('/api/bill-clients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bill_id: billId, client_id: clientId }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Client was added, but could not be assigned to this bill.');
+    }
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    // Refresh either way — the new client should show up in every
+    // row's dropdown from here on even if assigning it to *this* bill
+    // just failed.
+    load();
+  }
+}
+
+function render(rows) {
+  if (!currentRows.length) {
+    listEl.innerHTML = '<p class="empty">Nothing flagged yet — look up a bill and click "Flag this bill" from there.</p>';
+    return;
+  }
+  if (!rows.length) {
+    const q = (searchEl ? searchEl.value : '').trim();
+    const filterLabel = activeFilter !== 'all'
+      ? ` marked "${(FILTERS.find(([value]) => value === activeFilter) || [null, activeFilter])[1]}"` : '';
+    const searchNote = q ? ` matching "${q}"` : '';
+    listEl.innerHTML = `<p class="empty">No flagged bills${filterLabel}${searchNote} right now — try <a href="#" onclick="event.preventDefault(); if (searchEl) searchEl.value=''; setFilter('all')">clearing filters</a>.</p>`;
+    return;
+  }
+  listEl.innerHTML = `
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>Bill</th><th>Status</th><th>Last checked</th><th>Clients &amp; positions</th><th></th></tr></thead>
+      <tbody>
+      ${rows.map(r => `
+        <tr>
+          <td>
+            <div class="bill-row">
+              <div class="bill-icon">
+                <svg viewBox="0 0 14 14" fill="currentColor"><rect x="1" y="1" width="5" height="5" rx="1"/><rect x="8" y="1" width="5" height="5" rx="1"/><rect x="1" y="8" width="5" height="5" rx="1"/><rect x="8" y="8" width="5" height="5" rx="1"/></svg>
+              </div>
+              <div>
+                <div class="bill-title">${r.title || ''}</div>
+                <div class="bill-id">${r.state} ${r.bill_number}</div>
+              </div>
+            </div>
+            <div class="row-actions">
+              ${r.url ? `<a class="secondary" href="${r.url}" target="_blank" rel="noopener">View</a>` : ''}
+              <a class="secondary" href="/report?bill_id=${r.bill_id}">Report</a>
+            </div>
+          </td>
+          <td>${r.status_label ? `<span class="status-badge">${r.status_label}</span>` : ''}</td>
+          <td class="date">${fmtDateTime(r.last_checked_at)}</td>
+          <td>${clientCell(r)}</td>
+          <td class="row-menu">
+            <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, ${r.bill_id})" aria-label="Bill actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-${r.bill_id}">
+              <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
+            </button>
+            <div class="row-menu-dropdown" id="row-menu-${r.bill_id}">
+              <button type="button" onclick="unflag(${r.bill_id})">Unflag this bill</button>
+            </div>
+          </td>
+        </tr>
+      `).join('')}
+      </tbody>
+    </table>
+    </div>
+  `;
+}
+
+load();
+</script>
