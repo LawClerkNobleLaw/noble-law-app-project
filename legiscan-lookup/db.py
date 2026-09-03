@@ -316,7 +316,56 @@ def unflag_bill(conn, user_id, bill_id):
         remove_from_watchlist(conn, bill_id)
 
 
-def list_flagged_bills(conn, user_id):
+def _days_between(start, end):
+    """Whole days from one ISO 'YYYY-MM-DD' string to another, or None if
+    either won't parse. Counted in dates, never in elapsed hours, so a
+    hearing tomorrow morning is 1 rather than 0."""
+    try:
+        first = datetime.strptime(start, "%Y-%m-%d").date()
+        second = datetime.strptime(end, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+    return (second - first).days
+
+
+def _next_hearings_for_bills(conn, bill_ids, today):
+    """The soonest still-to-come hearing for each of these bills, keyed by
+    bill_id, with days_until precomputed — what the flagged list's Next
+    action column and its urgency sort are built from.
+
+    days_until is worked out here rather than in the browser so the
+    countdown is measured from the same California clock the "still to
+    come" cut was made with (see today_in_california), instead of from
+    whatever timezone the user's laptop happens to be set to.
+
+    Undated hearings are skipped, unlike on the calendar: this column
+    answers "when do I have to act," and a hearing LegiScan hasn't put a
+    date on can't answer that. The calendar shows them because there the
+    question is "what exists," not "what's next.\""""
+    if not bill_ids:
+        return {}
+    placeholders = ",".join("?" for _ in bill_ids)
+    rows = conn.execute(
+        f"""SELECT bill_id, date, time, event_type, location, description
+            FROM bill_hearings
+            WHERE bill_id IN ({placeholders})
+              AND date IS NOT NULL AND date != '' AND date >= ?
+            ORDER BY date, time""",
+        (*bill_ids, today),
+    ).fetchall()
+
+    # Rows arrive soonest-first, so the first one seen for a bill is its next.
+    next_by_bill = {}
+    for row in rows:
+        if row["bill_id"] in next_by_bill:
+            continue
+        hearing = dict(row)
+        hearing["days_until"] = _days_between(today, hearing["date"])
+        next_by_bill[row["bill_id"]] = hearing
+    return next_by_bill
+
+
+def list_flagged_bills(conn, user_id, today=None):
     rows = conn.execute(
         """SELECT f.bill_id, f.flagged_at, w.last_checked_at,
                   b.state, b.bill_number, b.title, b.status_label, b.status_date, b.url,
@@ -330,9 +379,14 @@ def list_flagged_bills(conn, user_id):
         (user_id,),
     ).fetchall()
     result = [dict(r) for r in rows]
-    clients_by_bill = clients_for_bills(conn, user_id, [r["bill_id"] for r in result])
+    bill_ids = [r["bill_id"] for r in result]
+    clients_by_bill = clients_for_bills(conn, user_id, bill_ids)
+    next_hearings = _next_hearings_for_bills(conn, bill_ids, today or today_in_california())
     for r in result:
         r["assigned_clients"] = clients_by_bill.get(r["bill_id"], [])
+        # None for a bill with nothing scheduled — the column says so in
+        # words rather than leaving the cell blank.
+        r["next_hearing"] = next_hearings.get(r["bill_id"])
     return result
 
 

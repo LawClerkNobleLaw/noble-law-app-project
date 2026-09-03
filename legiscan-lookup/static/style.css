@@ -772,6 +772,57 @@
      rows a table's own td/tr rules already handle. */
   .hearing-row { display: flex; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--rule); }
   .hearing-row:last-child { border-bottom: none; }
+  /* Flagged Bills inverts the pair above: the identifier leads and the
+     title sits under it, muted and clamped. "SB1159" is what a lobbyist
+     says out loud and scans a list for, and letting the full title set
+     the row height meant six bills filled more than a screen — the list
+     stopped being scannable exactly where scanning matters. Separate
+     class names rather than a restyle of .bill-title/.bill-id, because
+     the calendar and the /report card still want the title to lead:
+     there the bill is already named and the title is the new
+     information. */
+  .bill-row .bill-main { flex: 1; min-width: 0; }
+  /* --ink, not --accent: --accent aliases --slate in both themes, which
+     is also what .bill-name uses below — the "promoted" identifier came
+     out the exact same colour as the title it was supposed to lead, with
+     only weight telling them apart. */
+  .bill-ident { font-family: var(--mono); font-size: 0.82rem; font-weight: 600; color: var(--ink); margin: 0; }
+  .bill-name {
+    font-size: 0.78rem; color: var(--slate); margin: 0.1rem 0 0;
+    /* Two lines then ellipsis; the full title is on the title attribute. */
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+
+  /* The Next action column: when the user has to do something about this
+     bill, which Status alone never said — an Engrossed bill with a
+     hearing Monday and an Engrossed bill with nothing scheduled used to
+     be the same row. */
+  td.next-action { white-space: normal; min-width: 9rem; }
+  .next-when { font-weight: 600; font-size: 0.82rem; }
+  .next-when.none { font-weight: 400; color: var(--slate); }
+  .next-where { font-size: 0.74rem; color: var(--slate); margin-top: 0.1rem; }
+  .next-chip {
+    display: inline-block; margin-top: 0.25rem; font-size: 0.68rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em; padding: 0.1rem 0.4rem;
+    border-radius: var(--radius-pill); border: 1px solid currentColor;
+    background: var(--warn-soft); color: var(--warn);
+  }
+  /* Today and tomorrow read as error rather than warning — at that range
+     the thing to notice is that preparation time is gone, not short. The
+     border above carries the same distinction without relying on the
+     hue, since red/amber is a pair some users can't separate. */
+  .next-chip.now { background: var(--error-soft); color: var(--error); }
+
+  /* Adding Next action pushed the flagged table wider, and it already
+     scrolled sideways on a phone (the position dropdown ends up past the
+     right edge). Last checked is the column to give up for it: every row
+     holds the same batch-job timestamp, so it's the least informative
+     thing competing for the width. Narrow screens only — there's room
+     for all five on a laptop. */
+  @media (max-width: 900px) {
+    .col-checked { display: none; }
+  }
+
   .row-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: 0.35rem; }
   .row-actions a { font-size: 0.78rem; padding: var(--space-1) var(--space-2); }
   /* A "..." overflow menu for row actions that are real but shouldn't
@@ -828,6 +879,13 @@
      the menu off. Hits the last row in the table hardest, since there's
      no more table content below it to grow the wrapper's height for. */
   .row-menu-dropdown.open-up { top: auto; bottom: calc(100% + 0.25rem); }
+  /* Flagged Bills moved its menu out of a trailing column and into the
+     Bill cell, so the trigger is now near the left edge instead of the
+     right one. right:0 above would hang the menu's 9rem to the LEFT of a
+     1.75rem button — visibly detached from what opened it. Every other
+     table (Clients, Disclosures, Client detail) still has its menu last
+     in the row and still wants the original anchor. */
+  .bill-row .row-menu-dropdown { right: auto; left: 0; }
   .row-menu-dropdown button {
     background: none; border: none; color: var(--error); font: inherit; font-weight: 500; font-size: 0.82rem;
     text-align: left; padding: var(--space-2) var(--space-2); border-radius: var(--radius-sm); cursor: pointer;
