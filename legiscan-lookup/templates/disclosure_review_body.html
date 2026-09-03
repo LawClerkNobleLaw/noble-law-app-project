@@ -96,26 +96,6 @@ async function saveField(inputEl) {
   }
 }
 
-async function applyClientRows() {
-  const picks = Array.from(document.querySelectorAll('#client-picker select'))
-    .map(sel => ({ id: Number(sel.dataset.clientId), row: sel.value ? Number(sel.value) : null }))
-    .filter(p => p.row !== null);
-  const rowNumbers = picks.map(p => p.row);
-  if (new Set(rowNumbers).size !== rowNumbers.length) {
-    showError('Two clients can\'t share the same row — pick a different row for each.');
-    return;
-  }
-  picks.sort((a, b) => a.row - b.row);
-  try {
-    filing = await postJson('/api/prepared-filings/select-clients', {
-      id: Number(filingId), client_ids: picks.map(p => p.id),
-    });
-    render();
-  } catch (err) {
-    showError(err.message);
-  }
-}
-
 async function generatePdf() {
   const btn = document.getElementById('generate-btn');
   btn.disabled = true;
@@ -179,53 +159,129 @@ function fieldInputHtml(field, value) {
     </label>`;
 }
 
+/* ── Client rows (P1-20) ───────────────────────────────────────────────
+ *
+ * The paper form has nine fixed client rows, and this screen used to
+ * reproduce all nine as screen rows: three filled blocks, then "Row 4 —
+ * empty" through "Row 9 — empty", each rendering five inputs. Roughly
+ * thirty blank fields stood between the last real client and the
+ * Generate PDF button, and the three blocks that needed attention
+ * looked exactly like the six that didn't.
+ *
+ * A blank row on paper is a place to write. On screen it is nothing —
+ * so only rows that hold something are rendered, and adding a client is
+ * an explicit act. The nine-row structure still goes to the PDF, where
+ * it belongs: pdf_forms.client_row_values() always writes all nine,
+ * blanking the ones with no client.
+ */
+function clientRowIndexes() {
+  const rowIds = filing.client_row_ids || [];
+  const rowFields = filing.client_row_fields;
+  const shown = [];
+  for (let i = 0; i < rowFields.length; i++) {
+    // A row is shown if a client sits in it, or if it holds typed data
+    // with no client — which happens if a client is removed from the
+    // form after something was written into its row. Hiding that would
+    // hide the only copy of it.
+    const hasData = ROW_KEYS.some(k => (filing.field_data[rowFields[i][k]] || '').trim());
+    if (rowIds[i] || hasData) shown.push(i);
+  }
+  return shown;
+}
+
 function clientsSectionHtml() {
   const maxRows = filing.max_client_rows;
   const rowFields = filing.client_row_fields;
   const rowIds = filing.client_row_ids || [];
   const rowLabels = filing.field_schema.find(s => s.key === 'clients').row_field_labels;
+  const shown = clientRowIndexes();
 
-  let pickerHtml = '';
-  if (allClients.length > maxRows) {
-    pickerHtml = `
-      <div class="card" style="margin-bottom:1rem">
-        <div class="bill-title" style="margin-bottom:0.4rem">Choose which ${maxRows} clients appear on this form</div>
-        <div class="bill-desc" style="margin-bottom:0.8rem">
-          You have ${allClients.length} clients — this form only has ${maxRows} rows. Give the ones that
-          should appear a row number; leave the rest blank.
-        </div>
-        <div id="client-picker">
-          ${allClients.map(c => {
-            const idx = rowIds.indexOf(c.id);
-            const selected = idx === -1 ? '' : String(idx + 1);
-            const options = ['<option value="">—</option>'].concat(
-              Array.from({ length: maxRows }, (_, i) => {
-                const n = String(i + 1);
-                return `<option value="${n}" ${n === selected ? 'selected' : ''}>${n}</option>`;
-              })
-            ).join('');
-            return `<div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.4rem">
-              <select data-client-id="${c.id}" style="width:5rem">${options}</select>
-              <span>${escapeHtml(c.name)}</span>
-            </div>`;
-          }).join('')}
-        </div>
-        <button type="button" class="secondary" style="margin-top:0.6rem" onclick="applyClientRows()">Apply row assignment</button>
-      </div>`;
-  }
-
-  const rowsHtml = rowFields.map((rf, i) => {
+  const rowsHtml = shown.map(i => {
     const clientId = rowIds[i];
     const client = allClients.find(c => c.id === clientId);
-    const heading = client ? escapeHtml(client.name) : `Row ${i + 1} — empty`;
+    const heading = client ? escapeHtml(client.name) : 'Typed into row ' + (i + 1) + ' — no client assigned';
+    // Row numbers are what the PDF and the paper form speak in, so the
+    // row keeps its number even though the screen no longer counts in
+    // them — a reviewer checking the generated form against this screen
+    // is matching row 7 to row 7.
+    const removeBtn = client
+      ? `<button type="button" class="icon-btn" title="Remove ${escapeHtml(client.name)} from this form"
+           aria-label="Remove ${escapeHtml(client.name)} from this form" onclick="removeClientRow(${client.id})">×</button>`
+      : '';
     const fieldsHtml = ROW_KEYS.map(k => fieldInputHtml(
-      { key: rf[k], label: rowLabels[k], required: false, kind: 'text' },
-      filing.field_data[rf[k]] || '',
+      { key: rowFields[i][k], label: rowLabels[k], required: false, kind: 'text' },
+      filing.field_data[rowFields[i][k]] || '',
     )).join('');
-    return `<div class="card" style="margin-bottom:0.8rem"><div class="bill-title" style="margin-bottom:0.6rem">${heading}</div>${fieldsHtml}</div>`;
+    return `<div class="card" style="margin-bottom:0.8rem">
+      <div class="client-row-head">
+        <div class="bill-title" style="margin:0">${heading}</div>
+        <div class="client-row-meta"><span class="sub">Row ${i + 1}</span>${removeBtn}</div>
+      </div>${fieldsHtml}</div>`;
   }).join('');
 
-  return pickerHtml + rowsHtml;
+  const onForm = new Set(rowIds.filter(Boolean));
+  const available = allClients.filter(c => !onForm.has(c.id));
+  const full = onForm.size >= maxRows;
+
+  let addHtml;
+  if (full) {
+    addHtml = `<div class="sub">All ${maxRows} rows on this form are taken. The real form continues on
+      its own attachment pages — remove a client here, or write the rest onto the printed continuation rows.</div>`;
+  } else if (!available.length) {
+    addHtml = `<div class="sub">${allClients.length
+      ? 'Every client you have is on this form.'
+      : 'You have no clients yet. Add them under Clients and they can be put on this form.'}</div>`;
+  } else {
+    addHtml = `
+      <label class="sub" style="margin:0">Add
+        <select id="add-client-select">
+          ${available.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}
+        </select>
+      </label>
+      <button type="button" class="secondary" onclick="addClientRow()">+ Add another client</button>`;
+  }
+
+  const emptyHtml = shown.length ? '' :
+    '<p class="sub" style="margin:0 0 0.8rem">No clients on this form yet. The form needs at least one.</p>';
+
+  return `${emptyHtml}${rowsHtml}<div class="client-row-add">${addHtml}</div>`;
+}
+
+// Both of these go through the same endpoint the row picker used: send
+// the whole client list in row order and let the server rebuild the
+// rows from it. Adding appends to the first free row; removing closes
+// the gap, so the rows stay contiguous and the PDF has no hole in the
+// middle of Section A.
+async function setClientRows(clientIds) {
+  errorEl.className = '';
+  try {
+    filing = await postJson('/api/prepared-filings/select-clients', {
+      id: Number(filingId), client_ids: clientIds,
+    });
+    render();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+function addClientRow() {
+  const select = document.getElementById('add-client-select');
+  if (!select || !select.value) return;
+  const rowIds = (filing.client_row_ids || []).filter(Boolean);
+  setClientRows(rowIds.concat([Number(select.value)]));
+}
+
+async function removeClientRow(clientId) {
+  const client = allClients.find(c => c.id === clientId);
+  // Named, and honest about what survives: the row's typed values go
+  // with it, and the client itself is untouched.
+  const ok = await confirmDelete(
+    'Remove from this form?',
+    `Take ${client ? client.name : 'this client'} off this Form 601? Anything typed into its row goes too. ` +
+    'The client itself stays in your Clients list.'
+  );
+  if (!ok) return;
+  setClientRows((filing.client_row_ids || []).filter(id => id && id !== clientId));
 }
 
 // When this is due, and the date that starts the clock.
@@ -365,7 +421,9 @@ function render() {
       ${clientsSectionHtml()}
     </div>
 
-    <div class="card-actions" style="margin:0 0 1rem">
+    <div class="sticky-actions">
+      <span class="sub" style="margin:0">${signed ? 'Signed off — regenerate if you edit anything.'
+        : (filing.pdf_current ? 'PDF matches what is on this page.' : 'Generate the PDF to preview it before signing off.')}</span>
       <button type="button" id="generate-btn" onclick="generatePdf()">Generate PDF</button>
     </div>
 

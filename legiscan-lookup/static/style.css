@@ -718,8 +718,14 @@
     width: 100%; font-family: inherit;
   }
   .search-box input::placeholder { color: var(--slate); }
+  /* color belongs here and not only on the svg child below: button's
+     own base rule paints text var(--accent-solid-text), which in dark
+     mode is near-black — so an .icon-btn holding a text glyph rather
+     than an icon (the × on a saved search, and now on a client row of
+     the 601 review) came out black on black and simply wasn't there. */
   .icon-btn {
     height: 2rem; width: 2rem; border-radius: var(--radius-md); border: 1px solid var(--rule); background: var(--paper);
+    color: var(--slate);
     display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s ease;
   }
   .icon-btn:hover { background: var(--accent-soft); }
@@ -1224,6 +1230,36 @@
   .result-truncated {
     background: var(--warn-soft); color: var(--ink); border-radius: var(--radius-md);
     padding: var(--space-2) 0.75rem; margin-bottom: 0.75rem; font-size: 0.8rem;
+  }
+
+  /* ── Disclosure review: client rows (P1-20) ──
+     Only rows holding something are rendered now, so each row needs its
+     own header: who is in it, which row number the PDF will use, and a
+     way off the form. The row number stays visible because the paper
+     form and the generated PDF both count in them — a reviewer checking
+     one against the other is matching row 7 to row 7. */
+  .client-row-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: var(--space-2); margin-bottom: 0.6rem;
+  }
+  .client-row-meta { display: flex; align-items: center; gap: var(--space-2); flex: none; }
+  .client-row-add {
+    display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+    padding-top: var(--space-2);
+  }
+
+  /* Generate PDF is this page's primary action and used to sit below
+     everything it acts on — under nine client cards, roughly thirty of
+     whose fields were blank. Pinned to the bottom of the viewport it is
+     reachable from anywhere in the form, and it carries the one line
+     saying whether the PDF currently matches the page. */
+  .sticky-actions {
+    position: sticky; bottom: 0; z-index: 5;
+    display: flex; align-items: center; justify-content: flex-end; gap: var(--space-3);
+    flex-wrap: wrap; margin: 0 0 1rem;
+    background: var(--surface); border: 1px solid var(--rule);
+    border-radius: var(--radius-md); padding: var(--space-3) 0.9rem;
+    box-shadow: 0 -2px 12px -6px rgba(0, 0, 0, 0.35);
   }
 
   /* ── Saved searches ──

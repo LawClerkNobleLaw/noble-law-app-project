@@ -348,3 +348,158 @@ def test_days_until_due_is_negative_once_overdue(conn):
 
     due_today = db.set_prepared_filing_deadline(conn, user_id, filing_id, None, today)
     assert due_today["days_until_due"] == 0
+
+
+# ── client rows carry their typed values (P1-20) ─────────────────────
+#
+# The review screen now renders only the rows that hold something, and
+# adding or removing a client is a one-click action rather than a rare
+# trip through a nine-row picker. That makes row rebuilding common, and
+# four of a row's five fields — nature of interests, effective date,
+# period of contract, agencies lobbied — are things the client record
+# usually doesn't hold, so they get typed on this screen. Losing them on
+# the next add would be a data-loss bug the old picker's rarity hid.
+
+
+def test_adding_a_client_keeps_what_was_typed_into_the_other_rows(conn):
+    user_id = insert_user(conn)
+    client_a = _make_client(conn, user_id, "Acme Corp")
+    client_b = _make_client(conn, user_id, "Baker Industries")
+    filing_id = _make_filing(conn, user_id)
+    row1, row2 = pdf_forms.CLIENT_ROW_FIELDS[0], pdf_forms.CLIENT_ROW_FIELDS[1]
+
+    filing = db.set_prepared_filing_client_rows(
+        conn, user_id, filing_id, [client_a],
+        pdf_forms.client_row_values([db.get_client(conn, user_id, client_a)]),
+    )
+    # Typed on the review screen — the client record holds none of this.
+    filing = db.update_prepared_filing_field(
+        conn, user_id, filing_id, row1["description"], "AI safety and model transparency")
+    conn.commit()
+
+    filing = db.set_prepared_filing_client_rows(
+        conn, user_id, filing_id, [client_a, client_b],
+        pdf_forms.client_row_values(
+            [db.get_client(conn, user_id, client_a), db.get_client(conn, user_id, client_b)],
+            previous_clients=[client_a],
+            previous_field_data=filing["field_data"],
+        ),
+    )
+    conn.commit()
+
+    assert filing["field_data"][row1["description"]] == "AI safety and model transparency"
+    assert "Baker Industries" in filing["field_data"][row2["employer"]]
+
+
+def test_a_typed_value_follows_its_client_to_a_new_row(conn):
+    # Removing the client above it renumbers everything below, and the
+    # typed value has to move with its own client, not stay at row 2.
+    user_id = insert_user(conn)
+    client_a = _make_client(conn, user_id, "Acme Corp")
+    client_b = _make_client(conn, user_id, "Baker Industries")
+    filing_id = _make_filing(conn, user_id)
+    row1, row2 = pdf_forms.CLIENT_ROW_FIELDS[0], pdf_forms.CLIENT_ROW_FIELDS[1]
+
+    db.set_prepared_filing_client_rows(
+        conn, user_id, filing_id, [client_a, client_b],
+        pdf_forms.client_row_values([db.get_client(conn, user_id, client_a),
+                                     db.get_client(conn, user_id, client_b)]),
+    )
+    filing = db.update_prepared_filing_field(
+        conn, user_id, filing_id, row2["agencies"], "CPUC; CARB")
+    conn.commit()
+
+    filing = db.set_prepared_filing_client_rows(
+        conn, user_id, filing_id, [client_b],
+        pdf_forms.client_row_values(
+            [db.get_client(conn, user_id, client_b)],
+            previous_clients=[client_a, client_b],
+            previous_field_data=filing["field_data"],
+        ),
+    )
+    conn.commit()
+
+    assert "Baker Industries" in filing["field_data"][row1["employer"]]
+    assert filing["field_data"][row1["agencies"]] == "CPUC; CARB"
+    assert filing["field_data"][row2["agencies"]] == ""
+
+
+def test_a_corrected_client_record_still_flows_through(conn):
+    # Only values that DIFFER from what the client record derives count
+    # as hand-typed. An untouched row must still pick up a correction
+    # made on the client itself.
+    user_id = insert_user(conn)
+    client_a = _make_client(conn, user_id, "Acme Corp")
+    filing_id = _make_filing(conn, user_id)
+    row1 = pdf_forms.CLIENT_ROW_FIELDS[0]
+
+    filing = db.set_prepared_filing_client_rows(
+        conn, user_id, filing_id, [client_a],
+        pdf_forms.client_row_values([db.get_client(conn, user_id, client_a)]),
+    )
+    conn.commit()
+    db.update_client(conn, user_id, client_a, {"name": "Acme Corporation"})
+    conn.commit()
+
+    filing = db.set_prepared_filing_client_rows(
+        conn, user_id, filing_id, [client_a],
+        pdf_forms.client_row_values(
+            [db.get_client(conn, user_id, client_a)],
+            previous_clients=[client_a],
+            previous_field_data=filing["field_data"],
+        ),
+    )
+    conn.commit()
+    assert "Acme Corporation" in filing["field_data"][row1["employer"]]
+
+
+def test_the_pdf_still_gets_all_nine_rows(conn):
+    # The screen renders only filled rows; the form has nine, and every
+    # one of its field names must still be written so a stale value can
+    # never survive in a row the screen no longer shows.
+    user_id = insert_user(conn)
+    client_a = _make_client(conn, user_id, "Acme Corp")
+    filing_id = _make_filing(conn, user_id)
+
+    filing = db.set_prepared_filing_client_rows(
+        conn, user_id, filing_id, [client_a],
+        pdf_forms.client_row_values([db.get_client(conn, user_id, client_a)]),
+    )
+    conn.commit()
+
+    assert len(pdf_forms.CLIENT_ROW_FIELDS) == 9
+    for i, row in enumerate(pdf_forms.CLIENT_ROW_FIELDS):
+        for field_name in row.values():
+            assert field_name in filing["field_data"]
+        if i:
+            assert filing["field_data"][row["employer"]] == ""
+
+
+def test_more_clients_than_rows_still_fits_the_form(conn):
+    # The nine-row picker this screen used to carry was the only way to
+    # handle a firm with more clients than rows. Add/remove replaces it:
+    # the form holds nine, and swapping one out frees a row for another.
+    user_id = insert_user(conn)
+    client_ids = [_make_client(conn, user_id, "Client %02d" % n) for n in range(1, 13)]
+    filing_id = _make_filing(conn, user_id)
+    first_nine = client_ids[:9]
+
+    filing = db.set_prepared_filing_client_rows(
+        conn, user_id, filing_id, first_nine,
+        pdf_forms.client_row_values([db.get_client(conn, user_id, c) for c in first_nine]),
+    )
+    conn.commit()
+    assert filing["client_row_ids"] == first_nine
+
+    swapped = first_nine[1:] + [client_ids[11]]
+    filing = db.set_prepared_filing_client_rows(
+        conn, user_id, filing_id, swapped,
+        pdf_forms.client_row_values(
+            [db.get_client(conn, user_id, c) for c in swapped],
+            previous_clients=first_nine,
+            previous_field_data=filing["field_data"],
+        ),
+    )
+    conn.commit()
+    assert filing["client_row_ids"] == swapped
+    assert "Client 12" in filing["field_data"][pdf_forms.CLIENT_ROW_FIELDS[8]["employer"]]
