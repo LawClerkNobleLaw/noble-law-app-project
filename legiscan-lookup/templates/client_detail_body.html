@@ -25,6 +25,7 @@
   <div id="bills"></div>
 </div>
 
+<script src="{{BILL_STATUS_SRC}}"></script>
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script src="{{TITLE_CASE_SRC}}"></script>
 <script src="{{ROW_MENU_SRC}}"></script>
@@ -124,11 +125,11 @@ function renderBills(bills) {
         <tr>
           <td class="chamber">${b.state} ${b.bill_number}</td>
           <td>${b.title || ''}</td>
-          <td>${b.status_label ? `<span class="status-badge">${b.status_label}</span>` : ''}</td>
+          <td>${statusBadgeHtml(b.status_label)}</td>
           <td>${positionSelect(b.bill_id, b.position || 'watch')}</td>
           <td class="row-menu">
-            ${b.url ? `<a class="secondary" href="${b.url}" target="_blank" rel="noopener" style="margin-right:0.4rem">View</a>` : ''}
-            <a class="secondary" href="/report?bill_id=${b.bill_id}&from_label=${encodeURIComponent(currentClientName)}&from_href=${encodeURIComponent('/clients/detail?id=' + clientId)}" style="margin-right:0.4rem">Report</a>
+            <a class="secondary" href="/report?bill_id=${b.bill_id}&from_label=${encodeURIComponent(currentClientName)}&from_href=${encodeURIComponent('/clients/detail?id=' + clientId)}" style="margin-right:0.4rem">Bill report</a>
+            ${b.url ? `<a class="secondary" href="${b.url}" target="_blank" rel="noopener" style="margin-right:0.4rem">LegiScan ↗</a>` : ''}
             <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'bill-${b.bill_id}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-bill-${b.bill_id}">
               <svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="3" r="1.6"/><circle cx="7" cy="7" r="1.6"/><circle cx="7" cy="11" r="1.6"/></svg>
             </button>
@@ -141,6 +142,7 @@ function renderBills(bills) {
       </tbody>
     </table>
     </div>
+    ${statusLegendHtml(bills.map(b => b.status_label))}
   `;
 }
 

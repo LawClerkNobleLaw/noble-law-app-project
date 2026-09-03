@@ -22,6 +22,7 @@
 <div id="error" role="alert" aria-live="assertive"></div>
 <div id="results"></div>
 
+<script src="{{BILL_STATUS_SRC}}"></script>
 <script>
 const form = document.getElementById('f');
 const resultsEl = document.getElementById('results');
@@ -70,17 +71,11 @@ async function runSearch(q, page) {
 
 // LegiScan's search doesn't return a coded status the way getBill does
 // (see shape_bill() in legiscan_client.py) — just each result's own
-// last_action text, same keyword-match idea as milestoneClass()
-// elsewhere in this app, just condensed to one current-state label
-// instead of per-row history categories.
-function statusLabel(lastAction) {
-  const a = (lastAction || '').toLowerCase();
-  if (a.includes('chaptered') || a.includes('approved by the governor')) return 'Passed';
-  if (a.includes('vetoed')) return 'Vetoed';
-  if (a.includes('died') || a.includes('failed')) return 'Failed';
-  if (a.includes('introduced')) return 'Introduced';
-  return 'In progress';
-}
+// last_action text. That text is mapped into the same status words
+// every other screen in this app uses (see bill_status.js), and the
+// pill it produces marks itself as inferred, so a search row and the
+// bill page it opens no longer describe the same bill in two different
+// vocabularies.
 
 function snippet(title) {
   if (!title) return '';
@@ -106,18 +101,20 @@ function renderResults(data) {
     <tr class="row-link" onclick="window.location.href='/report?bill_id=${r.bill_id}&from_label=Lookup&from_href=%2Flookup'">
       <td><a href="/report?bill_id=${r.bill_id}&from_label=Lookup&from_href=%2Flookup">${r.bill_number}</a></td>
       <td>${snippet(r.title)}</td>
-      <td><span class="status-badge">${statusLabel(r.last_action)}</span></td>
+      <td>${statusBadgeHtml(billStatusFromAction(r.last_action).label, { inferred: true })}</td>
       <td class="date">${r.last_action_date || ''}</td>
     </tr>
   `).join('');
   const count = data.count || rows.length;
   const hasMore = data.page_total && Number(data.page) < Number(data.page_total);
+  const legend = statusLegendHtml(rows.map(r => billStatusFromAction(r.last_action).label));
   resultsEl.innerHTML = `
     <div class="panel">
       <div class="panel-head"><div class="sub" style="margin:0">${count.toLocaleString()} bill${count === 1 ? '' : 's'} match — showing page ${data.page || 1} of ${data.page_total || 1}</div></div>
       <div style="overflow-x:auto">
       <table><thead><tr><th>Bill</th><th>Title</th><th>Status</th><th>Last action</th></tr></thead><tbody>${rowsHtml}</tbody></table>
       </div>
+      ${legend}
     </div>
     ${hasMore ? '<div style="text-align:center;margin-top:1rem"><button type="button" class="secondary" id="next-page-btn">Next page →</button></div>' : ''}
   `;

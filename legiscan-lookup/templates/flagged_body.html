@@ -2,7 +2,7 @@
 <div class="page-head">
   <div>
     <h1>Flagged Bills</h1>
-    <p class="sub">Bills you've personally flagged — stored and re-checked daily the same way the shared watch list is, just scoped to your account.</p>
+    <p class="sub">Bills you're tracking. Rechecked every morning.</p>
   </div>
   <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
     <a href="/flagged/calendar" class="secondary">Hearing calendar →</a>
@@ -42,6 +42,7 @@
 </div>
 
 <script src="{{HEARING_TIME_SRC}}"></script>
+<script src="{{BILL_STATUS_SRC}}"></script>
 <script src="{{CLIENT_QUICKADD_SRC}}"></script>
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script src="{{TITLE_CASE_SRC}}"></script>
@@ -105,7 +106,13 @@ function firstClientName(r) {
 // db._next_hearings_for_bills) so the countdown is measured from
 // California's date, not the browser's. null means nothing scheduled.
 function daysUntilNext(r) {
-  return r.next_hearing ? r.next_hearing.days_until : null;
+  if (r.next_hearing) return r.next_hearing.days_until;
+  // Same fallback the Next action cell prints: a bill with no scheduled
+  // hearing but a deadline the user set themselves still has a date to
+  // be late for, and sorting it in with the rest is the whole point of
+  // having entered it.
+  if (r.amend_by_days_until !== null && r.amend_by_days_until !== undefined) return r.amend_by_days_until;
+  return null;
 }
 
 function sortRows(rows) {
@@ -350,6 +357,23 @@ function nextActionCell(r) {
       ${chip}
     `;
   }
+  // The user's own amendment deadline (see the Current Status card on
+  // the bill report, where it's entered). Only reached when LegiScan has
+  // nothing scheduled — a real hearing outranks a personal reminder —
+  // and labelled as the reminder it is rather than dressed up as a
+  // legislative date.
+  if (r.amend_by_days_until !== null && r.amend_by_days_until !== undefined) {
+    const days = r.amend_by_days_until;
+    let chip = '';
+    if (days === 0) chip = '<span class="next-chip now">Today</span>';
+    else if (days === 1) chip = '<span class="next-chip now">Tomorrow</span>';
+    else if (days <= 7) chip = `<span class="next-chip">In ${days} days</span>`;
+    return `
+      <div class="next-when">${fmtShortDate(r.amend_by_date)}</div>
+      <div class="next-where">Your amendment deadline</div>
+      ${chip}
+    `;
+  }
   const status = (r.status_label || '').toLowerCase();
   if (status === 'enrolled') {
     return '<div class="next-when">Awaiting signature</div><div class="next-where">Sent to the Governor</div>';
@@ -428,12 +452,12 @@ function render(rows) {
               </div>
             </div>
             <div class="row-actions">
-              ${r.url ? `<a class="secondary" href="${r.url}" target="_blank" rel="noopener">View</a>` : ''}
-              <a class="secondary" href="/report?bill_id=${r.bill_id}">Report</a>
+              <a class="secondary" href="/report?bill_id=${r.bill_id}">Bill report</a>
+              ${r.url ? `<a class="secondary" href="${r.url}" target="_blank" rel="noopener">LegiScan ↗</a>` : ''}
             </div>
           </td>
           <td class="next-action">${nextActionCell(r)}</td>
-          <td>${r.status_label ? `<span class="status-badge">${r.status_label}</span>` : ''}</td>
+          <td>${statusBadgeHtml(r.status_label)}</td>
           <td class="col-change">${lastChangeCell(r)}</td>
           <td>${billClientCellHtml(r.bill_id)}</td>
         </tr>
@@ -441,6 +465,7 @@ function render(rows) {
       </tbody>
     </table>
     </div>
+    ${statusLegendHtml(rows.map(r => r.status_label))}
   `;
 }
 
