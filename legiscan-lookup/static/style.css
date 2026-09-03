@@ -486,6 +486,12 @@
   .position-badge.support { background: var(--good-soft); color: var(--good); }
   .position-badge.oppose { background: var(--error-soft); color: var(--error); }
   .position-badge.watch { background: var(--accent-soft); color: var(--accent); }
+  /* A stance that no longer applies: the one it was changed away from,
+     and the "removed from the bill" terminus. Both are history, so
+     neither carries the live colour — an Oppose that ended in June
+     shouldn't be as loud on the page as the Oppose in force today. */
+  .position-badge.was { background: transparent; color: var(--slate); border: 1px solid var(--rule); font-weight: 600; }
+  .position-badge.removed { background: transparent; color: var(--slate); border: 1px dashed var(--rule); }
   select.position-select.support { border-color: var(--good); color: var(--good); }
   select.position-select.oppose { border-color: var(--error); color: var(--error); }
   select.position-select.watch { border-color: var(--accent); color: var(--accent); }
@@ -1067,3 +1073,57 @@
     .icon-btn.app-topbar-menu-btn { display: flex; }
     .stat-grid { grid-template-columns: 1fr 1fr; }
   }
+
+    /* ── Position history ──
+     Append-only record of every stance change (see position_history in
+     schema.sql), on the bill report and the client record. An ordered
+     list rather than a table: each entry is one sentence with a
+     timestamp under it, and four columns of mostly-empty cells was the
+     wrong shape for that. */
+  ol.position-history { list-style: none; margin: 0; padding: 0; }
+  .position-history-row { padding: var(--space-2) 0; border-bottom: 1px solid var(--rule); }
+  .position-history-row:last-child { border-bottom: 0; }
+  .position-history-what { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  .position-history-subject { font-weight: 600; font-size: 0.85rem; }
+  .position-arrow { color: var(--slate); }
+  .position-history-when { font-size: 0.74rem; color: var(--slate); margin-top: 0.15rem; }
+
+  /* "In force since <date>" under a client chip on the bill report —
+     under it, not in it: the chip is already a name, a dropdown and a
+     remove button wide, and a fourth control in that row pushed the
+     client's name onto two lines. */
+  .client-assignment { margin-bottom: 0.55rem; }
+  .client-assignment .client-chip { margin-bottom: 0; }
+  .chip-effective { display: flex; align-items: center; gap: 0.35rem; margin: 0.25rem 0 0 0.65rem; }
+  .chip-effective label { font-size: 0.7rem; color: var(--slate); }
+  .chip-effective input[type="date"] { font-size: 0.72rem; padding: 0.15rem 0.35rem; width: auto; }
+
+  /* ── Toast ──
+     One at a time, bottom left, out of the way of the sidebar and of
+     anything a page pins to its own bottom right. Carries the undo for a
+     position change (see toast.js), so it has to be reachable by
+     keyboard and readable long enough to act on. */
+  .toast {
+    position: fixed; left: 1rem; bottom: 1rem; z-index: 60;
+    display: flex; align-items: center; gap: var(--space-3);
+    max-width: min(28rem, calc(100vw - 2rem));
+    background: var(--ink); color: var(--surface);
+    padding: var(--space-3) 0.9rem; border-radius: var(--radius-md);
+    box-shadow: 0 10px 30px -12px rgba(0,0,0,0.5);
+    font-size: 0.82rem;
+  }
+  .toast-text { flex: 1; }
+  .toast-action {
+    background: transparent; color: inherit; border: 1px solid currentColor;
+    font-size: 0.75rem; font-weight: 700; padding: 0.2rem 0.55rem;
+    border-radius: var(--radius-pill); cursor: pointer; flex: none;
+  }
+  .toast-close {
+    background: transparent; color: inherit; border: 0; font-size: 1rem;
+    line-height: 1; padding: 0 0.15rem; cursor: pointer; opacity: 0.7; flex: none;
+  }
+  .toast-close:hover { opacity: 1; }
+  @media (prefers-reduced-motion: no-preference) {
+    .toast { animation: toast-in 140ms ease-out; }
+  }
+  @keyframes toast-in { from { transform: translateY(0.5rem); opacity: 0; } to { transform: none; opacity: 1; } }

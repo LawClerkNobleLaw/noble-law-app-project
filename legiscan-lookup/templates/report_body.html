@@ -6,6 +6,8 @@
 
 <script src="{{HEARING_TIME_SRC}}"></script>
 <script src="{{BILL_STATUS_SRC}}"></script>
+<script src="{{TOAST_SRC}}"></script>
+<script src="{{POSITION_HISTORY_SRC}}"></script>
 <script src="{{BILL_TABLES_SRC}}"></script>
 <script src="{{CLIENT_QUICKADD_SRC}}"></script>
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
@@ -69,6 +71,7 @@ let allClients = [];
 initBillClients({
   allClients: () => allClients,
   assignedClients: () => (currentReport ? (currentReport.assigned_clients || []) : []),
+  billLabel: () => (currentReport ? `${currentReport.state} ${currentReport.bill_number}` : ''),
   onError: (message) => {
     errorEl.textContent = message || '';
     errorEl.className = message ? 'show' : '';
@@ -302,10 +305,21 @@ function render(r) {
       <div class="panel-head"><div class="title">Assigned client${(r.assigned_clients || []).length === 1 ? '' : 's'}</div></div>
       <div style="padding:1rem 1.15rem">
         ${r.flagged
-          ? billClientCellHtml(r.bill_id)
+          ? billClientCellHtml(r.bill_id, { showEffectiveDate: true })
           : '<p class="empty">Flag this bill to assign it to a client.</p>'}
       </div>
     </div>
+
+    ${r.flagged && (r.position_history || []).length ? `
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-head">
+        <div>
+          <div class="title">Position history</div>
+          <div class="sub">Every change to a client's stance on this bill, newest first.</div>
+        </div>
+      </div>
+      <div style="padding:0.4rem 1.15rem 1rem">${positionHistoryHtml(r.position_history)}</div>
+    </div>` : ''}
 
     ${r.flagged ? `
     <div class="panel" style="margin-top:1rem">

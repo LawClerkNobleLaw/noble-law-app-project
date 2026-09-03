@@ -43,6 +43,8 @@
 
 <script src="{{HEARING_TIME_SRC}}"></script>
 <script src="{{BILL_STATUS_SRC}}"></script>
+<script src="{{TOAST_SRC}}"></script>
+<script src="{{POSITION_HISTORY_SRC}}"></script>
 <script src="{{CLIENT_QUICKADD_SRC}}"></script>
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script src="{{TITLE_CASE_SRC}}"></script>
@@ -94,6 +96,10 @@ initBillClients({
   onChanged: (updatedClients) => {
     if (updatedClients) allClients = updatedClients;
     load();
+  },
+  billLabel: (billId) => {
+    const row = currentRows.find(r => r.bill_id === billId);
+    return row ? `${row.state} ${row.bill_number}` : '';
   },
 });
 
