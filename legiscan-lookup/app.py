@@ -90,6 +90,7 @@ import accounts
 import config
 import db
 import disclosure_fields
+import letter_drafts
 import mailer
 import pdf_forms
 import refresh_watchlist
@@ -721,6 +722,10 @@ SHELL_NAV_ITEMS = [
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
      '<path d="M2.3 11.7l1.8-.4L11 4.4a1 1 0 000-1.4l-.9-.9a1 1 0 00-1.4 0L1.8 9l-.4 1.8z"/></svg>',
      [
+         ("/draft/letters", "Letters",
+          '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+          '<rect x="1.5" y="3" width="11" height="8" rx="1"/>'
+          '<path d="M1.9 3.6L7 7.8l5.1-4.2" stroke-linejoin="round"/></svg>'),
          ("/disclosures", "Disclosures",
           '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
           '<rect x="3" y="1.5" width="8" height="11" rx="1"/>'
@@ -1251,6 +1256,28 @@ REPORT_BODY = _render_template(
 )
 
 REPORT_PAGE = page("Bill report — Rotunda", "/flagged", REPORT_BODY)
+
+
+# Draft > Letters — the position letter a lobbyist actually hands to a
+# member's office. The Draft section used to contain no drafting: its
+# only child was Disclosures, so the one deliverable that justifies
+# keeping position data in this app had to be written somewhere else,
+# from data this app was already holding. See letter_drafts.py for what
+# a new one starts out saying, and the letters table in schema.sql for
+# the two boundaries: nothing is regenerated over what the user wrote,
+# and nothing is sent.
+LETTERS_BODY = _render_template(
+    "letters_body.html",
+    CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
+    POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
+    TITLE_CASE_SRC=TITLE_CASE_SRC,
+)
+
+LETTERS_PAGE = page("Letters — Rotunda", "/draft/letters", LETTERS_BODY)
+
+LETTER_EDIT_BODY = _render_template("letter_edit_body.html")
+
+LETTER_EDIT_PAGE = page("Letter — Rotunda", "/draft/letters", LETTER_EDIT_BODY)
 
 
 # "Prepare my disclosure form" — /disclosures (pick a form, generate a
@@ -2166,6 +2193,54 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        if parsed.path == "/draft/letters":
+            if not self._require_user_for_page():
+                return
+            self._send_html(200, LETTERS_PAGE)
+            return
+
+        if parsed.path == "/draft/letters/edit":
+            if not self._require_user_for_page():
+                return
+            self._send_html(200, LETTER_EDIT_PAGE)
+            return
+
+        if parsed.path == "/api/letters":
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to see your letters.")
+                if not user_id:
+                    return
+                bill_id = (qs.get("bill_id") or [""])[0]
+                client_id = (qs.get("client_id") or [""])[0]
+                self._send_json(200, db.list_letters(
+                    conn, user_id,
+                    bill_id=int(bill_id) if bill_id.isdigit() else None,
+                    client_id=int(client_id) if client_id.isdigit() else None,
+                ))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/letters/one":
+            letter_id = (qs.get("id") or [""])[0]
+            if not letter_id.isdigit():
+                self._send_json(400, {"error": "Missing or invalid id parameter."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to read your letters.")
+                if not user_id:
+                    return
+                letter = db.get_letter(conn, user_id, int(letter_id))
+                if not letter:
+                    self._send_json(404, {"error": "No letter with that ID."})
+                    return
+                self._send_json(200, letter)
+            finally:
+                conn.close()
+            return
+
         if parsed.path == "/disclosures":
             if not self._require_user_for_page():
                 return
@@ -2532,6 +2607,90 @@ class Handler(BaseHTTPRequestHandler):
                 db.flag_bill(conn, user_id, bill_id)
                 conn.commit()
                 self._send_json(200, {"status": "flagged"})
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/letters":
+            # Start a letter. The seed is built server-side from the bill
+            # report this user can already see (see letter_drafts) rather
+            # than assembled in the browser — the wording of the thing
+            # this app puts a lobbyist's name under belongs in one place
+            # with the rest of the document domain, not in a template.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            bill_id = body.get("bill_id")
+            if not bill_id:
+                self._send_json(400, {"error": "Pick a bill to write about."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to draft a letter.")
+                if not user_id:
+                    return
+                report = db.get_bill_report(conn, user_id, int(bill_id))
+                if not report:
+                    self._send_json(404, {"error": "No bill found with that ID."})
+                    return
+                client_id = body.get("client_id")
+                client = None
+                if client_id:
+                    client = next(
+                        (c for c in report.get("assigned_clients", []) if c["id"] == int(client_id)),
+                        None,
+                    )
+                    if not client:
+                        self._send_json(400, {"error": "That client isn't assigned to this bill."})
+                        return
+                # The soonest hearing, which is what a letter written
+                # ahead of a hearing names. get_bill_report already
+                # filters these to date >= today and orders them.
+                hearing = (report.get("upcoming_hearings") or [None])[0]
+                seed = letter_drafts.build_seed(
+                    report, client,
+                    position=(client or {}).get("position"),
+                    hearing=hearing,
+                    profile=accounts.get_profile(conn, user_id),
+                )
+                letter_id = db.create_letter(conn, user_id, {
+                    "bill_id": report["bill_id"],
+                    "bill_label": f"{report.get('state') or ''} {report.get('bill_number') or ''}".strip(),
+                    "client_id": (client or {}).get("id"),
+                    "client_name": (client or {}).get("name"),
+                    "position": (client or {}).get("position"),
+                    "subject": seed["subject"],
+                    "body": seed["body"],
+                })
+                conn.commit()
+                self._send_json(200, {"id": letter_id})
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/letters/save":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            letter_id = body.get("id")
+            if not letter_id:
+                self._send_json(400, {"error": "Missing id."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to edit your letters.")
+                if not user_id:
+                    return
+                if not db.update_letter(conn, user_id, int(letter_id),
+                                        body.get("subject"), body.get("body")):
+                    self._send_json(404, {"error": "No letter with that ID."})
+                    return
+                conn.commit()
+                self._send_json(200, db.get_letter(conn, user_id, int(letter_id)))
             finally:
                 conn.close()
             return
@@ -3137,6 +3296,25 @@ class Handler(BaseHTTPRequestHandler):
     def _do_DELETE(self):
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
+
+        if parsed.path == "/api/letters":
+            letter_id = (qs.get("id") or [""])[0]
+            if not letter_id.isdigit():
+                self._send_json(400, {"error": "Missing or invalid id parameter."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage your letters.")
+                if not user_id:
+                    return
+                if not db.delete_letter(conn, user_id, int(letter_id)):
+                    self._send_json(404, {"error": "No letter with that ID."})
+                    return
+                conn.commit()
+                self._send_json(200, db.list_letters(conn, user_id))
+            finally:
+                conn.close()
+            return
 
         if parsed.path == "/api/saved-searches":
             saved_search_id = (qs.get("id") or [""])[0]

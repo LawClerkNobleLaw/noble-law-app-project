@@ -1348,6 +1348,82 @@ def set_bill_amend_by_date(conn, bill_id, amend_by_date):
     )
 
 
+# ── Position letters — see letter_drafts.py for what a new one is
+# seeded from. Storage only here: this module knows a letter has a
+# subject and a body, not how either is worded. ──
+
+def create_letter(conn, user_id, fields):
+    """Store a new letter. Everything but subject/body is context
+    recorded for later reading — see the letters table comment in
+    schema.sql for why the names are stored beside the ids."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cur = conn.execute(
+        """INSERT INTO letters
+             (user_id, bill_id, bill_label, client_id, client_name, position,
+              subject, body, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (
+            user_id, fields.get("bill_id"), fields.get("bill_label"),
+            fields.get("client_id"), fields.get("client_name"), fields.get("position"),
+            fields.get("subject") or "Untitled letter", fields.get("body") or "",
+            now, now,
+        ),
+    )
+    return cur.lastrowid
+
+
+def update_letter(conn, user_id, letter_id, subject, body):
+    """Only ever the two fields the user types into. The bill/client
+    context is what the letter was written about and doesn't change
+    because someone edited a paragraph."""
+    cur = conn.execute(
+        """UPDATE letters SET subject = ?, body = ?, updated_at = ?
+           WHERE id = ? AND user_id = ?""",
+        (
+            subject or "Untitled letter", body or "",
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            letter_id, user_id,
+        ),
+    )
+    return cur.rowcount > 0
+
+
+def get_letter(conn, user_id, letter_id):
+    row = conn.execute(
+        "SELECT * FROM letters WHERE id = ? AND user_id = ?", (letter_id, user_id)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_letters(conn, user_id, bill_id=None, client_id=None):
+    """Newest-edited first. Filtered by bill for the panel on the bill
+    report, by client for the one on the client record, and unfiltered
+    for Draft > Letters itself."""
+    where = ["user_id = ?"]
+    params = [user_id]
+    if bill_id is not None:
+        where.append("bill_id = ?")
+        params.append(bill_id)
+    if client_id is not None:
+        where.append("client_id = ?")
+        params.append(client_id)
+    rows = conn.execute(
+        f"""SELECT id, bill_id, bill_label, client_id, client_name, position,
+                   subject, created_at, updated_at
+            FROM letters WHERE {' AND '.join(where)}
+            ORDER BY updated_at DESC, id DESC""",
+        tuple(params),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_letter(conn, user_id, letter_id):
+    cur = conn.execute(
+        "DELETE FROM letters WHERE id = ? AND user_id = ?", (letter_id, user_id)
+    )
+    return cur.rowcount > 0
+
+
 # ── "Prepare my disclosure form" — see pdf_forms.py for how field_data
 # actually turns into a filled PDF. Everything here just stores/reads
 # that JSON snapshot and the sign-off state around it. ──

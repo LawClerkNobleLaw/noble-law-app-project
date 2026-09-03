@@ -25,6 +25,11 @@
   <div id="bills"></div>
 </div>
 
+<div class="panel" style="margin-top:1rem" id="letters-panel" hidden>
+  <div class="panel-head"><div class="title">Letters</div></div>
+  <div style="padding:0.4rem 1.15rem 1rem" id="letters"></div>
+</div>
+
 <div class="panel" style="margin-top:1rem" id="history-panel" hidden>
   <div class="panel-head">
     <div>
@@ -167,6 +172,7 @@ async function load() {
     renderClient(data);
     renderBills(data.bills);
     renderHistory(data.position_history);
+    renderLetters();
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';
@@ -227,6 +233,31 @@ function announceChange(billId, fromPosition, toPosition, undoOf) {
       setPosition(billId, el, true);
     },
   });
+}
+
+// One more fetch rather than another field on /api/clients/detail: a
+// letter is its own thing, and the client page shouldn't gain a
+// dependency on the drafting feature just to list what exists.
+async function renderLetters() {
+  const panel = document.getElementById('letters-panel');
+  let letters = [];
+  try {
+    const res = await fetch(`/api/letters?client_id=${clientId}`);
+    if (res.ok) letters = await res.json();
+  } catch (err) { /* The rest of the page is unaffected. */ }
+  panel.hidden = !letters.length;
+  document.getElementById('letters').innerHTML = letters.map(l => `
+    <div class="saved-row" style="padding-left:0;padding-right:0">
+      <div class="saved-main">
+        <a class="saved-name" href="/draft/letters/edit?id=${l.id}">${escapeHtml(l.subject)}</a>
+        <div class="saved-meta">${escapeHtml(l.bill_label || '')}${l.position ? ' · ' + positionLabel(l.position) : ''}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function escapeHtml(text) {
+  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function renderHistory(rows) {
