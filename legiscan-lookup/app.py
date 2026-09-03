@@ -525,6 +525,7 @@ STYLE = STYLE.replace("__BRAND_MARK_SVG_B64__", BRAND_MARK_SVG_B64)
 # JS template literals whose ${...} would otherwise collide with
 # Python's own interpolation. A file has no such rule.
 BILL_TABLES_JS = _read_static_text("js/bill_tables.js")
+HEARING_TIME_JS = _read_static_text("js/hearing_time.js")
 CLIENT_QUICKADD_JS = _read_static_text("js/client_quickadd.js")
 CONFIRM_DELETE_JS = _read_static_text("js/confirm_delete.js")
 TITLE_CASE_JS = _read_static_text("js/title_case.js")
@@ -538,6 +539,7 @@ ROW_MENU_JS = _read_static_text("js/row_menu.js")
 STATIC_ASSETS = {
     "style.css": (STYLE.encode("utf-8"), "text/css; charset=utf-8"),
     "js/bill_tables.js": (BILL_TABLES_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/hearing_time.js": (HEARING_TIME_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/client_quickadd.js": (CLIENT_QUICKADD_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/confirm_delete.js": (CONFIRM_DELETE_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/title_case.js": (TITLE_CASE_JS.encode("utf-8"), JS_CONTENT_TYPE),
@@ -546,6 +548,7 @@ STATIC_ASSETS = {
 
 STYLE_HREF = _asset_url("style.css")
 BILL_TABLES_SRC = _asset_url("js/bill_tables.js")
+HEARING_TIME_SRC = _asset_url("js/hearing_time.js")
 CLIENT_QUICKADD_SRC = _asset_url("js/client_quickadd.js")
 CONFIRM_DELETE_SRC = _asset_url("js/confirm_delete.js")
 TITLE_CASE_SRC = _asset_url("js/title_case.js")
@@ -1105,7 +1108,10 @@ FLAGGED_PAGE = page("My Flagged Bills — Rotunda", "/flagged", FLAGGED_BODY)
 # current="/flagged" for app_shell() (same convention REPORT_BODY
 # already uses) so the sidebar still highlights Flagged Bills, since
 # this is a view onto that same set of bills, not a separate section.
-CALENDAR_BODY = _render_template("calendar_body.html")
+CALENDAR_BODY = _render_template(
+    "calendar_body.html",
+    HEARING_TIME_SRC=HEARING_TIME_SRC,
+)
 
 CALENDAR_PAGE = page("Hearing Calendar — Rotunda", "/flagged", CALENDAR_BODY)
 
@@ -1161,6 +1167,7 @@ CLIENT_DETAIL_PAGE = page("Client — Rotunda", "/clients", CLIENT_DETAIL_BODY)
 REPORT_BODY = _render_template(
     "report_body.html",
     BILL_TABLES_SRC=BILL_TABLES_SRC,
+    HEARING_TIME_SRC=HEARING_TIME_SRC,
     CLIENT_QUICKADD_SRC=CLIENT_QUICKADD_SRC,
 )
 

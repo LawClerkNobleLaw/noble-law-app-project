@@ -3,7 +3,7 @@
 <div class="page-head">
   <div>
     <h1>Hearing calendar</h1>
-    <p class="sub">Hearings across the bills you've flagged. Upcoming first — past hearings are still here, behind the toggle.</p>
+    <p class="sub">Hearings across the bills you've flagged. Upcoming first — past hearings are still here, behind the toggle. All times Pacific.</p>
   </div>
 </div>
 
@@ -12,6 +12,7 @@
 <div class="filter-tabs" id="tabs"></div>
 <div id="calendar"></div>
 
+<script src="{{HEARING_TIME_SRC}}"></script>
 <script>
 const calendarEl = document.getElementById('calendar');
 const tabsEl = document.getElementById('tabs');
@@ -109,7 +110,7 @@ function render() {
               <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2.5" width="10" height="9.5" rx="1"/><path d="M2 5.5h10M5 1.5v2M9 1.5v2" stroke-linecap="round"/></svg>
             </div>
             <div style="flex:1;min-width:0">
-              <div class="bill-title">${h.event_type || 'Hearing'}${h.time ? ' · ' + h.time : ''}</div>
+              <div class="bill-title">${h.event_type || 'Hearing'} · ${hearingTimeLabel(h.time)}</div>
               <div class="bill-id"><a href="/report?bill_id=${h.bill_id}">${h.state} ${h.bill_number}</a> — ${h.title || ''}</div>
               ${(h.location || h.description) ? `<div class="sub" style="margin:0.3rem 0 0;font-size:0.78rem">${[h.location, h.description].filter(Boolean).join(' — ')}</div>` : ''}
             </div>
