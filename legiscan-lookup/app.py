@@ -1176,6 +1176,24 @@ FLAGGED_BODY = _render_template(
 FLAGGED_PAGE = page("My Flagged Bills — Rotunda", "/flagged", FLAGGED_BODY)
 
 
+# Unflagging used to DELETE the flagged_bills row (and every
+# bill_client_links row hanging off it); P1-16 asked for archive over
+# delete, so here is the somewhere-to-see-it-and-get-it-back that fix
+# needs — otherwise "archived" is invisible and indistinguishable from
+# gone. Kept as current="/flagged" for the same reason CALENDAR_PAGE and
+# SPONSOR_ROLLUP_PAGE are: a view onto the same set of bills, not a
+# separate nav section.
+ARCHIVED_BODY = _render_template(
+    "archived_body.html",
+    BILL_STATUS_SRC=BILL_STATUS_SRC,
+    TOAST_SRC=TOAST_SRC,
+    POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
+    TITLE_CASE_SRC=TITLE_CASE_SRC,
+)
+
+ARCHIVED_PAGE = page("Archived Bills — Rotunda", "/flagged", ARCHIVED_BODY)
+
+
 # Every scheduled hearing across every flagged bill, in one place,
 # grouped by day. Aggregation only — db.list_hearings_for_flagged_bills
 # just joins tables the daily refresh job already fills in
@@ -2078,6 +2096,28 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # P1-16: archived flags, listed separately rather than folded into
+        # /api/flagged with a status field — an archived bill is off every
+        # other list this app builds (the dashboard, the calendar, the
+        # sponsor rollup, the digest), so its own list is where "did we
+        # actually lose anything" gets answered.
+        if parsed.path == "/api/flagged/archived":
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to view archived bills.")
+                if not user_id:
+                    return
+                self._send_json(200, db.list_archived_bills(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/flagged/archived":
+            if not self._require_user_for_page():
+                return
+            self._send_html(200, ARCHIVED_PAGE)
+            return
+
         if parsed.path == "/flagged/calendar":
             if not self._require_user_for_page():
                 return
@@ -2800,6 +2840,35 @@ class Handler(BaseHTTPRequestHandler):
                 db.flag_bill(conn, user_id, bill_id)
                 conn.commit()
                 self._send_json(200, {"status": "flagged"})
+            finally:
+                conn.close()
+            return
+
+        # Restoring an archived bill (P1-16) is NOT the same request as
+        # flagging a new one above: there's no fresh LegiScan detail to
+        # fetch (the bill's already in `bills`, refreshed daily right up
+        # until it was archived) and no client to pick (bill_client_links
+        # never left). Reusing /api/flag POST would mean every restore
+        # waits on a LegiScan round trip and fails outright if that round
+        # trip does — for an action that's otherwise pure local bookkeeping.
+        if parsed.path == "/api/flag/restore":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            bill_id = body.get("bill_id")
+            if not bill_id:
+                self._send_json(400, {"error": "Missing bill_id."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to restore flagged bills.")
+                if not user_id:
+                    return
+                db.flag_bill(conn, user_id, bill_id)  # clears archived_at — see its ON CONFLICT clause
+                conn.commit()
+                self._send_json(200, {"status": "restored"})
             finally:
                 conn.close()
             return
@@ -3723,7 +3792,9 @@ class Handler(BaseHTTPRequestHandler):
                 user_id = self._require_user_for_api(conn, "Sign in to manage flagged bills.")
                 if not user_id:
                     return
-                db.unflag_bill(conn, user_id, bill_id)
+                # Archives, doesn't delete (P1-16) — see archive_flagged_bill.
+                # Restoring is /api/flag POST re-flagging the same bill_id.
+                db.archive_flagged_bill(conn, user_id, bill_id)
                 conn.commit()
                 self._send_json(200, db.list_flagged_bills(conn, user_id))
             finally:
