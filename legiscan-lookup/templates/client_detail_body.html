@@ -134,17 +134,17 @@ function renderBills(bills) {
     return;
   }
   billsEl.innerHTML = `
-    <div style="overflow-x:auto">
-    <table>
-      <thead><tr><th>Bill</th><th>Title</th><th>Status</th><th>Position</th><th></th></tr></thead>
+    <div class="table-scroll">
+    <table class="bill-cards">
+      <thead><tr><th class="col-bill">Bill</th><th class="col-title">Title</th><th class="col-status">Status</th><th class="col-position">Position</th><th class="col-rowmenu"></th></tr></thead>
       <tbody>
       ${bills.map(b => `
         <tr>
-          <td class="chamber">${b.state} ${b.bill_number}</td>
-          <td>${b.title || ''}</td>
-          <td>${statusBadgeHtml(b.status_label)}</td>
-          <td>${positionSelect(b.bill_id, b.position || 'watch')}</td>
-          <td class="row-menu">
+          <td class="col-bill chamber">${b.state} ${b.bill_number}</td>
+          <td class="col-title">${b.title || ''}</td>
+          <td class="col-status">${statusBadgeHtml(b.status_label)}</td>
+          <td class="col-position">${positionSelect(b.bill_id, b.position || 'watch')}</td>
+          <td class="col-rowmenu row-menu">
             <a class="secondary" href="/report?bill_id=${b.bill_id}&from_label=${encodeURIComponent(currentClientName)}&from_href=${encodeURIComponent('/clients/detail?id=' + clientId)}" style="margin-right:0.4rem">Bill report</a>
             ${b.url ? `<a class="secondary" href="${b.url}" target="_blank" rel="noopener" style="margin-right:0.4rem">LegiScan ↗</a>` : ''}
             <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'bill-${b.bill_id}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-bill-${b.bill_id}">
