@@ -600,3 +600,32 @@ CREATE TABLE IF NOT EXISTS digest_mutes (
   created_at TEXT,
   PRIMARY KEY (user_id, bill_id)
 );
+
+-- ── Saved views on the flagged list ───────────────────────────────────
+--
+-- "Everything for UCSA before Thursday's call" and "every bill where any
+-- client is Oppose" are the two questions this firm actually asks of its
+-- flagged list, and both are compositions of filters rather than places
+-- in the app. Once the filter state lives in the URL, saving a view is
+-- saving that query string under a name.
+--
+-- `query` is deliberately opaque to SQLite: it is the page's own query
+-- string (client=3&position=oppose&urgency=week&group=client), parsed
+-- and applied entirely in the browser, the same way the filters are.
+-- Storing structured columns per dimension would mean a migration every
+-- time the rail grows another control, and the server does not filter
+-- this list — it hands over every flagged row and the page narrows it.
+--
+-- Org-owned like saved_searches: a view is a way of reading the firm's
+-- own work, and "the Thursday UCSA call" is a firm's meeting, not one
+-- person's bookmark. Scoped through the creating user, same as
+-- everything else — see the ORG_SCOPE note in db.py.
+CREATE TABLE IF NOT EXISTS saved_views (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id),
+  name       TEXT NOT NULL,
+  query      TEXT NOT NULL,
+  created_at TEXT,
+  UNIQUE(user_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_saved_views_user ON saved_views(user_id);

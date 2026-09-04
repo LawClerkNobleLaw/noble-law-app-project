@@ -1213,6 +1213,39 @@
   .filter-chip .x { font-size: 0.9rem; line-height: 1; opacity: 0.7; }
   .filter-clear { font-size: 0.75rem; }
 
+  /* ── Flagged list: views, grouping, export (P2-24) ──
+     The rail above reuses .search-filters/.filter-group/.filter-tab
+     wholesale — same component, second page. Only what the flagged list
+     adds is here. */
+
+  /* A saved view is a filter composition under a name, so it reads as a
+     filter tab with a delete beside it rather than as a list item — it
+     does the same thing the tabs above do when clicked. */
+  .saved-views { gap: var(--space-3); }
+  .saved-view { display: inline-flex; align-items: center; gap: 0.15rem; }
+  .saved-view .icon-btn { font-size: 0.85rem; padding: 0 0.2rem; }
+
+  .group-toggle {
+    display: flex; align-items: center; gap: 0.4rem;
+    font-size: 0.75rem; color: var(--slate); cursor: pointer; white-space: nowrap;
+  }
+  .group-toggle input { margin: 0; accent-color: var(--accent-solid); }
+
+  /* One section per client. The heading is a band rather than a table
+     caption because each section is its own scrollable table — the
+     grouped view is really N small tables, so the client's name has to
+     sit outside the overflow container to stay put while a wide row
+     scrolls under it. */
+  .row-group { border-bottom: 1px solid var(--rule); }
+  .row-group:last-child { border-bottom: 0; }
+  .row-group-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
+    padding: var(--space-3) 1.15rem var(--space-2);
+    background: var(--accent-soft);
+  }
+  .row-group-name { font-size: 0.85rem; font-weight: 700; }
+  .row-group-count { font-size: 0.74rem; color: var(--slate); }
+
   /* Why this row is here. LegiScan matches on full bill text but returns
      none of it, so a title can share no word with the query (live, that
      is ~79% of a broad result set). Where a query term IS in the title

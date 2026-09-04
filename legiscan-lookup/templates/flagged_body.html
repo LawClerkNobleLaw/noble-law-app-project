@@ -7,11 +7,11 @@
   <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
     <a href="/flagged/calendar" class="secondary">Hearing calendar →</a>
     <a href="/flagged/sponsors" class="secondary">Sponsors &amp; votes →</a>
-    <div class="filter-tabs" id="tabs"></div>
   </div>
 </div>
 <div id="error" role="alert" aria-live="assertive"></div>
 <div class="stat-grid" id="stats"></div>
+<div id="rail"></div>
 
 <div class="panel">
   <div class="panel-head">
@@ -35,6 +35,12 @@
           <option value="activity">Most recent activity</option>
         </select>
       </label>
+      <label class="group-toggle" title="One section per client — a bill assigned to three clients appears under all three">
+        <input type="checkbox" id="group-by-client">
+        Group by client
+      </label>
+      <button type="button" class="secondary" id="export-csv" onclick="exportCsv()"
+              title="Download the rows below, exactly as filtered, as a spreadsheet">Export CSV</button>
     </div>
   </div>
   <div id="loading" class="show" style="padding:1rem 1.15rem"><span class="spinner"></span>Loading…</div>
@@ -58,9 +64,47 @@ const tabsEl = document.getElementById('tabs');
 const statsEl = document.getElementById('stats');
 const searchEl = document.getElementById('flagged-search');
 const sortSelectEl = document.getElementById('sort-by');
+const railEl = document.getElementById('rail');
+const groupEl = document.getElementById('group-by-client');
 let allClients = [];
 let currentRows = [];
-let activeFilter = 'all';
+
+/* ── Composable filters (P2-24) ────────────────────────────────────────
+ *
+ * The list used to offer one text box, four sorts, and five mutually
+ * exclusive tabs (All / Hearing this week / Support / Oppose / Watch).
+ * That answers neither of the two questions this firm actually asks it:
+ * "everything for UCSA before Thursday's call" needs a client filter,
+ * and "every bill where any client is Oppose" needs the client and
+ * position dimensions to compose rather than replace each other.
+ *
+ * So: four independent multi-select dimensions, faceted counts, the
+ * whole state in the URL, and the same rail component the search page
+ * already uses (see .search-filters in style.css). Filtering stays
+ * entirely client-side — GET /api/flagged already returns every row.
+ *
+ * Client and position compose ON THE SAME ASSIGNMENT, which is the one
+ * place this differs from the search page's independent groups. "UCSA"
+ * + "Oppose" means bills UCSA opposes, not bills where UCSA is a client
+ * and somebody happens to oppose. Getting that wrong would answer a
+ * plausible question with a wrong list, which is worse than answering
+ * neither.
+ */
+const UNASSIGNED = '__none__';
+
+const URGENCY_BUCKETS = [
+  ['overdue', 'Today or overdue', d => d !== null && d <= 0],
+  ['week', 'Within 7 days', d => d !== null && d > 0 && d <= 7],
+  ['fortnight', '8–14 days', d => d !== null && d > 7 && d <= 14],
+  ['later', 'More than 2 weeks', d => d !== null && d > 14],
+  [UNASSIGNED, 'Nothing scheduled', d => d === null],
+];
+
+let filters = {
+  client: new Set(), position: new Set(), urgency: new Set(), committee: new Set(),
+};
+let groupByClient = false;
+let savedViews = [];
 
 // A pure front-end re-sort of whatever GET /api/flagged already
 // returned (currentRows) — no extra API call/param, since the whole
@@ -102,6 +146,13 @@ initBillClients({
     return row ? `${row.state} ${row.bill_number}` : '';
   },
 });
+
+// Same three-character escape the other pages carry (profile, lookup,
+// letters). Client names and committee names both reach the rail as
+// text from the database now, so this page needs it too.
+function escapeText(text) {
+  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 function firstClientName(r) {
   const names = (r.assigned_clients || []).map(c => c.name).sort((a, b) => a.localeCompare(b));
@@ -198,17 +249,92 @@ function renderStats() {
   `;
 }
 
-const FILTERS = [['all', 'All'], ['urgent', 'Hearing this week'], ['support', 'Support'], ['oppose', 'Oppose'], ['watch', 'Watch']];
+/* ── The four dimensions ───────────────────────────────────────────────
+ *
+ * Each one reads values off a row. client and position are multi-valued
+ * (a bill can carry three clients at three positions); urgency and
+ * committee are single-valued.
+ *
+ * Committee comes out of the next hearing's description, which LegiScan
+ * writes as "<Chamber> <Committee> Hearing" — "Senate Judiciary
+ * Hearing", "Assembly Privacy And Consumer Protection Hearing". A row
+ * whose description doesn't fit that shape offers no committee rather
+ * than a guessed one, same house rule the search filters follow. Note
+ * the scope: this is the committee of the NEXT hearing, not every
+ * committee a bill has ever been in front of — that's the actionable
+ * one ("what's in Approps this week") and the only one on the row.
+ */
+function committeeOf(r) {
+  const description = (r.next_hearing && r.next_hearing.description) || '';
+  const match = /^(Senate|Assembly)\s+(.+?)\s+Hearing$/i.exec(description.trim());
+  return match ? `${match[1]} ${match[2]}` : null;
+}
 
-function matchesFilter(r, filter) {
-  if (filter === 'all') return true;
-  // 'urgent' filters on the deadline rather than on a client position,
-  // so it sits alongside the position tabs without being one of them.
-  if (filter === 'urgent') {
-    const days = daysUntilNext(r);
-    return days !== null && days <= 7;
+function urgencyOf(r) {
+  const days = daysUntilNext(r);
+  const bucket = URGENCY_BUCKETS.find(([, , test]) => test(days));
+  return bucket ? bucket[0] : UNASSIGNED;
+}
+
+// One synthetic assignment for a bill nobody has assigned yet, so
+// "No client" is a value in both the client and position dimensions
+// rather than a special case threaded through every predicate.
+function assignmentsOf(r) {
+  const assigned = r.assigned_clients || [];
+  if (!assigned.length) return [{ key: UNASSIGNED, position: UNASSIGNED }];
+  return assigned.map(c => ({ key: String(c.id), position: c.position || 'watch' }));
+}
+
+const DIMENSIONS = [
+  { key: 'client', label: 'Client' },
+  { key: 'position', label: 'Position' },
+  { key: 'urgency', label: 'Next action' },
+  { key: 'committee', label: 'Committee' },
+];
+
+function clientName(key) {
+  if (key === UNASSIGNED) return 'No client';
+  const client = allClients.find(c => String(c.id) === String(key));
+  return client ? client.name : `Client ${key}`;
+}
+
+function valueLabel(dimension, value) {
+  if (dimension === 'client') return clientName(value);
+  // positionLabel() is the shared support/oppose/watch vocabulary
+  // (position_history.js); only the absence of a client is this page's.
+  if (dimension === 'position') return value === UNASSIGNED ? 'No client' : positionLabel(value);
+  if (dimension === 'urgency') {
+    const bucket = URGENCY_BUCKETS.find(([v]) => v === value);
+    return bucket ? bucket[1] : value;
   }
-  return (r.assigned_clients || []).some(c => (c.position || 'watch') === filter);
+  return value;
+}
+
+/* ── Does a row pass? ──────────────────────────────────────────────────
+ *
+ * exceptDimension is how the faceted counts are built: a group's own
+ * selection is left out of its own counts, so "Oppose 12" keeps saying
+ * 12 after you click it. Counting the already-filtered list instead
+ * would make every unpicked option read 0 as soon as one is picked.
+ */
+function rowPasses(r, exceptDimension) {
+  const clientPicked = exceptDimension === 'client' ? new Set() : filters.client;
+  const positionPicked = exceptDimension === 'position' ? new Set() : filters.position;
+  if (clientPicked.size || positionPicked.size) {
+    // The pairing rule: one assignment has to satisfy both.
+    const ok = assignmentsOf(r).some(a =>
+      (!clientPicked.size || clientPicked.has(a.key)) &&
+      (!positionPicked.size || positionPicked.has(a.position)));
+    if (!ok) return false;
+  }
+  if (exceptDimension !== 'urgency' && filters.urgency.size && !filters.urgency.has(urgencyOf(r))) {
+    return false;
+  }
+  if (exceptDimension !== 'committee' && filters.committee.size) {
+    const committee = committeeOf(r);
+    if (!committee || !filters.committee.has(committee)) return false;
+  }
+  return true;
 }
 
 function matchesSearch(r, q) {
@@ -216,26 +342,349 @@ function matchesSearch(r, q) {
   return `${r.bill_number || ''} ${r.title || ''}`.toLowerCase().includes(q);
 }
 
-function applyFilters() {
-  const q = (searchEl ? searchEl.value : '').trim().toLowerCase();
-  render(sortRows(currentRows.filter(r => matchesFilter(r, activeFilter) && matchesSearch(r, q))));
+function searchQuery() {
+  return (searchEl ? searchEl.value : '').trim().toLowerCase();
 }
 
-function setFilter(filter) {
-  activeFilter = filter;
-  renderTabs();
+function visibleRows() {
+  const q = searchQuery();
+  return sortRows(currentRows.filter(r => rowPasses(r, null) && matchesSearch(r, q)));
+}
+
+// Every value present in the whole flagged list, in the order the rail
+// should show them, mapped to how many rows would pass with that value
+// added. Values keep their place (and show their zero) rather than
+// disappearing as other filters narrow the list.
+function facetCounts(dimension) {
+  const counts = new Map();
+  const valuesFor = (r) => {
+    if (dimension === 'client') return assignmentsOf(r).map(a => a.key);
+    if (dimension === 'position') return assignmentsOf(r).map(a => a.position);
+    if (dimension === 'urgency') return [urgencyOf(r)];
+    const committee = committeeOf(r);
+    return committee ? [committee] : [];
+  };
+  for (const r of currentRows) for (const v of valuesFor(r)) counts.set(v, 0);
+  for (const r of currentRows) {
+    if (!rowPasses(r, dimension)) continue;
+    for (const v of new Set(valuesFor(r))) counts.set(v, counts.get(v) + 1);
+  }
+
+  // Stable, meaningful order per dimension: clients alphabetically,
+  // positions and urgency in their declared order, committees
+  // alphabetically. "No client" always last — it's the absence of a
+  // value, not one of them.
+  let keys = Array.from(counts.keys());
+  if (dimension === 'position') {
+    keys = ['support', 'oppose', 'watch', UNASSIGNED].filter(k => counts.has(k));
+  } else if (dimension === 'urgency') {
+    keys = URGENCY_BUCKETS.map(([v]) => v).filter(k => counts.has(k));
+  } else {
+    keys.sort((a, b) => {
+      if (a === UNASSIGNED) return 1;
+      if (b === UNASSIGNED) return -1;
+      return valueLabel(dimension, a).localeCompare(valueLabel(dimension, b));
+    });
+  }
+  return keys.map(key => [key, counts.get(key)]);
+}
+
+function activeFilterCount() {
+  return DIMENSIONS.reduce((n, d) => n + filters[d.key].size, 0);
+}
+
+function toggleFilter(dimension, value) {
+  const picked = filters[dimension];
+  if (picked.has(value)) picked.delete(value); else picked.add(value);
   applyFilters();
 }
 
-function renderTabs() {
-  if (!currentRows.length) {
-    tabsEl.innerHTML = '';
+function clearFilters() {
+  for (const d of DIMENSIONS) filters[d.key].clear();
+  if (searchEl) searchEl.value = '';
+  applyFilters();
+}
+
+/* ── The rail ──────────────────────────────────────────────────────── */
+
+function renderRail() {
+  if (!currentRows.length) { railEl.innerHTML = ''; return; }
+
+  const groups = DIMENSIONS.map(dimension => {
+    const values = facetCounts(dimension.key);
+    // One option filters nothing, and "No client" on its own is one
+    // option dressed as two.
+    if (values.filter(([v]) => v !== UNASSIGNED).length < 2) return '';
+    const tabs = values.map(([value, n]) => {
+      const on = filters[dimension.key].has(value);
+      return `<button type="button" class="filter-tab${on ? ' active' : ''}"
+        aria-pressed="${on}" ${n || on ? '' : 'disabled'}
+        onclick="toggleFilter('${dimension.key}', ${JSON.stringify(value).replace(/"/g, '&quot;')})"
+        >${escapeText(valueLabel(dimension.key, value))}<span class="n">${n}</span></button>`;
+    }).join('');
+    return `<div class="filter-group"><span class="filter-group-label">${dimension.label}</span>${tabs}</div>`;
+  }).join('');
+
+  railEl.innerHTML = `<div class="search-filters">
+    ${groups}
+    ${activeChipsHtml()}
+    ${savedViewsHtml()}
+  </div>`;
+}
+
+// The same state the tabs carry, restated as one removable line. With
+// four dimensions set, that line is the only place the whole narrowing
+// is visible without reading the entire rail.
+function activeChipsHtml() {
+  if (!activeFilterCount()) return '';
+  const chips = DIMENSIONS.flatMap(d =>
+    Array.from(filters[d.key]).map(value =>
+      `<button type="button" class="filter-chip"
+         onclick="toggleFilter('${d.key}', ${JSON.stringify(value).replace(/"/g, '&quot;')})"
+         aria-label="Remove filter ${escapeText(valueLabel(d.key, value))}"
+         >${escapeText(valueLabel(d.key, value))}<span class="x">×</span></button>`)
+  ).join('');
+  return `<div class="active-filters">${chips}
+    <button type="button" class="secondary filter-clear" onclick="clearFilters()">Clear all</button></div>`;
+}
+
+/* ── The URL is the view ───────────────────────────────────────────────
+ *
+ * Everything above lives in the query string, which is what makes a
+ * composition shareable at all: "here's the list I'm looking at" is a
+ * link in an email to a colleague, and a saved view is that same string
+ * stored under a name. replaceState rather than pushState — narrowing a
+ * filter isn't a place to come Back to, and twelve clicks shouldn't cost
+ * twelve presses of the browser's back button.
+ */
+function currentQueryString() {
+  const params = new URLSearchParams();
+  const q = (searchEl ? searchEl.value : '').trim();
+  if (q) params.set('q', q);
+  for (const d of DIMENSIONS) {
+    if (filters[d.key].size) params.set(d.key, Array.from(filters[d.key]).join(','));
+  }
+  if (groupByClient) params.set('group', 'client');
+  if (sortBy && sortBy !== 'next_action') params.set('sort', sortBy);
+  return params.toString();
+}
+
+function syncUrl() {
+  const query = currentQueryString();
+  history.replaceState(null, '', query ? `${location.pathname}?${query}` : location.pathname);
+}
+
+function applyQueryString(query) {
+  const params = new URLSearchParams(query);
+  for (const d of DIMENSIONS) {
+    filters[d.key] = new Set((params.get(d.key) || '').split(',').filter(Boolean));
+  }
+  if (searchEl) searchEl.value = params.get('q') || '';
+  groupByClient = params.get('group') === 'client';
+  if (groupEl) groupEl.checked = groupByClient;
+  const sort = params.get('sort');
+  if (sort) {
+    sortBy = sort;
+    if (sortSelectEl) sortSelectEl.value = sort;
+  }
+}
+
+/* ── Saved views ───────────────────────────────────────────────────── */
+
+async function loadSavedViews() {
+  try {
+    const res = await fetch('/api/saved-views');
+    savedViews = res.ok ? await res.json() : [];
+  } catch (err) {
+    savedViews = [];
+  }
+}
+
+function savedViewsHtml() {
+  const views = savedViews.map(v =>
+    `<span class="saved-view">
+       <button type="button" class="filter-tab" onclick="openSavedView(${v.id})">${escapeText(v.name)}</button>
+       <button type="button" class="icon-btn" onclick="removeSavedView(${v.id})"
+               aria-label="Delete the view ${escapeText(v.name)}" title="Delete this view">×</button>
+     </span>`).join('');
+  const save = activeFilterCount() || searchQuery() || groupByClient
+    ? `<button type="button" class="secondary filter-clear" onclick="saveCurrentView()">Save this view</button>`
+    : '';
+  if (!views && !save) return '';
+  return `<div class="active-filters saved-views">
+    <span class="filter-group-label">Views</span>${views}${save}</div>`;
+}
+
+function openSavedView(viewId) {
+  const view = savedViews.find(v => v.id === viewId);
+  if (!view) return;
+  applyQueryString(view.query);
+  applyFilters();
+}
+
+async function saveCurrentView() {
+  const name = prompt('Name this view — e.g. "UCSA — Thursday call"');
+  if (name === null) return;
+  errorEl.className = '';
+  try {
+    const res = await fetch('/api/saved-views', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, query: currentQueryString() }),
+    });
+    const list = await res.json();
+    if (!res.ok) throw new Error(list.error || 'Could not save that view');
+    savedViews = list;
+    renderRail();
+    showToast(`Saved "${name.trim()}". It keeps these filters, not these bills.`);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+async function removeSavedView(viewId) {
+  const view = savedViews.find(v => v.id === viewId);
+  const ok = await confirmDelete(
+    'Delete this view?',
+    `Delete "${view ? view.name : 'this view'}"? The bills and positions it filtered are untouched — only the saved filter goes.`);
+  if (!ok) return;
+  errorEl.className = '';
+  try {
+    const res = await fetch(`/api/saved-views?id=${viewId}`, { method: 'DELETE' });
+    const list = await res.json();
+    if (!res.ok) throw new Error(list.error || 'Could not delete that view');
+    savedViews = list;
+    renderRail();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+/* ── Export ────────────────────────────────────────────────────────────
+ *
+ * The weekly client update was a retype: nothing left this app as a
+ * file. This exports the CURRENT view — the same rows, the same order,
+ * and when grouped by client, one row per bill-client pair so the
+ * grouping survives into the spreadsheet. A file that quietly held
+ * something other than what was on screen would be worse than no
+ * export.
+ */
+function csvCell(value) {
+  const text = value === null || value === undefined ? '' : String(value);
+  // Every cell quoted, not just the ones that need it: one rule to read,
+  // and no chance of a title with a comma in it shifting every column
+  // after it.
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function nextActionText(r) {
+  if (r.next_hearing) {
+    const parts = [`Hearing ${r.next_hearing.date}`];
+    const time = hearingTimeLabel ? hearingTimeLabel(r.next_hearing.time) : r.next_hearing.time;
+    if (time) parts.push(time);
+    return parts.join(' · ');
+  }
+  if (r.amend_by_date) return `Amend by ${r.amend_by_date}`;
+  return 'Nothing scheduled';
+}
+
+function csvRows() {
+  const header = ['Bill', 'Title', 'Client', 'Position', 'Status', 'Status date',
+                  'Next action', 'Committee', 'Last change', 'LegiScan URL'];
+  const rows = [];
+  const push = (r, clientLabel, position) => rows.push([
+    `${r.state} ${r.bill_number}`, r.title || '', clientLabel, position,
+    r.status_label || '', r.status_date || '', nextActionText(r),
+    committeeOf(r) || '', (r.last_change && r.last_change.summary) || '', r.url || '',
+  ]);
+
+  if (groupByClient) {
+    for (const [clientLabel, groupRows] of groupedRows()) {
+      for (const r of groupRows) {
+        const assigned = (r.assigned_clients || []).find(c => c.name === clientLabel);
+        push(r, clientLabel, assigned ? positionLabel(assigned.position || 'watch') : '');
+      }
+    }
+  } else {
+    for (const r of visibleRows()) {
+      const assigned = r.assigned_clients || [];
+      push(r, assigned.map(c => c.name).join('; '),
+           assigned.map(c => positionLabel(c.position || 'watch')).join('; '));
+    }
+  }
+  return [header, ...rows];
+}
+
+function csvText() {
+  return csvRows().map(row => row.map(csvCell).join(',')).join('\r\n') + '\r\n';
+}
+
+function exportCsv() {
+  const rows = csvRows();
+  if (rows.length < 2) {
+    showToast('Nothing to export — no bills match these filters.');
     return;
   }
-  tabsEl.innerHTML = FILTERS.map(([value, label]) => {
-    const n = currentRows.filter(r => matchesFilter(r, value)).length;
-    return `<button type="button" class="filter-tab ${value === activeFilter ? 'active' : ''}" onclick="setFilter('${value}')">${label}<span class="n">${n}</span></button>`;
-  }).join('');
+  // A BOM so Excel opens a UTF-8 file as UTF-8 rather than mangling the
+  // em dashes and accented client names this data actually contains.
+  const blob = new Blob(['\ufeff' + csvText()], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `flagged-bills-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast(`Exported ${rows.length - 1} row${rows.length === 2 ? '' : 's'}.`);
+}
+
+/* ── Grouping ──────────────────────────────────────────────────────────
+ *
+ * One section per client, alphabetically, and a bill assigned to three
+ * clients appears under all three — which is what "group by client"
+ * means and the whole point when the output is a per-client update.
+ * Unassigned bills get a section of their own at the end rather than
+ * being dropped, since "which of these has nobody" is one of the two
+ * numbers the tiles above already count.
+ */
+function groupedRows() {
+  const rows = visibleRows();
+  const byClient = new Map();
+  const unassigned = [];
+  for (const r of rows) {
+    const assigned = (r.assigned_clients || []);
+    // A client filter narrows the SECTIONS too — grouping by client
+    // while filtered to UCSA should not print every other client's
+    // section for a bill UCSA happens to share.
+    const shown = filters.client.size
+      ? assigned.filter(c => filters.client.has(String(c.id)))
+      : assigned;
+    if (!shown.length) { unassigned.push(r); continue; }
+    for (const c of shown) {
+      if (!byClient.has(c.name)) byClient.set(c.name, []);
+      byClient.get(c.name).push(r);
+    }
+  }
+  const sections = Array.from(byClient.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  if (unassigned.length) sections.push(['No client assigned', unassigned]);
+  return sections;
+}
+
+function applyFilters() {
+  syncUrl();
+  renderRail();
+  render(visibleRows());
+}
+
+if (groupEl) {
+  groupEl.addEventListener('change', () => {
+    groupByClient = groupEl.checked;
+    applyFilters();
+  });
 }
 
 if (searchEl) {
@@ -246,6 +695,7 @@ async function load() {
   try {
     const [flaggedRes, clientsRes] = await Promise.all([
       fetch('/api/flagged'), fetch('/api/clients'),
+      loadSavedViews(),
     ]);
     if (flaggedRes.status === 401) {
       window.location.href = '/login';
@@ -255,7 +705,6 @@ async function load() {
     currentRows = await flaggedRes.json();
     renderStats();
     renderFreshness();
-    renderTabs();
     applyFilters();
   } catch (err) {
     errorEl.textContent = err.message;
@@ -436,25 +885,10 @@ async function unflag(billId) {
   }
 }
 
-function render(rows) {
-  if (!currentRows.length) {
-    listEl.innerHTML = '<p class="empty">Nothing flagged yet — look up a bill and click "Flag this bill" from there.</p>';
-    return;
-  }
-  if (!rows.length) {
-    const q = (searchEl ? searchEl.value : '').trim();
-    const filterLabel = activeFilter !== 'all'
-      ? ` marked "${(FILTERS.find(([value]) => value === activeFilter) || [null, activeFilter])[1]}"` : '';
-    const searchNote = q ? ` matching "${q}"` : '';
-    listEl.innerHTML = `<p class="empty">No flagged bills${filterLabel}${searchNote} right now — try <a href="#" onclick="event.preventDefault(); if (searchEl) searchEl.value=''; setFilter('all')">clearing filters</a>.</p>`;
-    return;
-  }
-  listEl.innerHTML = `
-    <div style="overflow-x:auto">
-    <table>
-      <thead><tr><th>Bill</th><th>Next action</th><th>Status</th><th class="col-change">Last change</th><th>Clients &amp; positions</th></tr></thead>
-      <tbody>
-      ${rows.map(r => `
+// One <tr>, so the flat table and the grouped sections render the same
+// row rather than two drifting copies of it.
+function rowHtml(r) {
+  return `
         <tr>
           <td>
             <div class="bill-row">
@@ -484,13 +918,67 @@ function render(rows) {
           <td class="col-change">${lastChangeCell(r)}</td>
           <td>${billClientCellHtml(r.bill_id)}</td>
         </tr>
-      `).join('')}
+`;
+}
+
+const TABLE_HEAD = `<thead><tr><th>Bill</th><th>Next action</th><th>Status</th><th class="col-change">Last change</th><th>Clients &amp; positions</th></tr></thead>`;
+
+// What is narrowing the list, in words, for the empty state. The rail
+// above already shows it as controls; a user who has filtered themselves
+// down to nothing needs the sentence, because the thing they got wrong
+// is usually a filter they forgot was on.
+function narrowingDescription() {
+  const parts = DIMENSIONS.flatMap(d =>
+    Array.from(filters[d.key]).map(v => valueLabel(d.key, v)));
+  const q = (searchEl ? searchEl.value : '').trim();
+  if (q) parts.push(`matching "${q}"`);
+  return parts.length ? ` for ${parts.join(', ')}` : '';
+}
+
+function render(rows) {
+  if (!currentRows.length) {
+    listEl.innerHTML = '<p class="empty">Nothing flagged yet — look up a bill and click "Flag this bill" from there.</p>';
+    return;
+  }
+  if (!rows.length) {
+    listEl.innerHTML = `<p class="empty">No flagged bills${narrowingDescription()} right now — try
+      <a href="#" onclick="event.preventDefault(); clearFilters()">clearing filters</a>.</p>`;
+    return;
+  }
+
+  if (groupByClient) {
+    const sections = groupedRows();
+    listEl.innerHTML = sections.map(([name, groupRows]) => `
+      <div class="row-group">
+        <div class="row-group-head">
+          <span class="row-group-name">${escapeText(name)}</span>
+          <span class="row-group-count">${groupRows.length} bill${groupRows.length === 1 ? '' : 's'}</span>
+        </div>
+        <div style="overflow-x:auto">
+          <table>${TABLE_HEAD}<tbody>${groupRows.map(rowHtml).join('')}</tbody></table>
+        </div>
+      </div>
+    `).join('') + statusLegendHtml(rows.map(r => r.status_label));
+    return;
+  }
+
+  listEl.innerHTML = `
+    <div style="overflow-x:auto">
+    <table>
+      ${TABLE_HEAD}
+      <tbody>
+      ${rows.map(rowHtml).join('')}
       </tbody>
     </table>
     </div>
     ${statusLegendHtml(rows.map(r => r.status_label))}
   `;
 }
+
+// A bookmarked or shared link arrives with the whole view in it, so the
+// filters have to be in place before the first render — not applied
+// after it as a visible re-narrowing.
+applyQueryString(location.search);
 
 load();
 </script>

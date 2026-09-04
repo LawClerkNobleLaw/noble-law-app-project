@@ -1241,6 +1241,72 @@ def delete_org_lobbyist(conn, user_id, lobbyist_id):
 # has already flagged, and the bill that hurts a client is the one
 # introduced last week that nobody has noticed. ──
 
+# ── Saved views on the flagged list (P2-24) ─────────────────────────────
+#
+# A view is a named filter composition, stored as the page's own query
+# string. See saved_views in schema.sql for why that is a text column
+# rather than one column per dimension, and why it is the firm's rather
+# than the individual's.
+
+MAX_SAVED_VIEWS = 30
+
+
+def create_saved_view(conn, user_id, name, query):
+    """Save the current filter composition under a name, or replace the
+    query on a view of that name the firm already has.
+
+    Replace rather than reject on a name collision: "UCSA — Thursday
+    call" is a standing view whose filters get adjusted, and making the
+    user delete it first to re-save it is a worse answer than the
+    UNIQUE constraint's error message."""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Give the view a name.")
+    if len(name) > 60:
+        raise ValueError("That name is too long — 60 characters at most.")
+    # The query string as the page composed it, minus its leading '?'.
+    query = (query or "").lstrip("?").strip()
+
+    existing = conn.execute(
+        f"SELECT id FROM saved_views WHERE {ORG_SCOPE} AND name = ?", (user_id, name)
+    ).fetchone()
+    if existing:
+        conn.execute("UPDATE saved_views SET query = ? WHERE id = ?", (query, existing["id"]))
+        conn.commit()
+        return list_saved_views(conn, user_id)
+
+    count = conn.execute(
+        f"SELECT COUNT(*) AS n FROM saved_views WHERE {ORG_SCOPE}", (user_id,)
+    ).fetchone()["n"]
+    if count >= MAX_SAVED_VIEWS:
+        raise ValueError(f"At most {MAX_SAVED_VIEWS} saved views.")
+
+    conn.execute(
+        """INSERT INTO saved_views (user_id, name, query, created_at)
+           VALUES (?, ?, ?, datetime('now'))""",
+        (user_id, name, query),
+    )
+    conn.commit()
+    return list_saved_views(conn, user_id)
+
+
+def list_saved_views(conn, user_id):
+    rows = conn.execute(
+        f"""SELECT id, name, query, created_at FROM saved_views
+             WHERE {ORG_SCOPE} ORDER BY name COLLATE NOCASE""",
+        (user_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_saved_view(conn, user_id, view_id):
+    cur = conn.execute(
+        f"DELETE FROM saved_views WHERE {ORG_SCOPE} AND id = ?", (user_id, view_id)
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def create_saved_search(conn, user_id, name, query, client_id=None):
     """Raises ValueError (safe to show the user) on a blank name/query,
     a client that isn't theirs, or a name they've already used."""
