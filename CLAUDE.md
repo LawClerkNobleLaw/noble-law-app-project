@@ -4,9 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Rotunda (a.k.a. "BillWatch") — a small web app for a CA lobbying law firm to track LegiScan bill activity, flag bills per-client with a position (support/oppose/watch), get a daily change digest by email, cross-reference CAL-ACCESS lobbying disclosures, and prepare (not file) FPPC disclosure forms. Two top-level projects share one SQLite database:
+Rotunda ("Everything Under the Dome", formerly "BillWatch") — a web app for California
+Capitol government-affairs work. **What exists today** is a working single-firm tool: track
+LegiScan bill activity, flag bills per-client with a position (support/oppose/watch/seek
+amendments/neutral) under a timestamped position history, get a daily change digest by email,
+run saved searches that auto-adopt newly matching bills, cross-reference CAL-ACCESS lobbying
+disclosures, draft position letters, and prepare (never file) FPPC disclosure forms.
 
-- `legiscan-lookup/` — the actual web app (LegiScan tracking, accounts, clients, disclosures)
+**Where it's headed** is a broader product — see `docs/Rotunda_Concept_Summary.docx` (the
+business/product concept) and `docs/roadmap.md` (the build sequence against this codebase).
+Read those before proposing anything large. Treat the concept doc as an aspiration under
+active diligence, not a spec: several of its pillars (hearing video, PAC contributions,
+"one-click" CAL-ACCESS e-filing, multi-state) have unresolved legal or licensing questions
+recorded in `docs/roadmap.md`, and **nothing in it is built until it's in this repo.** When a
+request maps to a concept-doc feature, say what exists today rather than describing the doc's
+version as if it shipped.
+
+Two top-level projects share one SQLite database:
+
+- `legiscan-lookup/` — the actual web app (LegiScan tracking, accounts, clients, letters, disclosures)
 - `calaccess-pipeline/` — a separate ingestion pipeline for California's CAL-ACCESS lobbying-disclosure data, writing into the same DB file so it can eventually be joined against bill data
 
 Most work happens in `legiscan-lookup/`.
@@ -46,6 +62,28 @@ Tests run entirely against an in-memory SQLite DB (`conftest.py`'s `conn` fixtur
 - `config.py` — every environment variable the app reads, in one place. `validate()` is called once at real startup (not at import time, so tests importing `app`/`db` don't need every prod env var set) and raises listing every missing required setting at once.
 
 **Local vs. hosted refresh — same refresh code, two different triggers.** Locally, `launchd` runs `refresh_watchlist.py` / `calaccess-pipeline/refresh_calaccess.py` directly on a schedule, each opening the DB file itself — works because everything's one process family on one Mac. Hosted on Render, cron job services can't attach a persistent disk, so `render.yaml` defines two thin cron services that just `curl` an internal, secret-gated endpoint (`POST /internal/refresh-watchlist` / `/internal/refresh-calaccess`) on the one always-on web service that *does* hold the disk; that endpoint runs the same refresh code in a background thread. `REFRESH_SECRET` unset (the local case) means those routes 404 and don't exist at all.
+
+## Scope boundaries that are decisions, not gaps
+
+Three properties of this codebase look like missing features but are deliberate. Changing any
+of them is a product decision to raise with the user first, not a cleanup to do in passing.
+
+- **Sharing is firm-wide, not per-matter.** `db.ORG_SCOPE` scopes almost every query to the
+  user's *organization*, so a firm's flagged bills, clients, positions and notes are visible to
+  every seat in that firm. The concept doc's US-D1/US-D3 want per-client isolation and
+  per-matter user assignment inside a firm; that is a real future change (new access-control
+  layer + a role model), not a bug in the current queries. Don't "fix" `ORG_SCOPE` toward
+  per-user scoping without being asked.
+- **The app never sends and never files.** `letter_drafts.py` produces a first draft and
+  stops; `pdf_forms.py` fills a form and stops; `db.sign_off_prepared_filing` is a human
+  sign-off gate. There is no outbound send path for letters and no e-file integration, on
+  purpose. Any feature that would transmit something on the user's behalf needs an explicit
+  decision, not just an endpoint.
+- **Standard library only, plus `pypdf`.** No framework, no ORM, no HTTP client library, no
+  LLM SDK — `requirements.txt` has one line and `legiscan_client.py` talks to LegiScan through
+  `urllib`. The concept doc's AI-assisted drafting would be the first dependency that breaks
+  this rule (and the first time client strategy leaves the machine); propose it explicitly
+  rather than importing something.
 
 ## Working in this repo
 
