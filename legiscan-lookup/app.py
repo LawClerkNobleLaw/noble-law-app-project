@@ -2339,6 +2339,25 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # The digest's own settings. Separate from /api/profile because
+        # the profile is the firm's CAL-ACCESS registration (and is
+        # edited through the multi-step /signup/profile form), while this
+        # is one person's mail preferences — different owner, different
+        # lifecycle, different form.
+        if parsed.path == "/api/notification-prefs":
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to view your digest settings.")
+                if not user_id:
+                    return
+                self._send_json(200, {
+                    "prefs": db.get_notification_prefs(conn, user_id),
+                    "muted_bills": db.list_digest_mutes(conn, user_id),
+                })
+            finally:
+                conn.close()
+            return
+
         if parsed.path == "/api/lobbying/search":
             q = (qs.get("q") or [""])[0].strip()
             if not q:
@@ -2608,6 +2627,62 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 accounts.save_profile(conn, user_id, body)
                 self._send_json(200, {"status": "saved"})
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/notification-prefs":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to change your digest settings.")
+                if not user_id:
+                    return
+                # A whole-row write, so the response is the row as
+                # stored — the panel renders from that rather than from
+                # what it just sent, which is how a rejected or
+                # normalised value (a duplicate cc, a dropped unknown
+                # change type) shows up in the UI instead of only in the
+                # database.
+                try:
+                    prefs = db.save_notification_prefs(conn, user_id, body)
+                except ValueError as err:
+                    self._send_json(400, {"error": str(err)})
+                    return
+                self._send_json(200, {"prefs": prefs})
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/digest-mute":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            try:
+                bill_id = int(body.get("bill_id"))
+            except (TypeError, ValueError):
+                self._send_json(400, {"error": "Missing or invalid bill_id."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to mute a bill.")
+                if not user_id:
+                    return
+                # Only a bill the firm actually tracks can be muted —
+                # otherwise this endpoint would accept (and store) a row
+                # for any bill id at all, and the settings panel would
+                # list bills nobody here has ever flagged.
+                if bill_id not in db.list_flagged_bill_ids_for_user(conn, user_id):
+                    self._send_json(404, {"error": "That bill isn't flagged."})
+                    return
+                muted = db.set_digest_muted(conn, user_id, bill_id, bool(body.get("muted")))
+                self._send_json(200, {"bill_id": bill_id, "muted": muted})
             finally:
                 conn.close()
             return

@@ -18,6 +18,7 @@ data, and isn't on the persistent disk.
 import hashlib
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -890,6 +891,202 @@ def get_bill_basic(conn, bill_id):
     return dict(row) if row else None
 
 
+# ── Digest settings — the user's side of the daily email ────────────────
+#
+# Everything here is per PERSON. See notification_prefs in schema.sql for
+# why that differs from almost every other table in this app.
+#
+# A user with no row gets DEFAULT_NOTIFICATION_PREFS, which is exactly
+# the behaviour the digest had before it was configurable: every change
+# type, daily, to the account address, saved-search matches included. So
+# "has never opened Profile" and "has opened Profile and changed
+# nothing" are the same state, and no backfill was needed.
+
+CHANGE_TYPES = ("status", "amendment", "hearing", "vote")
+DIGEST_FREQUENCIES = ("daily", "weekdays", "weekly", "off")
+
+DEFAULT_NOTIFICATION_PREFS = {
+    "frequency": "daily",
+    "event_types": list(CHANGE_TYPES),
+    "include_matches": True,
+    "extra_recipients": [],
+}
+
+# Deliberately permissive: the point is to catch a typo like "sam@" or a
+# stray comma, not to adjudicate what the RFC allows. A real address that
+# this rejects would be a bug; a bad address that this accepts just
+# bounces, which the sending domain reports anyway.
+_EMAIL_RE = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]{2,}$")
+
+# One email, cc'd. Five is enough for an assistant, an associate and a
+# client contact or two, and low enough that this can never quietly
+# become a mailing list the firm forgot it was running.
+MAX_EXTRA_RECIPIENTS = 5
+
+
+def _split_recipients(raw):
+    """Accepts what a person actually types into a single text box —
+    commas, semicolons, newlines, or just spaces between addresses."""
+    if not raw:
+        return []
+    if isinstance(raw, (list, tuple)):
+        parts = [str(p) for p in raw]
+    else:
+        parts = re.split(r"[,;\s]+", str(raw))
+    seen, out = set(), []
+    for part in parts:
+        addr = part.strip().strip("<>")
+        key = addr.lower()
+        if addr and key not in seen:
+            seen.add(key)
+            out.append(addr)
+    return out
+
+
+def validate_extra_recipients(raw):
+    """Returns (addresses, error). The caller decides whether an error is
+    a 400 or a message in the page; this only says which address is the
+    problem, since "one of these five is wrong" is not an actionable
+    thing to tell someone."""
+    addrs = _split_recipients(raw)
+    if len(addrs) > MAX_EXTRA_RECIPIENTS:
+        return None, f"At most {MAX_EXTRA_RECIPIENTS} extra recipients."
+    for addr in addrs:
+        if not _EMAIL_RE.match(addr):
+            return None, f"{addr} doesn't look like an email address."
+    return addrs, None
+
+
+def get_notification_prefs(conn, user_id):
+    """This user's digest settings, with every default filled in. Never
+    returns None — the absence of a row is a valid, meaningful state."""
+    prefs = dict(DEFAULT_NOTIFICATION_PREFS)
+    prefs["event_types"] = list(DEFAULT_NOTIFICATION_PREFS["event_types"])
+    row = conn.execute(
+        "SELECT * FROM notification_prefs WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    if not row:
+        return prefs
+    if row["frequency"] in DIGEST_FREQUENCIES:
+        prefs["frequency"] = row["frequency"]
+    # Intersected with CHANGE_TYPES rather than trusted, so a change to
+    # the vocabulary can't be poisoned by a stale stored value.
+    stored = {t.strip() for t in (row["event_types"] or "").split(",")}
+    prefs["event_types"] = [t for t in CHANGE_TYPES if t in stored]
+    prefs["include_matches"] = bool(row["include_matches"])
+    prefs["extra_recipients"] = _split_recipients(row["extra_recipients"])
+    return prefs
+
+
+def save_notification_prefs(conn, user_id, fields):
+    """Writes the whole row — this is a settings form, not a patch, and a
+    field the caller left out means "unchecked", not "unchanged".
+
+    Raises ValueError on a bad frequency or recipient list so the route
+    can turn it into a 400 rather than storing something the digest job
+    would have to defend itself against later."""
+    frequency = (fields.get("frequency") or "daily").strip()
+    if frequency not in DIGEST_FREQUENCIES:
+        raise ValueError("Choose how often the digest should go out.")
+
+    requested = fields.get("event_types")
+    if requested is None:
+        requested = []
+    elif isinstance(requested, str):
+        requested = [t.strip() for t in requested.split(",")]
+    event_types = [t for t in CHANGE_TYPES if t in set(requested)]
+
+    recipients, error = validate_extra_recipients(fields.get("extra_recipients"))
+    if error:
+        raise ValueError(error)
+
+    conn.execute(
+        """INSERT INTO notification_prefs
+               (user_id, frequency, event_types, include_matches,
+                extra_recipients, updated_at)
+           VALUES (?, ?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(user_id) DO UPDATE SET
+               frequency = excluded.frequency,
+               event_types = excluded.event_types,
+               include_matches = excluded.include_matches,
+               extra_recipients = excluded.extra_recipients,
+               updated_at = excluded.updated_at""",
+        (user_id, frequency, ",".join(event_types),
+         1 if fields.get("include_matches", True) else 0,
+         ",".join(recipients) or None),
+    )
+    conn.commit()
+    return get_notification_prefs(conn, user_id)
+
+
+def list_digest_muted_bill_ids(conn, user_id):
+    return {r["bill_id"] for r in conn.execute(
+        "SELECT bill_id FROM digest_mutes WHERE user_id = ?", (user_id,)
+    ).fetchall()}
+
+
+def list_digest_mutes(conn, user_id):
+    """The muted bills with enough about each to name it on the settings
+    panel — a mute nobody can find again is a bug report waiting to
+    happen ("it just stopped emailing me about SB1159")."""
+    rows = conn.execute(
+        """SELECT m.bill_id, b.state, b.bill_number, b.title, m.created_at
+             FROM digest_mutes m JOIN bills b ON b.id = m.bill_id
+            WHERE m.user_id = ?
+            ORDER BY b.state, b.bill_number""",
+        (user_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_digest_muted(conn, user_id, bill_id, muted):
+    """Mute or unmute one bill for one person. Does not touch the flag —
+    see digest_mutes in schema.sql."""
+    if muted:
+        conn.execute(
+            """INSERT OR IGNORE INTO digest_mutes (user_id, bill_id, created_at)
+               VALUES (?, ?, datetime('now'))""",
+            (user_id, bill_id),
+        )
+    else:
+        conn.execute(
+            "DELETE FROM digest_mutes WHERE user_id = ? AND bill_id = ?",
+            (user_id, bill_id),
+        )
+    conn.commit()
+    return bool(muted)
+
+
+def changes_by_bill_since(conn, since_date):
+    """{bill_id: [change dict, ...]} for everything detected on or after
+    since_date, shaped exactly like diff_bill_state()'s return so the
+    digest builder can't tell the difference.
+
+    This is what makes a weekly digest possible. The refresh job hands
+    the builder only what changed in the last few minutes, which is the
+    right answer for a daily send and useless for a Monday roll-up: the
+    job already ran on Tuesday through Sunday and said nothing to a
+    weekly recipient. bill_change_events is the app's own append-only
+    record of those days, so the roll-up reads back from it rather than
+    asking LegiScan to re-diff a week."""
+    rows = conn.execute(
+        """SELECT bill_id, change_type, summary, description, event_date
+             FROM bill_change_events
+            WHERE date(detected_at) >= date(?)
+            ORDER BY bill_id, detected_at""",
+        (since_date,),
+    ).fetchall()
+    out = {}
+    for row in rows:
+        out.setdefault(row["bill_id"], []).append({
+            "change_type": row["change_type"],
+            "summary": row["summary"],
+            "description": row["description"],
+            "event_date": row["event_date"],
+        })
+    return out
+
+
 # ── Clients — one-to-many with a user, unlike flagged_bills (many-to-
 # many) or lobbyist_profiles (one-to-one). No cross-checking against
 # lobbying_entities yet — existing_filer_id is stored for that future
@@ -1457,6 +1654,9 @@ def get_bill_report(conn, user_id, bill_id):
     # assignments themselves — a client removed from the bill still
     # appears here, which is the whole reason the table is append-only.
     result["position_history"] = list_position_history(conn, user_id, bill_id=bill_id)
+    # Whether THIS person has muted digest mail about this bill. Their
+    # own setting, not the firm's — see digest_mutes in schema.sql.
+    result["digest_muted"] = bill_id in list_digest_muted_bill_ids(conn, user_id)
     return result
 
 

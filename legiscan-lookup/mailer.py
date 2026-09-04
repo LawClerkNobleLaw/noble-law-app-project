@@ -40,15 +40,25 @@ def is_configured():
 def send_email(to_addr, subject, text_body, html_body=None):
     """Returns True if actually sent, False if skipped because SMTP isn't
     configured. Raises on a real send failure — the caller decides how
-    to log/count that per recipient."""
+    to log/count that per recipient.
+
+    to_addr takes either one address or a list of them. A list becomes
+    one message with several recipients rather than several messages:
+    when a lobbyist cc's an assistant on their digest, "reply to all"
+    should land everyone in the same thread (see
+    notification_prefs.extra_recipients)."""
+    recipients = [to_addr] if isinstance(to_addr, str) else [a for a in to_addr if a]
+    if not recipients:
+        return False
+    to_header = ", ".join(recipients)
     if not is_configured():
-        print(f"[mailer] SMTP not configured — would have sent to {to_addr}: {subject}", flush=True)
+        print(f"[mailer] SMTP not configured — would have sent to {to_header}: {subject}", flush=True)
         return False
 
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = EMAIL_FROM
-    msg["To"] = to_addr
+    msg["To"] = to_header
     msg.set_content(text_body)
     if html_body:
         msg.add_alternative(html_body, subtype="html")
