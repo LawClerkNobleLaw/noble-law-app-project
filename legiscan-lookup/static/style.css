@@ -35,6 +35,20 @@
     --gold: #8A6A18;
     --slate: color-mix(in srgb, var(--ink) 65%, transparent);
     --rule: color-mix(in srgb, var(--ink) 14%, transparent);
+    /* --rule at 14% measures 1.35:1 against either ground. Fine for a
+       divider — WCAG 1.4.11 doesn't govern decoration — and not fine for
+       the visual boundary of a control, which is what tells a
+       low-vision reader an input is there at all and needs 3:1. So the
+       hairline that separates rows and the outline that IS the control
+       are now two tokens.
+
+       48% is where light mode clears the bar: #111 at that alpha on the
+       cream ground measures 3.29:1, and the same alpha of white on black
+       measures 4.92:1. Light is the binding case by a wide margin, which
+       is why the number looks heavier than a dark-mode-only reading
+       would suggest. Measured, not guessed, and re-measured on every
+       test run — see tests/test_contrast.py. */
+    --rule-strong: color-mix(in srgb, var(--ink) 48%, transparent);
     --accent: var(--slate);
     /* --accent-solid/--accent-solid-text are the button-fill pair — in
        dark mode the fill inverts (light pill, dark text) while --accent
@@ -243,7 +257,7 @@
     display: flex; gap: var(--space-2); margin-bottom: 2rem; flex-wrap: wrap;
   }
   input, select, textarea {
-    font: inherit; padding: var(--space-2) 0.75rem; border: 1px solid var(--rule);
+    font: inherit; padding: var(--space-2) 0.75rem; border: 1px solid var(--rule-strong);
     border-radius: var(--radius-md); background: var(--surface); color: var(--ink);
   }
   select { cursor: pointer; }
@@ -265,7 +279,7 @@
      treatment, where the only solid-filled pill on a page is the one
      primary action. */
   button.secondary, button.danger {
-    background: transparent; border: 1px solid var(--rule); color: var(--ink);
+    background: transparent; border: 1px solid var(--rule-strong); color: var(--ink);
   }
   button.danger { color: var(--error); }
   button.secondary:hover { border-color: var(--ink); }
@@ -277,7 +291,7 @@
   a.secondary, a.danger {
     display: inline-flex; align-items: center; gap: var(--space-2); font: inherit; font-weight: 600;
     padding: var(--space-2) var(--space-4); border-radius: var(--radius-pill); text-decoration: none;
-    background: transparent; border: 1px solid var(--rule); color: var(--ink); transition: border-color .12s ease, color .12s ease;
+    background: transparent; border: 1px solid var(--rule-strong); color: var(--ink); transition: border-color .12s ease, color .12s ease;
   }
   a.danger { color: var(--error); }
   a.secondary svg, a.danger svg { width: 0.85rem; height: 0.85rem; flex: none; }
@@ -481,17 +495,40 @@
   /* A client's stance on a bill — same three values everywhere (the
      /flagged position selector and the /report page's read-only badge),
      colored consistently: support=good, oppose=error, watch=neutral. */
+  /* ── Positions without relying on colour (P2-31) ──
+     Red and green is the one pair a deuteranopic reader can't separate,
+     and it was carrying a client's official position. Every position was
+     already spelled out in words, so this was never colour ALONE — but
+     reading a COLUMN of positions was a colour task, which is the state
+     these badges are usually read in.
+
+     Two non-colour cues, and they are the same two everywhere: a glyph
+     (+ support, minus oppose, ring watch — matching the option text on
+     the selects, see client_quickadd.js's POSITIONS), and a border, so
+     the three read apart as shapes at a glance rather than as three
+     tints of one shape. The border also fixes the quieter problem: a
+     16% fill tint against the page is barely a boundary, so a badge
+     had no edge of its own to be seen by. */
   .position-badge { display: inline-block; font-size: 0.75rem; font-weight: 700;
-    padding: var(--space-1) var(--space-2); border-radius: var(--radius-pill); }
+    padding: var(--space-1) var(--space-2); border-radius: var(--radius-pill);
+    border: 1px solid currentColor; }
   .position-badge.support { background: var(--good-soft); color: var(--good); }
   .position-badge.oppose { background: var(--error-soft); color: var(--error); }
   .position-badge.watch { background: var(--accent-soft); color: var(--accent); }
+  .position-badge.support::before { content: "+\00a0"; }
+  .position-badge.oppose::before { content: "\2212\00a0"; }
+  .position-badge.watch::before { content: "\25e6\00a0"; }
   /* A stance that no longer applies: the one it was changed away from,
      and the "removed from the bill" terminus. Both are history, so
      neither carries the live colour — an Oppose that ended in June
      shouldn't be as loud on the page as the Oppose in force today. */
-  .position-badge.was { background: transparent; color: var(--slate); border: 1px solid var(--rule); font-weight: 600; }
-  .position-badge.removed { background: transparent; color: var(--slate); border: 1px dashed var(--rule); }
+  .position-badge.was { background: transparent; color: var(--slate); border: 1px solid var(--rule-strong); font-weight: 600; }
+  .position-badge.removed { background: transparent; color: var(--slate); border: 1px dashed var(--rule-strong); }
+  /* The selects carry their glyph in the option text itself (see
+     client_quickadd.js) — ::before doesn't render inside a native
+     <select>, and this is the one cue that has to show both in the
+     closed control and in the open dropdown. The colour here is the
+     redundant half, not the meaning. */
   select.position-select.support { border-color: var(--good); color: var(--good); }
   select.position-select.oppose { border-color: var(--error); color: var(--error); }
   select.position-select.watch { border-color: var(--accent); color: var(--accent); }
@@ -514,7 +551,7 @@
      above already do. */
   .add-client-select {
     font-size: 0.78rem; font-weight: 600; color: var(--slate); background: none;
-    border: 1px dashed var(--rule); border-radius: var(--radius-pill); padding: 0.25rem 0.6rem;
+    border: 1px dashed var(--rule-strong); border-radius: var(--radius-pill); padding: 0.25rem 0.6rem;
   }
   .add-client-select:hover { border-color: var(--accent); color: var(--accent); }
   /* Filter tabs above a flagged/client-position list — same All/Support/
@@ -523,7 +560,7 @@
   .filter-tabs { display: flex; gap: var(--space-2); margin-bottom: 1.1rem; }
   .filter-tab {
     font: inherit; font-size: 0.82rem; font-weight: 600; color: var(--slate);
-    background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-pill);
+    background: var(--surface); border: 1px solid var(--rule-strong); border-radius: var(--radius-pill);
     padding: var(--space-1) 0.75rem; cursor: pointer;
   }
   .filter-tab:hover { border-color: var(--ink); }
@@ -710,7 +747,7 @@
      it survived while the shared version didn't. */
   .search-box {
     display: flex; align-items: center; gap: 0.5rem; height: 2rem; width: 12.5rem; border-radius: var(--radius-md);
-    background: var(--accent-soft); border: 1px solid var(--rule); padding: 0 var(--space-2); font-size: 0.8rem; color: var(--slate);
+    background: var(--accent-soft); border: 1px solid var(--rule-strong); padding: 0 var(--space-2); font-size: 0.8rem; color: var(--slate);
   }
   .search-box svg { width: 0.75rem; height: 0.75rem; flex: none; }
   .search-box input {
@@ -724,7 +761,7 @@
      than an icon (the × on a saved search, and now on a client row of
      the 601 review) came out black on black and simply wasn't there. */
   .icon-btn {
-    height: 2rem; width: 2rem; border-radius: var(--radius-md); border: 1px solid var(--rule); background: var(--paper);
+    height: 2rem; width: 2rem; border-radius: var(--radius-md); border: 1px solid var(--rule-strong); background: var(--paper);
     color: var(--slate);
     display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s ease;
   }
@@ -976,7 +1013,7 @@
      something you do occasionally, not the primary action of the row. */
   .row-menu { position: relative; text-align: right; }
   .row-menu-btn {
-    height: 1.75rem; width: 1.75rem; border-radius: var(--radius-md); border: 1px solid var(--rule); background: var(--surface);
+    height: 1.75rem; width: 1.75rem; border-radius: var(--radius-md); border: 1px solid var(--rule-strong); background: var(--surface);
     color: var(--slate); display: inline-flex; align-items: center; justify-content: center;
     cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease;
   }
@@ -1189,8 +1226,19 @@
   .filter-group .filter-tab { font-size: 0.78rem; padding: 0.2rem 0.6rem; }
   /* A filter that would empty the list is shown, disabled, with its zero
      visible — "no Senate bills here" is an answer, and a control that
-     silently vanishes teaches the user the filter is unreliable. */
-  .filter-tab[disabled] { opacity: 0.45; cursor: default; }
+     silently vanishes teaches the user the filter is unreliable.
+
+     Which is exactly why this can't be a blanket opacity: 0.45 over
+     --slate measured 1.94:1, and a count nobody can read is not an
+     answer either. WCAG's exemption for inactive controls doesn't cover
+     a disabled control being used to carry information. The border
+     fades instead — it's decoration here — and the text stays at
+     --slate's 5.8:1. "Off" now reads from the flat, borderless shape
+     and the zero, not from the text being faint. */
+  .filter-tab[disabled] {
+    cursor: default; color: var(--slate);
+    background: transparent; border-color: var(--rule);
+  }
   .filter-tab[disabled]:hover { border-color: var(--rule); }
   .filter-sort { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
   .filter-sort select { font-size: 0.78rem; padding: 0.25rem 0.4rem; }
