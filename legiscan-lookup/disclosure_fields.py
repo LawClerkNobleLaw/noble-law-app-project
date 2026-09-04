@@ -46,25 +46,25 @@ FORM_601_SECTIONS = [
         "key": "business",
         "label": "Business information",
         "fields": [
-            {"key": "BUSINESS ADDRESS  Number and street", "label": "Street address", "kind": "text", "required": True},
-            {"key": "BUSINESS ADDRESS  City", "label": "City", "kind": "text", "required": True},
-            {"key": "BUSINESS ADDRESS  State", "label": "State", "kind": "text", "required": True},
-            {"key": "BUSINESS ADDRESS  Zip", "label": "ZIP", "kind": "zip", "required": True},
-            {"key": "TELEPHONE Area Code", "label": "Phone — area code", "kind": "phone_area", "required": True},
-            {"key": "TELEPHONE", "label": "Phone — number (555-1234)", "kind": "phone_rest", "required": True},
-            {"key": "MAILING ADDRESS  If different than above", "label": "Mailing address (if different)", "kind": "text", "required": False},
-            {"key": "EMAIL", "label": "Email", "kind": "email", "required": True},
+            {"key": "BUSINESS ADDRESS  Number and street", "label": "Street address", "kind": "text", "required": True, "source": "profile"},
+            {"key": "BUSINESS ADDRESS  City", "label": "City", "kind": "text", "required": True, "source": "profile"},
+            {"key": "BUSINESS ADDRESS  State", "label": "State", "kind": "text", "required": True, "source": "profile"},
+            {"key": "BUSINESS ADDRESS  Zip", "label": "ZIP", "kind": "zip", "required": True, "source": "profile"},
+            {"key": "TELEPHONE Area Code", "label": "Phone — area code", "kind": "phone_area", "required": True, "source": "profile"},
+            {"key": "TELEPHONE", "label": "Phone — number (555-1234)", "kind": "phone_rest", "required": True, "source": "profile"},
+            {"key": "MAILING ADDRESS  If different than above", "label": "Mailing address (if different)", "kind": "text", "required": False, "source": "profile"},
+            {"key": "EMAIL", "label": "Email", "kind": "email", "required": True, "source": "account"},
             # Filled from the firm's roster on Profile (see
             # db.list_org_lobbyists), falling back to the registrant's
             # own legal name for a firm of one. Editable here, and only
             # the first slot is required: a 601 with no lobbyist named on
             # it isn't a registration.
-            {"key": "INDIVIDUAL LOBBYISTS 1", "label": "Individual lobbyist 1", "kind": "text", "required": True},
-            {"key": "INDIVIDUAL LOBBYISTS 2", "label": "Individual lobbyist 2", "kind": "text", "required": False},
-            {"key": "INDIVIDUAL LOBBYISTS 3", "label": "Individual lobbyist 3", "kind": "text", "required": False},
-            {"key": "INDIVIDUAL LOBBYISTS 4", "label": "Individual lobbyist 4", "kind": "text", "required": False},
-            {"key": "INDIVIDUAL LOBBYISTS 5", "label": "Individual lobbyist 5", "kind": "text", "required": False},
-            {"key": "INDIVIDUAL LOBBYISTS 6", "label": "Individual lobbyist 6", "kind": "text", "required": False},
+            {"key": "INDIVIDUAL LOBBYISTS 1", "label": "Individual lobbyist 1", "kind": "text", "required": True, "source": "roster"},
+            {"key": "INDIVIDUAL LOBBYISTS 2", "label": "Individual lobbyist 2", "kind": "text", "required": False, "source": "roster"},
+            {"key": "INDIVIDUAL LOBBYISTS 3", "label": "Individual lobbyist 3", "kind": "text", "required": False, "source": "roster"},
+            {"key": "INDIVIDUAL LOBBYISTS 4", "label": "Individual lobbyist 4", "kind": "text", "required": False, "source": "roster"},
+            {"key": "INDIVIDUAL LOBBYISTS 5", "label": "Individual lobbyist 5", "kind": "text", "required": False, "source": "roster"},
+            {"key": "INDIVIDUAL LOBBYISTS 6", "label": "Individual lobbyist 6", "kind": "text", "required": False, "source": "roster"},
         ],
     },
     {
@@ -110,6 +110,120 @@ FORM_DEADLINES = {
         "rule_label": "10 days after qualifying",
     },
 }
+
+
+# ── Where a pre-filled value came from (P1-21) ──────────────────────────
+#
+# Every field on this screen looks hand-typed, which is exactly the
+# problem: a reviewer can't verify a business address without knowing
+# whether it was pulled from the firm's Profile, typed here, or left over
+# from an earlier edit. Sign-off on a form nobody can check is ceremony.
+#
+# Provenance is a property of the SCHEMA, not of the stored row — the
+# initial field_data is built once by pdf_forms.values_for_form_601 from
+# the profile, the account email and the firm's roster, and which of
+# those fed which field never changes. So the source is declared on the
+# field above, and the interesting question at render time is only
+# whether the value still MATCHES its source.
+#
+# That comparison is what makes this reviewable rather than decorative.
+# "From your Profile" under a value that no longer matches Profile would
+# be a false statement on a compliance document.
+
+FIELD_SOURCES = {
+    "profile": {
+        "label": "your registration profile",
+        "href": "/signup/profile",
+        "empty": "Nothing in your registration profile to fill this from.",
+    },
+    "account": {
+        "label": "your account email",
+        "href": "/profile",
+        "empty": "No account email to fill this from.",
+    },
+    "roster": {
+        "label": "your firm's roster",
+        "href": "/profile",
+        "empty": "Nobody on your firm's roster fills this slot.",
+    },
+}
+
+# What the field is, once we know whether it still agrees with its
+# source. Three states, because "typed here because the source was
+# empty" and "typed here over what the source says" are different facts
+# to a reviewer — the second one is the one worth looking at twice.
+INHERITED = "inherited"
+EDITED = "edited"
+TYPED = "typed"
+BLANK = "blank"
+
+
+def provenance_for(form_type, field_data, source_values):
+    """{field_key: {source, label, href, state, source_value}} for every
+    field that HAS a source.
+
+    source_values is what pdf_forms.values_for_form_601 produces from the
+    firm's data as it stands right now — the same builder that filled
+    this draft when it was created, run again. Comparing against it
+    answers "is this still what Profile says", which is the question a
+    reviewer actually has.
+
+    Fields with no declared source (there are none on the 601 today, but
+    a future form will have them) are simply absent from the result, and
+    the editor renders no line for them rather than an empty one."""
+    out = {}
+    for field in _flat_fields(form_type):
+        source_key = field.get("source")
+        if not source_key:
+            continue
+        source = FIELD_SOURCES.get(source_key)
+        if not source:
+            continue
+        current = (field_data.get(field["key"]) or "").strip()
+        original = (source_values.get(field["key"]) or "").strip()
+        if current and original and current == original:
+            state = INHERITED
+        elif current and original:
+            state = EDITED
+        elif current:
+            state = TYPED
+        else:
+            state = BLANK
+        out[field["key"]] = {
+            "source": source_key,
+            "label": source["label"],
+            "href": source["href"],
+            "empty_note": source["empty"],
+            "state": state,
+            "source_value": original,
+        }
+    return out
+
+
+def field_issues(form_type, field_data):
+    """The same problems validate_field_data() reports, as structured
+    rows: {field_key, label, message, required}.
+
+    Prose was enough while these were only ever shown after a rejected
+    submit. The review screen shows them up front, with a jump link per
+    row, and a link needs the key — so this is the primary form and
+    validate_field_data() is now the sentence-shaped view of it."""
+    issues = []
+    for field in _flat_fields(form_type):
+        value = (field_data.get(field["key"]) or "").strip()
+        if field["required"] and not value:
+            issues.append({
+                "field_key": field["key"], "label": field["label"],
+                "message": f"{field['label']} is required.", "required": True,
+            })
+            continue
+        problem = validate_field(field["kind"], value)
+        if problem:
+            issues.append({
+                "field_key": field["key"], "label": field["label"],
+                "message": f"{field['label']} {problem}.", "required": False,
+            })
+    return issues
 
 
 def valid_iso_date(value):
@@ -207,14 +321,10 @@ def validate_field_data(form_type, field_data):
     """Returns a list of human-readable error strings — empty means this
     filing is complete enough to generate a PDF / be signed off on.
     Checks required-ness and format together so the caller gets the
-    whole list at once instead of stopping at the first problem."""
-    errors = []
-    for field in _flat_fields(form_type):
-        value = (field_data.get(field["key"]) or "").strip()
-        if field["required"] and not value:
-            errors.append(f"{field['label']} is required.")
-            continue
-        problem = validate_field(field["kind"], value)
-        if problem:
-            errors.append(f"{field['label']} {problem}.")
-    return errors
+    whole list at once instead of stopping at the first problem.
+
+    The sentence-shaped view of field_issues() above; both report the
+    same problems in the same order, so the banner on the review screen
+    and the error a rejected submit returns can never disagree about
+    what is wrong with a filing."""
+    return [issue["message"] for issue in field_issues(form_type, field_data)]
