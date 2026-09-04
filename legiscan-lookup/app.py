@@ -1224,6 +1224,7 @@ CLIENTS_PAGE = page("Clients — Rotunda", "/clients", CLIENTS_BODY)
 # or Organization Search's "+ Add as client" link.
 CLIENT_DETAIL_BODY = _render_template(
     "client_detail_body.html",
+    HEARING_TIME_SRC=HEARING_TIME_SRC,
     BILL_STATUS_SRC=BILL_STATUS_SRC,
     POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
     TOAST_SRC=TOAST_SRC,
@@ -2174,6 +2175,13 @@ class Handler(BaseHTTPRequestHandler):
                     # off, which is exactly what makes the record worth
                     # keeping (see db.list_position_history).
                     "position_history": db.list_position_history(conn, user_id, client_id=client_id),
+                    # The people at this client, and what is coming up for
+                    # them. Both were things the record couldn't answer:
+                    # every real question about a bill is a question for a
+                    # person, and "what's next for them" meant reading the
+                    # bill table row by row.
+                    "contacts": db.list_client_contacts(conn, user_id, client_id),
+                    "hearings": db.list_hearings_for_client(conn, user_id, client_id),
                 })
             finally:
                 conn.close()
@@ -3042,10 +3050,18 @@ class Handler(BaseHTTPRequestHandler):
                 if not user_id:
                     return
                 client_id = body.get("id")
-                if client_id:
-                    db.update_client(conn, user_id, client_id, body)
-                else:
-                    db.create_client(conn, user_id, body)
+                try:
+                    if client_id:
+                        db.update_client(conn, user_id, client_id, body)
+                    else:
+                        db.create_client(conn, user_id, body)
+                except ValueError as err:
+                    # Compensation is normalized in db._client_values, not
+                    # here, so a bad amount is refused the same way
+                    # whether it arrives from this form or from a future
+                    # importer — see db.normalize_compensation.
+                    self._send_json(400, {"error": str(err)})
+                    return
                 conn.commit()
                 self._send_json(200, db.list_clients(conn, user_id))
             finally:
@@ -3199,6 +3215,65 @@ class Handler(BaseHTTPRequestHandler):
                 db.set_bill_amend_by_date(conn, bill_id, (body.get("amend_by_date") or "").strip())
                 conn.commit()
                 self._send_json(200, db.get_bill_report(conn, user_id, bill_id))
+            finally:
+                conn.close()
+            return
+
+        # The people at a client, and the firm's running notes on the
+        # relationship. Both hang off one client, so both take a
+        # client_id and hand back the fresh list the page re-renders from.
+        if parsed.path == "/api/client-contacts":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            try:
+                client_id = int(body.get("client_id"))
+            except (TypeError, ValueError):
+                self._send_json(400, {"error": "Missing or invalid client_id."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage contacts.")
+                if not user_id:
+                    return
+                try:
+                    if body.get("contact_id"):
+                        # The only edit this endpoint makes to an existing
+                        # contact: which one to call first.
+                        contacts = db.set_primary_contact(
+                            conn, user_id, client_id, int(body["contact_id"]))
+                    else:
+                        contacts = db.add_client_contact(conn, user_id, client_id, body)
+                except (ValueError, TypeError) as err:
+                    self._send_json(400, {"error": str(err) or "Invalid contact."})
+                    return
+                self._send_json(200, contacts)
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/client-notes":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            try:
+                client_id = int(body.get("client_id"))
+            except (TypeError, ValueError):
+                self._send_json(400, {"error": "Missing or invalid client_id."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to save notes.")
+                if not user_id:
+                    return
+                if not db.set_client_notes(conn, user_id, client_id, body.get("notes")):
+                    self._send_json(404, {"error": "No client found with that ID."})
+                    return
+                self._send_json(200, {"status": "saved"})
             finally:
                 conn.close()
             return
@@ -3627,6 +3702,26 @@ class Handler(BaseHTTPRequestHandler):
                 db.unflag_bill(conn, user_id, bill_id)
                 conn.commit()
                 self._send_json(200, db.list_flagged_bills(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/client-contacts":
+            try:
+                client_id = int((qs.get("client_id") or [""])[0])
+                contact_id = int((qs.get("id") or [""])[0])
+            except ValueError:
+                self._send_json(400, {"error": "client_id and id must be numbers."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage contacts.")
+                if not user_id:
+                    return
+                if not db.delete_client_contact(conn, user_id, client_id, contact_id):
+                    self._send_json(404, {"error": "No contact with that ID."})
+                    return
+                self._send_json(200, db.list_client_contacts(conn, user_id, client_id))
             finally:
                 conn.close()
             return
