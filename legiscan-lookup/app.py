@@ -542,6 +542,7 @@ CLIENT_QUICKADD_JS = _read_static_text("js/client_quickadd.js")
 CONFIRM_DELETE_JS = _read_static_text("js/confirm_delete.js")
 TITLE_CASE_JS = _read_static_text("js/title_case.js")
 ROW_MENU_JS = _read_static_text("js/row_menu.js")
+PAGE_PROGRESS_JS = _read_static_text("js/page_progress.js")
 
 
 # Every file the /static/ route will serve, name -> (bytes, content type),
@@ -560,6 +561,7 @@ STATIC_ASSETS = {
     "js/confirm_delete.js": (CONFIRM_DELETE_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/title_case.js": (TITLE_CASE_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/row_menu.js": (ROW_MENU_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/page_progress.js": (PAGE_PROGRESS_JS.encode("utf-8"), JS_CONTENT_TYPE),
 }
 
 STYLE_HREF = _asset_url("style.css")
@@ -573,6 +575,7 @@ CLIENT_QUICKADD_SRC = _asset_url("js/client_quickadd.js")
 CONFIRM_DELETE_SRC = _asset_url("js/confirm_delete.js")
 TITLE_CASE_SRC = _asset_url("js/title_case.js")
 ROW_MENU_SRC = _asset_url("js/row_menu.js")
+PAGE_PROGRESS_SRC = _asset_url("js/page_progress.js")
 
 TOP_BRAND = """<a href="/" class="top-brand">
   <span class="brand-mark" style="width:17px;height:17px"></span>
@@ -913,7 +916,9 @@ def page(title, path, body):
     builds its body, not just deduping this wrapper); LANDING_PAGE
     doesn't use either helper at all — it's a standalone full-bleed
     splash with no shared nav chrome (see LANDING_STYLE's own
-    comment)."""
+    comment). Those four are also the ones page_progress.js's bar skips
+    — one-time or low-frequency visits, not the daily-workflow page
+    transitions P2-32 was about."""
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -925,6 +930,8 @@ def page(title, path, body):
 {THEME_INIT_SCRIPT}
 </head>
 <body>
+<div id="page-progress"></div>
+<script src="{PAGE_PROGRESS_SRC}"></script>
 {app_shell(path, body)}
 </body>
 </html>
@@ -1091,9 +1098,30 @@ PAGE = page("Look up a bill — Rotunda", "/lookup", LOOKUP_BODY)
 # already prints (including the truncated-at-50 note) is this page's
 # honest equivalent of a "total" — there's no second, more meaningful
 # number sitting unused behind it.
+def _skeleton_rows(count, widths=(32, 14, 18, 10)):
+    """`count` rows of content-shaped grey bars — the loading-state
+    building block LOBBYING_BODY introduced first (below), rolled out
+    further as P2-32's fix for "no skeleton... on every list and detail
+    view": the layout the real content will occupy is visible the
+    instant the page's own HTML arrives, rather than a spinner that
+    gives no hint of what's coming or how much of it."""
+    row = "".join(f'<div class="skeleton-bar" style="width:{w}%"></div>' for w in widths)
+    return "".join(f'<div class="skeleton-row">{row}</div>' for _ in range(count))
+
+
+def _skeleton_panel(rows=3, row_widths=(60, 35, 45)):
+    """One .panel-shaped placeholder: a title-width bar in the head, then
+    `rows` skeleton rows — what DASHBOARD_BODY's four panels use below."""
+    return (
+        '<div class="panel"><div class="panel-head">'
+        '<div class="skeleton-bar" style="width:40%;height:1rem;margin:0"></div>'
+        f'</div>{_skeleton_rows(rows, row_widths)}</div>'
+    )
+
+
 LOBBYING_BODY = _render_template(
     "lobbying_body.html",
-    top_nav=''.join((f'<div class="skeleton-row">\n      <div class="skeleton-bar" style="width:32%"></div>\n      <div class="skeleton-bar" style="width:14%"></div>\n      <div class="skeleton-bar" style="width:18%"></div>\n      <div class="skeleton-bar" style="width:10%"></div>\n    </div>' for _ in range(3))),
+    top_nav=_skeleton_rows(3),
     TITLE_CASE_SRC=TITLE_CASE_SRC,
 )
 
@@ -1155,6 +1183,7 @@ DASHBOARD_BODY = _render_template(
     "dashboard_body.html",
     HEARING_TIME_SRC=HEARING_TIME_SRC,
     TITLE_CASE_SRC=TITLE_CASE_SRC,
+    skeleton_panels="".join(_skeleton_panel() for _ in range(4)),
 )
 
 DASHBOARD_PAGE = page("Dashboard — Rotunda", "/dashboard", DASHBOARD_BODY)
@@ -1162,6 +1191,10 @@ DASHBOARD_PAGE = page("Dashboard — Rotunda", "/dashboard", DASHBOARD_BODY)
 
 FLAGGED_BODY = _render_template(
     "flagged_body.html",
+    # Bill / Next action / Status / Last change / Clients — roughly the
+    # real table's own column proportions (see TABLE_HEAD in
+    # flagged_body.html's own script), not just an arbitrary set of bars.
+    skeleton_rows=_skeleton_rows(6, (25, 12, 10, 15, 28)),
     HEARING_TIME_SRC=HEARING_TIME_SRC,
     BILL_STATUS_SRC=BILL_STATUS_SRC,
     POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,

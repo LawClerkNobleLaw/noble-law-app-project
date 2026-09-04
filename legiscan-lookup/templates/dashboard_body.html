@@ -11,7 +11,11 @@
 <div id="error" role="alert" aria-live="assertive"></div>
 <div class="stat-grid" id="stats"></div>
 
-<div id="loading" class="show" style="padding:1rem 0"><span class="spinner"></span>Loading…</div>
+<div id="loading" class="skeleton show">
+  <div class="dash-grid">
+    {{skeleton_panels}}
+  </div>
+</div>
 
 <div class="dash-grid" id="grid" hidden>
   <div class="panel">

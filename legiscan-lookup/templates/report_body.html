@@ -1,7 +1,14 @@
 
 <div class="page-head"><div><a href="/flagged" class="sub" id="back-link">← Flagged bills</a></div></div>
 <div id="error" role="alert" aria-live="assertive"></div>
-<div id="loading" class="show"><span class="spinner"></span>Loading…</div>
+<div id="loading" class="skeleton show">
+  <div class="card">
+    <div class="skeleton-bar" style="width:18%;height:1.4rem;margin-bottom:0.6rem"></div>
+    <div class="skeleton-bar" style="width:22%;height:0.9rem;margin-bottom:0.8rem"></div>
+    <div class="skeleton-bar" style="width:70%;height:1.1rem;margin-bottom:0.5rem"></div>
+    <div class="skeleton-bar" style="width:55%"></div>
+  </div>
+</div>
 <div id="report"></div>
 
 <script src="{{HEARING_TIME_SRC}}"></script>

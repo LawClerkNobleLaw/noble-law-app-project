@@ -457,6 +457,19 @@
   .skeleton-row:last-child { border-bottom: none; }
   .skeleton-bar { height: 0.8rem; border-radius: var(--radius-sm); background: var(--accent-soft); animation: skeleton-pulse 1.2s ease-in-out infinite; }
   @keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+  /* P2-32's other half: this is a plain multi-page app (see app.py's own
+     module docstring — no client-side router), so every navigation is a
+     real browser page load and nothing can paint DURING the network
+     round trip itself. What this bar does instead: confirms the click
+     landed, immediately, and keeps confirming across the gap via
+     page_progress.js's sessionStorage flag, so a slow cold start (the
+     3-5s the audit measured) reads as "loading" instead of "did that
+     work?" — same job a native app's own progress indicator does. */
+  #page-progress {
+    position: fixed; top: 0; left: 0; height: 2px; width: 0%; opacity: 0;
+    background: var(--accent-solid); z-index: 200; pointer-events: none;
+  }
+  @media (prefers-reduced-motion: reduce) { #page-progress { transition: none !important; } }
   .empty { color: var(--slate); font-size: 0.9rem; }
   /* Small centered dialog, used by the flag-confirmation modal (see
      openFlagModal() in REPORT_BODY) and the "+ Add new client"
