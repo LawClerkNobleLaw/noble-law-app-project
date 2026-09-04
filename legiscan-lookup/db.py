@@ -20,7 +20,7 @@ import json
 import os
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import config
@@ -2251,27 +2251,45 @@ HEARING_HORIZON_DAYS = 14
 FILING_SOON_DAYS = 14
 
 
-def recent_bill_changes(conn, user_id, limit=8):
+def recent_bill_changes(conn, user_id, limit=8, since=None):
     """The newest changes the refresh job recorded across this user's
-    flagged bills, newest first — the dashboard's activity feed.
+    flagged bills, newest first — the dashboard's activity feed, and
+    (with `since`) the search page's "bills that moved this week".
 
     Unlike _latest_changes_for_bills (one row per bill, for a table
     column), this is a flat chronological feed across all of them: the
     same bill can appear twice if it moved twice, because "what has
     happened lately" is the question here, not "where does each bill
     stand". Empty on a database that predates bill_change_events, or
-    before the first refresh run finds anything move."""
+    before the first refresh run finds anything move.
+
+    `since` is an ISO date, inclusive. Note what it can and cannot mean:
+    the refresh job only visits bills somebody flagged, so "moved this
+    week" is always "moved among the bills we watch" and never a claim
+    about the Legislature at large. The screen says so in those words
+    rather than implying a completeness this data doesn't have."""
+    clause = "AND date(c.detected_at) >= date(?)" if since else ""
+    params = [user_id] + ([since] if since else []) + [limit]
     rows = conn.execute(
         f"""SELECT c.bill_id, c.detected_at, c.change_type, c.summary, c.description,
                   c.event_date, b.state, b.bill_number, b.title
            FROM bill_change_events c
            JOIN flagged_bills f ON f.bill_id = c.bill_id AND {_org_scope("f.user_id")}
            JOIN bills b ON b.id = c.bill_id
+           WHERE 1=1 {clause}
            ORDER BY c.detected_at DESC, c.id DESC
            LIMIT ?""",
-        (user_id, limit),
+        tuple(params),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def days_ago_in_california(days):
+    """An ISO date `days` before today in Sacramento — the left edge of a
+    "this week" window, measured on the same clock every other date cut
+    in this app uses (see today_in_california)."""
+    return (datetime.strptime(today_in_california(), "%Y-%m-%d")
+            - timedelta(days=days)).strftime("%Y-%m-%d")
 
 
 def _attention_items(flagged, filings, today):

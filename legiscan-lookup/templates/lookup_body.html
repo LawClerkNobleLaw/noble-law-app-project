@@ -24,6 +24,50 @@
   <div id="saved-list"></div>
 </div>
 
+<!-- ── The start state (P2-28) ──────────────────────────────────────────
+     A heading, a sentence and an empty input asked the user to already
+     know what they wanted, on one of the most-visited screens in the
+     app. Saved searches filled part of it in #45; these three fill the
+     rest.
+
+     They stand down once there are results on screen — they are
+     orientation, and the answer to the question outranks the prompts
+     for asking it. Saved searches keeps its own always-visible
+     behaviour, which was a decision made when it shipped. -->
+<div id="start-state">
+  <div class="panel" id="moved-panel" hidden style="margin-bottom:1rem">
+    <div class="panel-head">
+      <div>
+        <div class="title" id="moved-title">Moved this week</div>
+        <div class="sub">Among the bills your firm already tracks — this app only checks those.</div>
+      </div>
+      <a class="secondary" href="/flagged">All flagged bills →</a>
+    </div>
+    <div id="moved-list"></div>
+  </div>
+
+  <div class="panel" id="keywords-panel" hidden style="margin-bottom:1rem">
+    <div class="panel-head">
+      <div>
+        <div class="title">Your clients' interests</div>
+        <div class="sub">One click searches every California bill for that term.</div>
+      </div>
+    </div>
+    <div id="keywords-list" class="start-chips"></div>
+  </div>
+
+  <div class="panel" id="recent-panel" hidden style="margin-bottom:1rem">
+    <div class="panel-head">
+      <div>
+        <div class="title">Recent searches</div>
+        <div class="sub">Kept in this browser only — never sent anywhere.</div>
+      </div>
+      <button type="button" class="secondary" onclick="clearRecentSearches()">Clear</button>
+    </div>
+    <div id="recent-list" class="start-chips"></div>
+  </div>
+</div>
+
 <div id="loading" class="skeleton">
   <div class="panel">
     {{top_nav}}
@@ -109,6 +153,154 @@ let sessionScope = 'current';
 // flag anything either.
 fetch('/api/clients').then(res => res.ok ? res.json() : []).then(list => { allClients = list || []; }).catch(() => {});
 loadSavedSearches();
+loadStartState();
+
+/* ── The start state ───────────────────────────────────────────────────
+ *
+ * "A blank input asks the user to already know what they want. It's
+ * also a free slot on a frequently visited screen." (P2-28)
+ *
+ * Three fillers, each answering a different version of "what should I
+ * look at": what has moved among what we already track, what our
+ * clients care about, and what I searched for last time.
+ */
+function setStartStateVisible(visible) {
+  const el = document.getElementById('start-state');
+  if (el) el.hidden = !visible;
+}
+
+async function loadStartState() {
+  // A search prefilled from a link or the header box runs immediately,
+  // so there is no start state to build — see the prefill handling
+  // below.
+  await Promise.all([loadMovedThisWeek(), loadClientKeywords()]);
+  renderRecentSearches();
+}
+
+/* Moved this week ─────────────────────────────────────────────────────
+ *
+ * Scoped to the firm's own flagged bills, and labelled that way, because
+ * that is all the data can support: the refresh job only visits bills
+ * somebody flagged, so this is never a claim about the Legislature at
+ * large. Same house rule as the 601's "Known gaps" card — say what we
+ * don't know rather than imply we know it.
+ */
+async function loadMovedThisWeek() {
+  try {
+    const res = await fetch('/api/recent-changes?days=7');
+    if (!res.ok) return;                 // Signed out — no panel, no error.
+    const data = await res.json();
+    const changes = data.changes || [];
+    if (!changes.length) return;
+    document.getElementById('moved-panel').hidden = false;
+    // One line per bill, not per change: a bill that moved three times
+    // this week is still one thing to look at, and the newest change is
+    // the one that says where it stands now.
+    const seen = new Set();
+    const rows = changes.filter(c => !seen.has(c.bill_id) && seen.add(c.bill_id));
+    document.getElementById('moved-title').textContent =
+      `Moved this week · ${rows.length} bill${rows.length === 1 ? '' : 's'}`;
+    document.getElementById('moved-list').innerHTML = rows.map(c => `
+      <div class="saved-row">
+        <div class="saved-main">
+          <a class="saved-name" href="/report?bill_id=${c.bill_id}">${escapeText(c.state)} ${escapeText(c.bill_number)}</a>
+          <div class="saved-meta">${escapeText(c.title || '')}</div>
+          <div class="saved-meta">${escapeText(c.description || '')}</div>
+        </div>
+        <span class="tag" style="white-space:nowrap">${escapeText(c.summary || '')}</span>
+      </div>`).join('');
+  } catch (err) { /* The page works without it. */ }
+}
+
+/* Your clients' interests ─────────────────────────────────────────────
+ *
+ * clients.interests is free text the lobbyist wrote for Form 602 ("the
+ * client's industry/interests"), so it arrives as a phrase list rather
+ * than as tags: "Artificial intelligence, privacy; consumer
+ * protection". Split on the separators people actually type, and only
+ * on those — a term with an internal space ("housing element") is one
+ * search, and splitting on whitespace would turn it into two useless
+ * ones.
+ */
+function interestKeywords(clients) {
+  const seen = new Map();              // lowercased -> as first written
+  for (const c of clients || []) {
+    for (const raw of String(c.interests || '').split(/[,;\n|/]+/)) {
+      const term = raw.trim().replace(/\.$/, '');
+      // Two characters is a typo, not a search. Six words is a sentence
+      // someone wrote about their client, not a query.
+      if (term.length < 3 || term.split(/\s+/).length > 5) continue;
+      const key = term.toLowerCase();
+      if (!seen.has(key)) seen.set(key, { term, clients: [] });
+      seen.get(key).clients.push(c.name);
+    }
+  }
+  return Array.from(seen.values()).sort((a, b) => a.term.localeCompare(b.term));
+}
+
+async function loadClientKeywords() {
+  try {
+    const res = await fetch('/api/clients');
+    if (!res.ok) return;
+    const keywords = interestKeywords(await res.json());
+    if (!keywords.length) return;
+    document.getElementById('keywords-panel').hidden = false;
+    document.getElementById('keywords-list').innerHTML = keywords.map(k => `
+      <button type="button" class="start-chip" onclick="searchFor(${JSON.stringify(k.term).replace(/"/g, '&quot;')})"
+              title="Search every California bill for &quot;${escapeText(k.term)}&quot; — from ${escapeText(k.clients.join(', '))}">
+        ${escapeText(k.term)}
+      </button>`).join('');
+  } catch (err) { /* The page works without it. */ }
+}
+
+/* Recent searches ─────────────────────────────────────────────────────
+ *
+ * localStorage, not the database: what someone typed into a search box
+ * is theirs, not the firm's, and it is the kind of convenience that is
+ * fine to lose with a cleared browser. Same storage pattern the flagged
+ * list's sort uses. Wrapped in try/catch because a private window can
+ * make either call throw rather than just return nothing.
+ */
+const RECENT_KEY = 'lookup.recentSearches';
+const RECENT_LIMIT = 8;
+
+function readRecentSearches() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.filter(q => typeof q === 'string') : [];
+  } catch (err) { return []; }
+}
+
+function rememberSearch(q) {
+  const term = String(q || '').trim();
+  if (!term) return;
+  // Case-insensitive de-dupe, most recent first, so searching the same
+  // thing twice moves it up rather than adding a second copy.
+  const kept = readRecentSearches().filter(x => x.toLowerCase() !== term.toLowerCase());
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify([term, ...kept].slice(0, RECENT_LIMIT)));
+  } catch (err) { /* Nothing to remember with. Not an error worth showing. */ }
+  renderRecentSearches();
+}
+
+function renderRecentSearches() {
+  const recent = readRecentSearches();
+  document.getElementById('recent-panel').hidden = !recent.length;
+  document.getElementById('recent-list').innerHTML = recent.map(q => `
+    <button type="button" class="start-chip" onclick="searchFor(${JSON.stringify(q).replace(/"/g, '&quot;')})">
+      ${escapeText(q)}
+    </button>`).join('');
+}
+
+function clearRecentSearches() {
+  try { localStorage.removeItem(RECENT_KEY); } catch (err) { /* nothing to clear */ }
+  renderRecentSearches();
+}
+
+function searchFor(term) {
+  document.getElementById('q').value = term;
+  runSearch(term);
+}
 
 form.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -134,6 +326,8 @@ if (prefillQuery) {
 async function runSearch(q, keepFilters) {
   currentQuery = q;
   if (!keepFilters) {
+    rememberSearch(q);
+    setStartStateVisible(false);
     filters = { chamber: new Set(), measure_type: new Set(), status: new Set() };
     sortMode = 'relevance';
     selectedBillIds = new Set();

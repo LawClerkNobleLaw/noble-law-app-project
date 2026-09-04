@@ -2486,6 +2486,30 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # What has moved lately among the bills the firm watches — the
+        # search page's start state (P2-28). Deliberately scoped that way
+        # and labelled that way on screen: the refresh job only visits
+        # flagged bills, so this can never be a claim about the
+        # Legislature at large.
+        if parsed.path == "/api/recent-changes":
+            try:
+                days = min(max(int((qs.get("days") or ["7"])[0]), 1), 90)
+            except ValueError:
+                days = 7
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to see recent changes.")
+                if not user_id:
+                    return
+                self._send_json(200, {
+                    "days": days,
+                    "changes": db.recent_bill_changes(
+                        conn, user_id, limit=12, since=db.days_ago_in_california(days)),
+                })
+            finally:
+                conn.close()
+            return
+
         if parsed.path == "/api/saved-searches":
             conn = db.get_connection()
             try:
