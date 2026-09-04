@@ -7,6 +7,7 @@
   <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
     <a href="/flagged/calendar" class="secondary">Hearing calendar →</a>
     <a href="/flagged/sponsors" class="secondary">Sponsors &amp; votes →</a>
+    <a href="/flagged/archived" class="secondary">Archived →</a>
   </div>
 </div>
 <div id="error" role="alert" aria-live="assertive"></div>
@@ -861,15 +862,17 @@ function nextActionCell(r) {
 }
 
 async function unflag(billId) {
-  // Unflagging drops the bill's tracked position/client context with no
-  // undo — same real confirmation as removeClient() (see
-  // CONFIRM_DELETE_JS), not the browser's own confirm().
+  // Archives, doesn't delete (P1-16) — client(s), position(s) and notes
+  // all come along, and /flagged/archived is where they can be restored
+  // from. Still a real confirmation (see CONFIRM_DELETE_JS): it stops the
+  // daily refresh and drops the bill off every other list this app
+  // builds, which is worth a pause even though it's reversible now.
   const r = currentRows.find(x => x.bill_id === billId);
   const label = r ? `${r.state} ${r.bill_number}` : 'this bill';
   const clientNote = r && (r.assigned_clients || []).length
-    ? ' This also removes its assigned client(s) and saved position(s).'
+    ? ` — its assigned client(s) and saved position(s) come along`
     : '';
-  const ok = await confirmDelete('Unflag this bill?', `Unflag ${label}?${clientNote} This can't be undone.`);
+  const ok = await confirmDelete('Unflag this bill?', `Unflag ${label}? It stops being checked daily and moves to Archived${clientNote}. Restore it anytime from there.`);
   if (!ok) return;
   errorEl.className = '';
   try {

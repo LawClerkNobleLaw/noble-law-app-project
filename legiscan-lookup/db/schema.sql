@@ -362,6 +362,15 @@ CREATE TABLE IF NOT EXISTS flagged_bills (
   -- opened, which is treated as "everything recorded is unread" — the
   -- honest reading, since the user has demonstrably not seen any of it.
   last_viewed_at TEXT,
+  -- NULL while this flag is active. Set to the moment it was archived,
+  -- otherwise. "Unflag" used to DELETE this row and every bill_client_links
+  -- row hanging off it — the position a firm took, gone with no way back.
+  -- Archiving keeps the row (and its client assignments, and its notes)
+  -- and just stops the daily refresh and the digest from caring about it.
+  -- Flagging the same bill again clears this back to NULL (see
+  -- flag_bill's ON CONFLICT clause), so "restore" is the same action as
+  -- flagging, not a second code path.
+  archived_at TEXT,
   UNIQUE(user_id, bill_id)
 );
 CREATE INDEX IF NOT EXISTS idx_flagged_bills_user_id ON flagged_bills(user_id);

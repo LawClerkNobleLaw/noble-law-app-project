@@ -154,6 +154,8 @@ def _migrate(conn):
         conn.execute("ALTER TABLE flagged_bills ADD COLUMN notes TEXT")
     if "last_viewed_at" not in flagged_cols:
         conn.execute("ALTER TABLE flagged_bills ADD COLUMN last_viewed_at TEXT")
+    if "archived_at" not in flagged_cols:
+        conn.execute("ALTER TABLE flagged_bills ADD COLUMN archived_at TEXT")
 
     filing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(prepared_filings)")}
     for col in ("pdf_field_data_hash", "client_row_ids", "trigger_date", "due_date"):
@@ -466,25 +468,59 @@ def flag_bill(conn, user_id, bill_id):
     conn.execute(
         """INSERT INTO flagged_bills (user_id, bill_id, flagged_at)
            VALUES (?, ?, datetime('now'))
-           ON CONFLICT(user_id, bill_id) DO NOTHING""",
+           ON CONFLICT(user_id, bill_id) DO UPDATE SET archived_at = NULL""",
         (user_id, bill_id),
     )
+    # The DO UPDATE is what makes "restore" the same action as flagging —
+    # see archive_flagged_bill. A bill flagged, archived, then flagged
+    # again comes back with its client assignments and notes intact,
+    # because those were never touched.
 
 
-def unflag_bill(conn, user_id, bill_id):
-    conn.execute(f"DELETE FROM flagged_bills WHERE {ORG_SCOPE} AND bill_id = ?", (user_id, bill_id))
-    # Any client assignments for this (user, bill) go with it — an
-    # unflagged bill shouldn't leave a dangling "assigned to client X"
-    # relationship the UI no longer has anywhere to show.
-    conn.execute(f"DELETE FROM bill_client_links WHERE {ORG_SCOPE} AND bill_id = ?", (user_id, bill_id))
-    still_flagged_by_someone = conn.execute(
-        "SELECT 1 FROM flagged_bills WHERE bill_id = ?", (bill_id,)
+def archive_flagged_bill(conn, user_id, bill_id):
+    """Archive (P1-16), not delete. The old unflag_bill DELETEd this row
+    and every bill_client_links row hanging off it — the client this bill
+    was assigned to, and the position taken on it, gone with no way back.
+    Archiving stops the daily refresh and the digest from caring about
+    this bill without destroying either: bill_client_links and notes are
+    left exactly as they were, and flag_bill (re-flagging) is the only
+    "restore" this needs, since it clears archived_at back to NULL."""
+    conn.execute(
+        f"""UPDATE flagged_bills SET archived_at = datetime('now')
+           WHERE {ORG_SCOPE} AND bill_id = ? AND archived_at IS NULL""",
+        (user_id, bill_id),
+    )
+    still_active_for_someone = conn.execute(
+        "SELECT 1 FROM flagged_bills WHERE bill_id = ? AND archived_at IS NULL", (bill_id,)
     ).fetchone()
-    if not still_flagged_by_someone:
-        # Nobody has this one flagged anymore — stop spending daily
-        # LegiScan quota refreshing a bill nobody's tracking. Doesn't
-        # touch `bills` itself; just the "worth refreshing daily" list.
+    if not still_active_for_someone:
+        # Nobody has this one actively flagged anymore — stop spending
+        # daily LegiScan quota refreshing a bill nobody's tracking.
+        # Doesn't touch `bills` itself, or the archived row; just the
+        # "worth refreshing daily" list.
         remove_from_watchlist(conn, bill_id)
+
+
+def list_archived_bills(conn, user_id):
+    """The firm's archived flags, most recently archived first — the
+    other half of P1-16's "prefer archive over delete": somewhere to see
+    what was archived and restore it. Client assignments and notes ride
+    along, same as they did before archiving, so a restored bill comes
+    back exactly as it left."""
+    rows = conn.execute(
+        f"""SELECT f.bill_id, f.archived_at, f.flagged_at,
+                  b.state, b.bill_number, b.title, b.status_label, b.url
+           FROM flagged_bills f
+           JOIN bills b ON b.id = f.bill_id
+           WHERE {_org_scope("f.user_id")} AND f.archived_at IS NOT NULL
+           ORDER BY f.archived_at DESC""",
+        (user_id,),
+    ).fetchall()
+    result = [dict(r) for r in rows]
+    clients_by_bill = clients_for_bills(conn, user_id, [r["bill_id"] for r in result])
+    for r in result:
+        r["assigned_clients"] = clients_by_bill.get(r["bill_id"], [])
+    return result
 
 
 def _days_between(start, end):
@@ -639,7 +675,7 @@ def tracking_for_bills(conn, user_id, bill_ids):
     flagged = {
         row["bill_id"] for row in conn.execute(
             f"""SELECT bill_id FROM flagged_bills
-                WHERE {ORG_SCOPE} AND bill_id IN ({placeholders})""",
+                WHERE {ORG_SCOPE} AND archived_at IS NULL AND bill_id IN ({placeholders})""",
             (user_id, *bill_ids),
         )
     }
@@ -662,7 +698,7 @@ def list_flagged_bills(conn, user_id, today=None):
            JOIN bills b ON b.id = f.bill_id
            LEFT JOIN watchlist w ON w.bill_id = f.bill_id
            LEFT JOIN bill_views v ON v.bill_id = f.bill_id AND v.user_id = ?
-           WHERE {_org_scope("f.user_id")}
+           WHERE {_org_scope("f.user_id")} AND f.archived_at IS NULL
            ORDER BY b.bill_number""",
         # Twice: once for "has this reader seen it", once for "does this
         # reader's firm track it". Same person, two different questions.
@@ -755,7 +791,8 @@ def list_hearings_for_flagged_bills(conn, user_id, today=None):
                   b.state, b.bill_number, b.title
            FROM bill_hearings h
            JOIN bills b ON b.id = h.bill_id
-           JOIN flagged_bills f ON f.bill_id = h.bill_id AND {_org_scope("f.user_id")}""",
+           JOIN flagged_bills f ON f.bill_id = h.bill_id
+              AND {_org_scope("f.user_id")} AND f.archived_at IS NULL""",
         (user_id,),
     ).fetchall()
 
@@ -774,7 +811,7 @@ def list_hearings_for_flagged_bills(conn, user_id, today=None):
     past.sort(key=lambda h: (h["date"] or "", h["time"] or ""), reverse=True)
 
     flagged_count = conn.execute(
-        f"SELECT COUNT(*) FROM flagged_bills WHERE {ORG_SCOPE}", (user_id,)
+        f"SELECT COUNT(*) FROM flagged_bills WHERE {ORG_SCOPE} AND archived_at IS NULL", (user_id,)
     ).fetchone()[0]
 
     return {
@@ -810,7 +847,8 @@ def list_sponsor_vote_rollup(conn, user_id):
         f"""SELECT s.name, s.party, s.role, s.bill_id, b.state, b.bill_number, b.title
            FROM bill_sponsors s
            JOIN bills b ON b.id = s.bill_id
-           JOIN flagged_bills f ON f.bill_id = s.bill_id AND {_org_scope("f.user_id")}
+           JOIN flagged_bills f ON f.bill_id = s.bill_id
+              AND {_org_scope("f.user_id")} AND f.archived_at IS NULL
            ORDER BY s.name""",
         (user_id,),
     ).fetchall()
@@ -819,7 +857,8 @@ def list_sponsor_vote_rollup(conn, user_id):
     for r in conn.execute(
         f"""SELECT v.bill_id, v.date, v.chamber, v.description, v.yea, v.nay, v.nv, v.absent, v.total, v.passed
            FROM votes v
-           JOIN flagged_bills f ON f.bill_id = v.bill_id AND {_org_scope("f.user_id")}
+           JOIN flagged_bills f ON f.bill_id = v.bill_id
+              AND {_org_scope("f.user_id")} AND f.archived_at IS NULL
            ORDER BY v.date""",
         (user_id,),
     ).fetchall():
@@ -845,7 +884,8 @@ def list_users_with_flagged_bills(conn):
     changed today."""
     rows = conn.execute(
         """SELECT DISTINCT u.id AS user_id, u.email
-           FROM users u JOIN flagged_bills f ON f.user_id = u.id"""
+           FROM users u JOIN flagged_bills f ON f.user_id = u.id
+           WHERE f.archived_at IS NULL"""
     ).fetchall()
     return [(r["user_id"], r["email"]) for r in rows]
 
@@ -868,7 +908,8 @@ def list_recipients(conn):
         """SELECT DISTINCT u.id AS user_id, u.email FROM users u
            WHERE EXISTS (
                    SELECT 1 FROM flagged_bills f JOIN users o ON o.id = f.user_id
-                    WHERE COALESCE(o.org_id, -o.id) = COALESCE(u.org_id, -u.id))
+                    WHERE f.archived_at IS NULL
+                      AND COALESCE(o.org_id, -o.id) = COALESCE(u.org_id, -u.id))
               OR EXISTS (
                    SELECT 1 FROM saved_searches s JOIN users o ON o.id = s.user_id
                     WHERE COALESCE(o.org_id, -o.id) = COALESCE(u.org_id, -u.id))"""
@@ -878,7 +919,7 @@ def list_recipients(conn):
 
 def list_flagged_bill_ids_for_user(conn, user_id):
     return {r["bill_id"] for r in conn.execute(
-        f"SELECT bill_id FROM flagged_bills WHERE {ORG_SCOPE}", (user_id,)
+        f"SELECT bill_id FROM flagged_bills WHERE {ORG_SCOPE} AND archived_at IS NULL", (user_id,)
     ).fetchall()}
 
 
@@ -1669,7 +1710,8 @@ def link_bill_to_client(conn, user_id, bill_id, client_id, position="watch",
     if not owns_client:
         raise ValueError("That client doesn't belong to your account.")
     has_flagged = conn.execute(
-        f"SELECT 1 FROM flagged_bills WHERE {ORG_SCOPE} AND bill_id = ?", (user_id, bill_id)
+        f"SELECT 1 FROM flagged_bills WHERE {ORG_SCOPE} AND archived_at IS NULL AND bill_id = ?",
+        (user_id, bill_id),
     ).fetchone()
     if not has_flagged:
         raise ValueError("Flag this bill before assigning it to a client.")
@@ -1869,9 +1911,15 @@ def get_bill_report(conn, user_id, bill_id):
     # assigned" instead of inferring it from assigned_clients being
     # empty either way.
     flag_row = conn.execute(
-        f"SELECT notes FROM flagged_bills WHERE {ORG_SCOPE} AND bill_id = ?", (user_id, bill_id)
+        f"SELECT notes, archived_at FROM flagged_bills WHERE {ORG_SCOPE} AND bill_id = ?",
+        (user_id, bill_id),
     ).fetchone()
-    result["flagged"] = flag_row is not None
+    result["flagged"] = flag_row is not None and flag_row["archived_at"] is None
+    # A third state alongside flagged/not: archived (P1-16). The client
+    # links and notes below are unaffected by which of the three this
+    # is — archiving never touched them — so this only changes which
+    # action button the report page shows.
+    result["archived"] = flag_row is not None and flag_row["archived_at"] is not None
     # Empty string rather than None so the textarea binds cleanly, and
     # only ever this user's own note — see flagged_bills.notes.
     result["notes"] = (flag_row["notes"] if flag_row else None) or ""
@@ -2274,7 +2322,8 @@ def recent_bill_changes(conn, user_id, limit=8, since=None):
         f"""SELECT c.bill_id, c.detected_at, c.change_type, c.summary, c.description,
                   c.event_date, b.state, b.bill_number, b.title
            FROM bill_change_events c
-           JOIN flagged_bills f ON f.bill_id = c.bill_id AND {_org_scope("f.user_id")}
+           JOIN flagged_bills f ON f.bill_id = c.bill_id
+              AND {_org_scope("f.user_id")} AND f.archived_at IS NULL
            JOIN bills b ON b.id = c.bill_id
            WHERE 1=1 {clause}
            ORDER BY c.detected_at DESC, c.id DESC

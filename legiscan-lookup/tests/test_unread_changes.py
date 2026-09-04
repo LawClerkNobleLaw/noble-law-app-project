@@ -121,7 +121,7 @@ def test_having_read_a_bill_survives_unflagging_it(conn):
     db.mark_bill_viewed(conn, user_id, 1, viewed_at="2026-09-01T09:00:00Z")
     conn.commit()
 
-    db.unflag_bill(conn, user_id, 1)
+    db.archive_flagged_bill(conn, user_id, 1)
     db.flag_bill(conn, user_id, 1)
     _change(conn, 1, "2026-10-01T06:00:00Z", summary="Amended")
     conn.commit()

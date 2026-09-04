@@ -1,0 +1,135 @@
+
+<div class="page-head">
+  <div>
+    <h1>Archived Bills</h1>
+    <p class="sub">Unflagged, not deleted (P1-16). Every client assignment, position and note stayed exactly where it was — restore any of these anytime.</p>
+  </div>
+  <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+    <a href="/flagged" class="secondary">← Flagged bills</a>
+  </div>
+</div>
+<div id="error" role="alert" aria-live="assertive"></div>
+
+<div class="panel">
+  <div class="panel-head"><div class="title">Archived</div></div>
+  <div id="loading" class="show" style="padding:1rem 1.15rem"><span class="spinner"></span>Loading…</div>
+  <div id="list"></div>
+</div>
+
+<script src="{{BILL_STATUS_SRC}}"></script>
+<script src="{{TOAST_SRC}}"></script>
+<script src="{{POSITION_HISTORY_SRC}}"></script>
+<script src="{{TITLE_CASE_SRC}}"></script>
+<script>
+const errorEl = document.getElementById('error');
+const listEl = document.getElementById('list');
+let currentRows = [];
+
+function escapeText(text) {
+  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Same "no Z means UTC" reading flagged_body.html's own fmtDateTime gives
+// archived_at/flagged_at — both come from SQLite's datetime('now').
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso.includes('Z') || iso.includes('+') ? iso : iso + 'Z');
+  if (isNaN(d)) return iso;
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function clientChipsHtml(r) {
+  const clients = r.assigned_clients || [];
+  if (!clients.length) return '<span class="sub">No client assigned</span>';
+  return clients.map(c =>
+    `<span class="position-badge ${c.position}">${escapeText(titleCaseName(c.name))} · ${positionLabel(c.position)}</span>`
+  ).join(' ');
+}
+
+function rowHtml(r) {
+  return `
+    <tr>
+      <td>
+        <div class="bill-row">
+          <div class="bill-icon">
+            <svg viewBox="0 0 14 14" fill="currentColor"><rect x="1" y="1" width="5" height="5" rx="1"/><rect x="8" y="1" width="5" height="5" rx="1"/><rect x="1" y="8" width="5" height="5" rx="1"/><rect x="8" y="8" width="5" height="5" rx="1"/></svg>
+          </div>
+          <div class="bill-main">
+            <div class="bill-ident">${r.state} ${r.bill_number}</div>
+            <div class="bill-name" title="${(r.title || '').replace(/"/g, '&quot;')}">${r.title || ''}</div>
+          </div>
+        </div>
+      </td>
+      <td>${statusBadgeHtml(r.status_label || 'In progress')}</td>
+      <td>${clientChipsHtml(r)}</td>
+      <td class="date">${fmtDateTime(r.archived_at)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <a class="secondary" href="/report?bill_id=${r.bill_id}&from_label=Archived&from_href=%2Fflagged%2Farchived">Bill report</a>
+        <button type="button" class="secondary" onclick="restore(${r.bill_id})">Restore</button>
+      </td>
+    </tr>
+  `;
+}
+
+function render(rows) {
+  currentRows = rows;
+  if (!rows.length) {
+    listEl.innerHTML = `<p class="empty">Nothing archived. Unflagging a bill moves it here instead of deleting it — its client(s), position(s) and notes come along, so restoring later is exactly like flagging it again.</p>`;
+    return;
+  }
+  listEl.innerHTML = `
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>Bill</th><th>Status</th><th>Clients &amp; positions</th><th>Archived</th><th></th></tr></thead>
+      <tbody>${rows.map(rowHtml).join('')}</tbody>
+    </table>
+    </div>
+  `;
+}
+
+async function load() {
+  errorEl.className = '';
+  try {
+    const res = await fetch('/api/flagged/archived');
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load archived bills');
+    render(data);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    document.getElementById('loading').className = '';
+  }
+}
+
+// Restoring is re-flagging (see db.flag_bill's ON CONFLICT clause) — the
+// client(s) this bill was assigned to, and the position(s) taken on it,
+// were never touched by archiving, so there's nothing left to ask for.
+// /api/flag/restore, not /api/flag: no fresh LegiScan detail to fetch
+// for a bill that was already being refreshed daily until it was
+// archived, and this list can hold more than one row worth restoring.
+async function restore(billId) {
+  errorEl.className = '';
+  const r = currentRows.find(x => x.bill_id === billId);
+  const label = r ? `${r.state} ${r.bill_number}` : 'this bill';
+  try {
+    const res = await fetch('/api/flag/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bill_id: billId }),
+    });
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not restore this bill');
+    currentRows = currentRows.filter(x => x.bill_id !== billId);
+    render(currentRows);
+    showToast(`Restored ${label} — back on your flagged list, with its client(s) and notes intact.`);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+load();
+</script>

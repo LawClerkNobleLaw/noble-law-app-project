@@ -1,5 +1,5 @@
 """
-Tests for db.py's flagging and client functions — flag_bill/unflag_bill
+Tests for db.py's flagging and client functions — flag_bill/archive_flagged_bill
 (and how they touch the shared watchlist underneath), create_client/
 get_client/update_client/delete_client, and link_bill_to_client's
 ownership/flagged-first validation.
@@ -11,7 +11,7 @@ import db
 from conftest import insert_bill, insert_user
 
 
-# ── flag_bill / unflag_bill ─────────────────────────────────────────
+# ── flag_bill / archive_flagged_bill ────────────────────────────────
 
 def test_flag_bill_adds_to_flagged_and_watchlist(conn):
     user_id = insert_user(conn)
@@ -39,7 +39,7 @@ def test_flag_bill_is_idempotent(conn):
     assert rows["n"] == 1
 
 
-def test_flagging_by_two_users_keeps_bill_on_watchlist_until_both_unflag(conn):
+def test_flagging_by_two_users_keeps_bill_on_watchlist_until_both_archive(conn):
     bill_id = insert_bill(conn)
     user_a = insert_user(conn, email="a@example.com")
     user_b = insert_user(conn, email="b@example.com")
@@ -48,39 +48,104 @@ def test_flagging_by_two_users_keeps_bill_on_watchlist_until_both_unflag(conn):
     db.flag_bill(conn, user_b, bill_id)
     conn.commit()
 
-    db.unflag_bill(conn, user_a, bill_id)
+    db.archive_flagged_bill(conn, user_a, bill_id)
     conn.commit()
-    # user_b still has it flagged — the daily refresh job should keep
-    # refreshing this bill, so it must still be on the shared watchlist.
+    # user_b still has it actively flagged — the daily refresh job should
+    # keep refreshing this bill, so it must still be on the shared watchlist.
     assert bill_id in db.list_watchlist_bill_ids(conn)
 
-    db.unflag_bill(conn, user_b, bill_id)
+    db.archive_flagged_bill(conn, user_b, bill_id)
     conn.commit()
-    # Nobody has it flagged anymore — no point spending daily LegiScan
-    # quota on it.
+    # Nobody has it actively flagged anymore — no point spending daily
+    # LegiScan quota on it.
     assert bill_id not in db.list_watchlist_bill_ids(conn)
 
 
-def test_unflag_bill_removes_bill_client_links(conn):
+def test_archive_flagged_bill_preserves_bill_client_links_and_notes(conn):
+    """P1-16: archiving is not deleting. The old unflag_bill DELETEd the
+    flagged_bills row and every bill_client_links row hanging off it —
+    this is the fix, and the whole point of the finding."""
     user_id = insert_user(conn)
     bill_id = insert_bill(conn)
     db.flag_bill(conn, user_id, bill_id)
     client_id = db.create_client(conn, user_id, {"name": "Acme Corp"})
     conn.commit()
     db.link_bill_to_client(conn, user_id, bill_id, client_id, "support")
+    db.set_bill_notes(conn, user_id, bill_id, "Testified in support, June hearing.")
     conn.commit()
 
-    db.unflag_bill(conn, user_id, bill_id)
+    db.archive_flagged_bill(conn, user_id, bill_id)
     conn.commit()
 
     links = conn.execute(
         "SELECT COUNT(*) AS n FROM bill_client_links WHERE user_id = ? AND bill_id = ?",
         (user_id, bill_id),
     ).fetchone()
-    assert links["n"] == 0
+    assert links["n"] == 1
+    row = conn.execute(
+        "SELECT notes, archived_at FROM flagged_bills WHERE user_id = ? AND bill_id = ?",
+        (user_id, bill_id),
+    ).fetchone()
+    assert row["notes"] == "Testified in support, June hearing."
+    assert row["archived_at"] is not None
 
 
-def test_unflag_bill_scoped_to_the_right_user(conn):
+def test_archive_flagged_bill_hides_it_from_the_active_list(conn):
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    conn.commit()
+
+    db.archive_flagged_bill(conn, user_id, bill_id)
+    conn.commit()
+
+    assert bill_id not in db.list_flagged_bill_ids_for_user(conn, user_id)
+    archived = db.list_archived_bills(conn, user_id)
+    assert [r["bill_id"] for r in archived] == [bill_id]
+
+
+def test_archived_bill_no_longer_reads_as_tracked_in_search(conn):
+    """tracking_for_bills is what search results (P2-27) use to mark a row
+    already flagged. An archived bill isn't being tracked anymore, so it
+    shouldn't come back annotated as if it still were."""
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    conn.commit()
+
+    db.archive_flagged_bill(conn, user_id, bill_id)
+    conn.commit()
+
+    assert db.tracking_for_bills(conn, user_id, [bill_id]) == {}
+
+
+def test_flag_bill_restores_an_archived_bill(conn):
+    """Re-flagging is the whole restore path (see flag_bill's ON CONFLICT
+    clause) — no separate "restore" function, because there's nothing to
+    do besides clear archived_at back to NULL."""
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    client_id = db.create_client(conn, user_id, {"name": "Acme Corp"})
+    conn.commit()
+    db.link_bill_to_client(conn, user_id, bill_id, client_id, "oppose")
+    conn.commit()
+    db.archive_flagged_bill(conn, user_id, bill_id)
+    conn.commit()
+
+    db.flag_bill(conn, user_id, bill_id)
+    conn.commit()
+
+    assert bill_id in db.list_flagged_bill_ids_for_user(conn, user_id)
+    assert db.list_archived_bills(conn, user_id) == []
+    links = conn.execute(
+        "SELECT position FROM bill_client_links WHERE user_id = ? AND bill_id = ?",
+        (user_id, bill_id),
+    ).fetchone()
+    assert links["position"] == "oppose"
+
+
+def test_archive_flagged_bill_scoped_to_the_right_user(conn):
     bill_id = insert_bill(conn)
     user_a = insert_user(conn, email="a@example.com")
     user_b = insert_user(conn, email="b@example.com")
@@ -88,7 +153,7 @@ def test_unflag_bill_scoped_to_the_right_user(conn):
     db.flag_bill(conn, user_b, bill_id)
     conn.commit()
 
-    db.unflag_bill(conn, user_a, bill_id)
+    db.archive_flagged_bill(conn, user_a, bill_id)
     conn.commit()
 
     assert bill_id not in db.list_flagged_bill_ids_for_user(conn, user_a)
@@ -210,6 +275,22 @@ def test_delete_client_with_bill_links_does_not_raise(conn):
 def test_link_bill_to_client_requires_flagging_first(conn):
     user_id = insert_user(conn)
     bill_id = insert_bill(conn)  # note: never flagged
+    client_id = db.create_client(conn, user_id, {"name": "Acme Corp"})
+    conn.commit()
+
+    with pytest.raises(ValueError):
+        db.link_bill_to_client(conn, user_id, bill_id, client_id, "support")
+
+
+def test_link_bill_to_client_requires_an_active_flag_not_an_archived_one(conn):
+    """An archived flag still exists (P1-16 doesn't delete it), but a new
+    client can't be assigned to a bill nobody's actively tracking anymore
+    — restore it first."""
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    conn.commit()
+    db.archive_flagged_bill(conn, user_id, bill_id)
     client_id = db.create_client(conn, user_id, {"name": "Acme Corp"})
     conn.commit()
 
@@ -445,20 +526,21 @@ def test_bill_notes_clear_back_to_empty(conn):
     assert db.get_bill_report(conn, user_id, bill_id)["notes"] == ""
 
 
-def test_unflagging_takes_the_notes_with_it(conn):
-    # The note lives on the flag, so re-flagging starts clean rather than
-    # resurrecting a note the user believed they had discarded.
+def test_archiving_and_restoring_keeps_the_notes(conn):
+    # P1-16: the note lives on the flag, and archiving no longer deletes
+    # that row — so unlike the old unflag_bill, a note survives an
+    # archive/restore round trip instead of coming back empty.
     user_id = insert_user(conn)
     bill_id = insert_bill(conn)
     db.flag_bill(conn, user_id, bill_id)
     db.set_bill_notes(conn, user_id, bill_id, "Working note.")
     conn.commit()
 
-    db.unflag_bill(conn, user_id, bill_id)
+    db.archive_flagged_bill(conn, user_id, bill_id)
     db.flag_bill(conn, user_id, bill_id)
     conn.commit()
 
-    assert db.get_bill_report(conn, user_id, bill_id)["notes"] == ""
+    assert db.get_bill_report(conn, user_id, bill_id)["notes"] == "Working note."
 
 
 def test_report_upcoming_hearings_use_california_today(conn):

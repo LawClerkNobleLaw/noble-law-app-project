@@ -330,8 +330,7 @@ async function unflag() {
     cost.push(`${assigned.length === 1 ? 'its assigned client and saved position' : `its ${assigned.length} assigned clients and saved positions`}`);
   }
   if (r && r.notes) cost.push('your notes');
-  const detail = cost.length ? ` This also removes ${cost.join(' and ')}.` : '';
-  const ok = await confirmDelete('Unflag this bill?', `Unflag ${label}?${detail} It stops being checked daily. This can't be undone.`);
+  const ok = await confirmDelete('Unflag this bill?', `Unflag ${label}? It stops being checked daily and moves to Archived on your flagged list${cost.length ? ` — ${cost.join(' and ')} come along` : ''}. Restore it anytime from there.`);
   if (!ok) return;
   errorEl.className = '';
   try {
@@ -340,6 +339,38 @@ async function unflag() {
       const data = await res.json();
       throw new Error(data.error || 'Could not unflag bill');
     }
+    load();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+// Restoring is exactly flagging again (see db.flag_bill's ON CONFLICT
+// clause) — the bill's client assignments, positions and notes were
+// never touched by archiving, so there's nothing left to ask for. No
+// modal: openFlagModal() is for a bill this user has never flagged,
+// where the client/position picker is genuinely new information. And no
+// LegiScan round trip either — /api/flag/restore skips the fresh-detail
+// fetch openFlagModal's POST /api/flag needs for a brand-new flag,
+// since this bill was already being refreshed daily right up until it
+// was archived.
+async function restore() {
+  if (!currentReport) return;
+  errorEl.className = '';
+  try {
+    const res = await fetch('/api/flag/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bill_id: currentReport.bill_id }),
+    });
+    if (res.status === 401) {
+      window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+      return;
+    }
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not restore this bill');
+    showToast('Restored — back on your flagged list, with its client(s) and notes intact.');
     load();
   } catch (err) {
     errorEl.textContent = err.message;
@@ -377,7 +408,13 @@ function render(r) {
                      title="${r.digest_muted ? 'Start emailing me about this bill again' : "Stop emailing me about this bill — it stays flagged"}">
                ${r.digest_muted ? '\u{1F515} Muted in digest' : 'Mute in digest'}</button>
              <button type="button" class="danger" onclick="unflag()">Unflag</button>`
-          : '<button id="flag-btn" class="secondary" onclick="openFlagModal()">Flag this bill</button>'}
+          : r.archived
+            // Restoring is re-flagging (db.flag_bill), not the modal
+            // openFlagModal() drives — the client(s) this was assigned
+            // to are still attached, so there's nothing left to ask.
+            ? `<span class="status-badge">🗄️ Archived</span>
+               <button type="button" class="secondary" onclick="restore()">Restore</button>`
+            : '<button id="flag-btn" class="secondary" onclick="openFlagModal()">Flag this bill</button>'}
       </div>
     </div>
 
