@@ -391,9 +391,59 @@ CREATE TABLE IF NOT EXISTS clients (
   effective_date     TEXT,                 -- Form 601: "Effective Date" — when lobbying for this client began
   contract_period    TEXT,                 -- Form 601: "Period of Contract" — free text (e.g. a date range, or "Ongoing")
   agencies_lobbied   TEXT,                 -- Form 601: "Agencies to be Lobbied" on this client's behalf
+  -- What the firm is paid for this client, and on what basis. The
+  -- quarterly forms (615 in particular) report a compensation figure per
+  -- client per period, and the client record was the one place that
+  -- number could live without being re-typed into every filing.
+  --
+  -- Two columns rather than one string, because a filing needs the
+  -- NUMBER and a human needs the BASIS: "$5,000" alone can't be turned
+  -- into a quarter, and "$5,000/month" can't be added up. amount is a
+  -- plain decimal string (TEXT, not REAL — money through binary floats
+  -- is a rounding bug waiting for a total), period is one of
+  -- db.COMPENSATION_PERIODS.
+  --
+  -- No quarterly derivation is written yet, on purpose: Form 615 doesn't
+  -- exist in this app, and deriving a statutory figure for a form nobody
+  -- can file would be guessing at the form's own rules. The fact is
+  -- stored so 615 can read it; the arithmetic belongs with 615.
+  compensation_amount TEXT,
+  compensation_period TEXT,                -- monthly | quarterly | annual | hourly | other
+  -- The firm's own running notes on this relationship. The bill-level
+  -- equivalent is flagged_bills.notes; this is the client-level one, and
+  -- like that one it belongs to the firm rather than to whoever typed
+  -- it (see the ORG_SCOPE note in db.py).
+  notes              TEXT,
   created_at         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_clients_user_id ON clients(user_id);
+
+-- ── Who to call at a client ───────────────────────────────────────────
+--
+-- A client record held an address and no people. Every real question
+-- about a bill ("do they want us to oppose this?") is a question for a
+-- person, and the firm was keeping those names somewhere this app
+-- couldn't see.
+--
+-- Its own table rather than columns on clients, because the count is
+-- genuinely open: a trade association has a GC, a policy director and a
+-- comms lead, and a one-person shop has one contact. Org-owned through
+-- the creating user like everything else here.
+CREATE TABLE IF NOT EXISTS client_contacts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id),
+  client_id  INTEGER NOT NULL REFERENCES clients(id),
+  name       TEXT NOT NULL,
+  title      TEXT,
+  email      TEXT,
+  phone      TEXT,
+  -- The one to call first. At most one per client is enforced in
+  -- db.py (set_primary_contact) rather than by a constraint, since
+  -- SQLite can't express "at most one row per client with this flag".
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_client_contacts_client ON client_contacts(client_id);
 
 -- Which of a user's own clients a flagged bill is being tracked for.
 -- Many-to-many on purpose — a bill can matter to more than one client.

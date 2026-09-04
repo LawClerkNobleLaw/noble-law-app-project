@@ -532,6 +532,32 @@
   select.position-select.support { border-color: var(--good); color: var(--good); }
   select.position-select.oppose { border-color: var(--error); color: var(--error); }
   select.position-select.watch { border-color: var(--accent); color: var(--accent); }
+  /* ── The client record's own facts (P2-26) ──
+     Compensation, effective date, period of contract and agencies
+     lobbied. The Form 601 review asked each client for these and the
+     record didn't hold them, so the one workflow this app automates
+     ended in hand-typing, per client, per filing.
+
+     A definition list in all but name: label above value, wrapping into
+     as many columns as fit, and a fact with no value is omitted rather
+     than rendered blank — an empty value under a label reads as a
+     broken field rather than as an unanswered question. */
+  .client-facts {
+    display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-5);
+    margin-top: 0.9rem; padding-top: 0.8rem; border-top: 1px solid var(--rule);
+  }
+  .client-facts:empty { display: none; }
+  .client-fact { display: flex; flex-direction: column; gap: 0.1rem; min-width: 8rem; }
+  .client-fact-label {
+    font-size: 0.68rem; font-weight: 600; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--slate);
+  }
+  /* Compensation is the one of the four a reader scans for — it's the
+     number a quarterly filing reports — so it gets weight without
+     getting its own colour. */
+  .client-fact-value { font-size: 0.88rem; }
+  .client-fact:first-child .client-fact-value { font-weight: 700; }
+
   /* clientCell()'s per-row assignment, grouped into one pill-shaped unit
      (name + position-select + remove ×) instead of a loose flex row —
      the container itself carries the pill styling so it visually reads

@@ -25,6 +25,54 @@
   <div id="bills"></div>
 </div>
 
+<div class="panel" style="margin-top:1rem" id="hearings-panel" hidden>
+  <div class="panel-head">
+    <div>
+      <div class="title">Upcoming hearings</div>
+      <div class="sub">Across every bill assigned to this client, soonest first.</div>
+    </div>
+  </div>
+  <div id="client-hearings"></div>
+</div>
+
+<div class="panel" style="margin-top:1rem" id="contacts-panel">
+  <div class="panel-head">
+    <div>
+      <div class="title">Contacts</div>
+      <div class="sub">Who to ask when a bill needs a decision.</div>
+    </div>
+  </div>
+  <div id="contacts"></div>
+  <div style="padding:0.8rem 1.15rem">
+    <form id="add-contact-f">
+      <label for="contact-name" class="sr-only">Contact name</label>
+      <input id="contact-name" placeholder="Full name" required style="flex:1;min-width:9rem">
+      <label for="contact-title" class="sr-only">Title</label>
+      <input id="contact-title" placeholder="Title (optional)" style="flex:1;min-width:8rem">
+      <label for="contact-email" class="sr-only">Email</label>
+      <input id="contact-email" type="email" placeholder="Email (optional)" style="flex:1;min-width:9rem">
+      <label for="contact-phone" class="sr-only">Phone</label>
+      <input id="contact-phone" placeholder="Phone (optional)" style="flex:1;min-width:7rem">
+      <button type="submit">Add</button>
+    </form>
+  </div>
+</div>
+
+<div class="panel" style="margin-top:1rem">
+  <div class="panel-head">
+    <div>
+      <div class="title">Notes</div>
+      <div class="sub">Shared with your firm. Saves when you click away.</div>
+    </div>
+  </div>
+  <div style="padding:0.8rem 1.15rem">
+    <label for="client-notes" class="sr-only">Notes on this client</label>
+    <textarea id="client-notes" rows="4" style="width:100%"
+      placeholder="Anything the firm should know about this relationship — how compensation is actually structured, who signs off, standing instructions."></textarea>
+    <div class="sub" id="notes-status" style="margin-top:0.35rem"></div>
+  </div>
+</div>
+
 <div class="panel" style="margin-top:1rem" id="letters-panel" hidden>
   <div class="panel-head"><div class="title">Letters</div></div>
   <div style="padding:0.4rem 1.15rem 1rem" id="letters"></div>
@@ -40,6 +88,7 @@
   <div style="padding:0.4rem 1.15rem 1rem" id="history"></div>
 </div>
 
+<script src="{{HEARING_TIME_SRC}}"></script>
 <script src="{{BILL_STATUS_SRC}}"></script>
 <script src="{{TOAST_SRC}}"></script>
 <script src="{{POSITION_HISTORY_SRC}}"></script>
@@ -69,6 +118,210 @@ const addBillLoading = document.getElementById('add-bill-loading');
 // note there on why the glyph is in the option text.
 const POSITIONS = [['watch', '\u25e6 Watch'], ['support', '+ Support'], ['oppose', '\u2212 Oppose']];
 
+/* ── The facts a filing needs ──────────────────────────────────────────
+ *
+ * The client record held a name, an address and an industry, while the
+ * Form 601 review asked each client for four more things it didn't have
+ * — so the one workflow this app automates ended in hand-typing, per
+ * client, per filing (P2-26). All four are on the record now; this is
+ * where they're read.
+ *
+ * A fact with no value is omitted rather than shown blank: the row is
+ * "here is what we know", and an empty label reads as a broken field.
+ * What is missing is stated once, underneath, in words.
+ */
+function factHtml(label, value) {
+  if (!value) return '';
+  return `<div class="client-fact">
+    <span class="client-fact-label">${label}</span>
+    <span class="client-fact-value">${escapeText(value)}</span>
+  </div>`;
+}
+
+// The stored shape is a plain decimal plus a basis (see
+// db.normalize_compensation) precisely so it can be re-joined for
+// display here and summed by a filing there.
+const COMPENSATION_PER = {
+  monthly: 'per month', quarterly: 'per quarter', annual: 'per year',
+  hourly: 'per hour', other: '',
+};
+
+function compensationLabel(c) {
+  if (!c.compensation_amount) return '';
+  const amount = Number(c.compensation_amount);
+  const money = Number.isFinite(amount)
+    ? amount.toLocaleString('en-US', { style: 'currency', currency: 'USD',
+                                       minimumFractionDigits: amount % 1 ? 2 : 0 })
+    : c.compensation_amount;
+  const per = COMPENSATION_PER[c.compensation_period] || '';
+  return per ? `${money} ${per}` : money;
+}
+
+function escapeText(text) {
+  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// "Sep 8" — the year is only worth the width when it isn't this one.
+function fmtShortDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d.getTime())) return dateStr;
+  const opts = { month: 'short', day: 'numeric' };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString('en-US', opts);
+}
+
+/* ── What is coming up for this client ─────────────────────────────── */
+
+function renderClientHearings(hearings) {
+  const panel = document.getElementById('hearings-panel');
+  if (!hearings || !hearings.length) { panel.hidden = true; return; }
+  panel.hidden = false;
+  document.getElementById('client-hearings').innerHTML = hearings.map(h => {
+    // days_until is computed against California's date server-side (see
+    // db.list_hearings_for_client), not the browser's, so a hearing and
+    // a deadline on the same day can't disagree about how far off it is.
+    const when = h.days_until === 0 ? 'Today'
+      : h.days_until === 1 ? 'Tomorrow'
+      : `in ${h.days_until} days`;
+    const time = hearingTimeLabel(h.time);
+    return `<div class="saved-row">
+      <div class="saved-main">
+        <a class="saved-name" href="/report?bill_id=${h.bill_id}">${escapeText(h.state)} ${escapeText(h.bill_number)}</a>
+        <div class="saved-meta">${escapeText(h.title || '')}</div>
+        <div class="saved-meta">${fmtShortDate(h.date)}${time ? ' · ' + escapeText(time) : ''}${h.description ? ' · ' + escapeText(h.description) : ''}</div>
+      </div>
+      <span class="position-badge ${escapeText(h.position || 'watch')}">${positionLabel(h.position || 'watch')}</span>
+      <span class="sub" style="margin:0 0 0 0.75rem;white-space:nowrap">${when}</span>
+    </div>`;
+  }).join('');
+}
+
+/* ── Who to call ───────────────────────────────────────────────────────
+ *
+ * A client record held an address and no people, while every real
+ * question about a bill ("do they want us to oppose this?") is a
+ * question for a person. One contact can be marked primary — the one to
+ * call first — and at most one, enforced in db.set_primary_contact.
+ */
+let contacts = [];
+
+function renderContacts() {
+  const listEl = document.getElementById('contacts');
+  if (!contacts.length) {
+    listEl.innerHTML = '<p class="empty" style="padding:0.8rem 1.15rem">Nobody listed yet.</p>';
+    return;
+  }
+  listEl.innerHTML = contacts.map(p => `
+    <div class="saved-row">
+      <div class="saved-main">
+        <div style="font-size:0.9rem;font-weight:600">
+          ${escapeText(p.name)}
+          ${p.is_primary ? '<span class="tag" style="margin-left:0.4rem">Primary</span>' : ''}
+        </div>
+        ${p.title ? `<div class="saved-meta">${escapeText(p.title)}</div>` : ''}
+        <div class="saved-meta">${[
+          p.email ? `<a href="mailto:${escapeText(p.email)}">${escapeText(p.email)}</a>` : '',
+          p.phone ? escapeText(formatPhone(p.phone)) : '',
+        ].filter(Boolean).join(' · ')}</div>
+      </div>
+      ${p.is_primary ? '' : `<button type="button" class="secondary" onclick="makePrimary(${p.id})">Make primary</button>`}
+      <button type="button" class="icon-btn" onclick="removeContact(${p.id})"
+              aria-label="Remove ${escapeText(p.name)}" title="Remove contact">×</button>
+    </div>
+  `).join('');
+}
+
+document.getElementById('add-contact-f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorEl.className = '';
+  const fields = ['name', 'title', 'email', 'phone'];
+  const values = {};
+  for (const f of fields) values[f] = document.getElementById('contact-' + f).value.trim();
+  try {
+    const res = await fetch('/api/client-contacts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ client_id: Number(clientId) }, values)),
+    });
+    const list = await res.json();
+    if (!res.ok) throw new Error(list.error || 'Could not add that contact');
+    contacts = list;
+    renderContacts();
+    for (const f of fields) document.getElementById('contact-' + f).value = '';
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+});
+
+async function makePrimary(contactId) {
+  errorEl.className = '';
+  try {
+    const res = await fetch('/api/client-contacts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: Number(clientId), contact_id: contactId }),
+    });
+    const list = await res.json();
+    if (!res.ok) throw new Error(list.error || 'Could not change that');
+    contacts = list;
+    renderContacts();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+async function removeContact(contactId) {
+  const person = contacts.find(p => p.id === contactId);
+  const ok = await confirmDelete('Remove contact?',
+    `Remove ${person ? person.name : 'this contact'} from ${currentClientName}? The client itself is untouched.`);
+  if (!ok) return;
+  errorEl.className = '';
+  try {
+    const res = await fetch(`/api/client-contacts?client_id=${clientId}&id=${contactId}`, { method: 'DELETE' });
+    const list = await res.json();
+    if (!res.ok) throw new Error(list.error || 'Could not remove that contact');
+    contacts = list;
+    renderContacts();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+}
+
+/* ── Notes ─────────────────────────────────────────────────────────────
+ *
+ * The client-level twin of the bill report's notes, and the place the
+ * compensation field deliberately sends anything that isn't a number:
+ * "$150/hr up to 40hrs, then $120" is a real arrangement and belongs
+ * written down, just not in a column a filing reads as an amount.
+ */
+const notesEl = document.getElementById('client-notes');
+const notesStatusEl = document.getElementById('notes-status');
+let savedNotes = '';
+
+notesEl.addEventListener('blur', async () => {
+  if (notesEl.value === savedNotes) return;
+  notesStatusEl.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/client-notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: Number(clientId), notes: notesEl.value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save notes');
+    savedNotes = notesEl.value;
+    notesStatusEl.textContent = 'Saved';
+  } catch (err) {
+    notesStatusEl.textContent = '';
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  }
+});
+
 function renderClient(d) {
   const c = d.client;
   currentClientName = c.name;
@@ -79,6 +332,12 @@ function renderClient(d) {
         ${[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), formatPhone(c.bus_phone)].filter(Boolean).join(' · ') || 'No address on file'}
       </div>
       ${c.interests ? `<div class="bill-desc" style="margin-top:0.4rem">${c.interests}</div>` : ''}
+      <div class="client-facts">
+        ${factHtml('Compensation', compensationLabel(c))}
+        ${factHtml('Effective date', c.effective_date ? fmtShortDate(c.effective_date) : '')}
+        ${factHtml('Period of contract', c.contract_period)}
+        ${factHtml('Agencies lobbied', c.agencies_lobbied)}
+      </div>
       <div class="card-actions" style="align-items:center">
         <a class="secondary" href="/clients">Edit in Clients →</a>
         ${d.entity_id ? `<a class="secondary" href="/lobbying/detail?id=${d.entity_id}">View CAL-ACCESS record →</a>` : ''}
@@ -174,6 +433,11 @@ async function load() {
     renderClient(data);
     renderBills(data.bills);
     renderHistory(data.position_history);
+    renderClientHearings(data.hearings);
+    contacts = data.contacts || [];
+    renderContacts();
+    savedNotes = data.client.notes || '';
+    notesEl.value = savedNotes;
     renderLetters();
   } catch (err) {
     errorEl.textContent = err.message;

@@ -140,7 +140,8 @@ def _migrate(conn):
         conn.execute("ALTER TABLE bill_client_links ADD COLUMN effective_date TEXT")
 
     client_cols = {row["name"] for row in conn.execute("PRAGMA table_info(clients)")}
-    for col in ("effective_date", "contract_period", "agencies_lobbied", "bus_phone"):
+    for col in ("effective_date", "contract_period", "agencies_lobbied", "bus_phone",
+                "compensation_amount", "compensation_period", "notes"):
         if col not in client_cols:
             conn.execute(f"ALTER TABLE clients ADD COLUMN {col} TEXT")
 
@@ -1092,21 +1093,187 @@ def changes_by_bill_since(conn, since_date):
 # lobbying_entities yet — existing_filer_id is stored for that future
 # use, not acted on here. ──
 
-def create_client(conn, user_id, fields):
+# ── What the firm is paid, and on what basis (P2-26) ────────────────────
+#
+# The quarterly forms report a compensation figure per client per period,
+# and the client record was the one place that number could live without
+# being re-typed into every filing. See the clients table in schema.sql
+# for why this is two columns rather than one string, and why no
+# quarterly arithmetic lives here.
+
+COMPENSATION_PERIODS = ("monthly", "quarterly", "annual", "hourly", "other")
+
+# Accepts what a person types into a money field: an optional $, digits
+# with optional thousands separators, an optional two-or-fewer decimal
+# places. Deliberately does NOT accept a range or a formula — "5000-7500"
+# is a note, not an amount a filing can report, and storing it here would
+# put it somewhere a form will later read as a number.
+_MONEY_RE = re.compile(r"^\$?\s*\d{1,3}(,\d{3})*(\.\d{1,2})?$|^\$?\s*\d+(\.\d{1,2})?$")
+
+
+def normalize_compensation(amount, period):
+    """Returns (amount, period, error) with the amount as a plain decimal
+    string — no currency symbol, no separators — so it can be summed
+    later without re-parsing, and the period as one of
+    COMPENSATION_PERIODS or None.
+
+    Blank is always allowed: not every client relationship has a figure
+    agreed, and a client created before this field existed has none.
+    Blanking the amount blanks the period too — a basis with no number
+    is not a fact about anything."""
+    amount = (amount or "").strip()
+    period = (period or "").strip().lower() or None
+
+    if not amount:
+        return None, None, None
+    if not _MONEY_RE.match(amount):
+        return None, None, ("Compensation should be an amount like 5000 or 5,000.00 — "
+                            "put a range or a formula in the notes instead.")
+    cleaned = amount.lstrip("$").strip().replace(",", "")
+    if period and period not in COMPENSATION_PERIODS:
+        return None, None, "Choose how often that compensation applies."
+    # An amount with no basis defaults to monthly, which is what a
+    # retainer nearly always is — stated here rather than left NULL so a
+    # form reading this column never has to guess.
+    return cleaned, period or "monthly", None
+
+
+CLIENT_FIELDS = (
+    "name", "bus_addr1", "bus_city", "bus_st", "bus_zip4", "bus_phone",
+    "interests", "existing_filer_id", "effective_date", "contract_period",
+    "agencies_lobbied", "compensation_amount", "compensation_period", "notes",
+)
+
+
+def _client_values(fields):
+    """The write tuple for create/update, in CLIENT_FIELDS order.
+
+    One builder for both, because they drifted: update_client() grew the
+    three Form 601 columns and create_client() had to be edited to match,
+    and a column added to one and not the other is a field that silently
+    can't be set at creation (or silently can't be edited afterwards).
+
+    Compensation is normalized here rather than at the route, so a value
+    written by a test or a future importer can't skip the check that a
+    form will later depend on."""
+    amount, period, error = normalize_compensation(
+        fields.get("compensation_amount"), fields.get("compensation_period"))
+    if error:
+        raise ValueError(error)
+    values = {key: (fields.get(key) or None) for key in CLIENT_FIELDS}
+    values["name"] = fields.get("name")          # NOT NULL — the caller validates
+    values["compensation_amount"] = amount
+    values["compensation_period"] = period
+    return tuple(values[key] for key in CLIENT_FIELDS)
+
+
+# ── The people at a client ──────────────────────────────────────────────
+
+def list_client_contacts(conn, user_id, client_id):
+    rows = conn.execute(
+        f"""SELECT id, client_id, name, title, email, phone, is_primary, created_at
+             FROM client_contacts
+            WHERE {ORG_SCOPE} AND client_id = ?
+            ORDER BY is_primary DESC, name COLLATE NOCASE""",
+        (user_id, client_id),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_client_contact(conn, user_id, client_id, fields):
+    """Raises ValueError on a nameless contact — a row with a title and
+    an email and nobody's name is not a person anyone can call."""
+    name = (fields.get("name") or "").strip()
+    if not name:
+        raise ValueError("A contact needs a name.")
+    if not get_client(conn, user_id, client_id):
+        raise ValueError("No client with that id.")
+    is_primary = 1 if fields.get("is_primary") else 0
+    if is_primary:
+        conn.execute("UPDATE client_contacts SET is_primary = 0 WHERE client_id = ?", (client_id,))
+    conn.execute(
+        """INSERT INTO client_contacts
+             (user_id, client_id, name, title, email, phone, is_primary, created_at)
+           VALUES (?,?,?,?,?,?,?, datetime('now'))""",
+        (user_id, client_id, name, (fields.get("title") or "").strip() or None,
+         (fields.get("email") or "").strip() or None,
+         (fields.get("phone") or "").strip() or None, is_primary),
+    )
+    conn.commit()
+    return list_client_contacts(conn, user_id, client_id)
+
+
+def set_primary_contact(conn, user_id, client_id, contact_id):
+    """At most one primary per client, enforced here rather than by a
+    constraint — SQLite can't express "at most one row per client with
+    this flag". Clearing first and setting second means the two writes
+    can't leave two primaries behind even if the second matches nothing."""
+    if not get_client(conn, user_id, client_id):
+        raise ValueError("No client with that id.")
+    conn.execute("UPDATE client_contacts SET is_primary = 0 WHERE client_id = ?", (client_id,))
+    conn.execute(
+        f"UPDATE client_contacts SET is_primary = 1 WHERE id = ? AND client_id = ? AND {ORG_SCOPE}",
+        (contact_id, client_id, user_id),
+    )
+    conn.commit()
+    return list_client_contacts(conn, user_id, client_id)
+
+
+def delete_client_contact(conn, user_id, client_id, contact_id):
     cur = conn.execute(
-        """INSERT INTO clients
-             (user_id, name, bus_addr1, bus_city, bus_st, bus_zip4, bus_phone,
-              interests, existing_filer_id, effective_date, contract_period,
-              agencies_lobbied, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))""",
-        (
-            user_id, fields.get("name"),
-            fields.get("bus_addr1"), fields.get("bus_city"),
-            fields.get("bus_st"), fields.get("bus_zip4"), fields.get("bus_phone"),
-            fields.get("interests"), fields.get("existing_filer_id") or None,
-            fields.get("effective_date") or None, fields.get("contract_period") or None,
-            fields.get("agencies_lobbied") or None,
-        ),
+        f"DELETE FROM client_contacts WHERE id = ? AND client_id = ? AND {ORG_SCOPE}",
+        (contact_id, client_id, user_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def set_client_notes(conn, user_id, client_id, notes):
+    """The client-level equivalent of set_bill_notes. Empty string stores
+    NULL so "never written" and "cleared" read the same downstream."""
+    cur = conn.execute(
+        f"UPDATE clients SET notes = ? WHERE id = ? AND {ORG_SCOPE}",
+        ((notes or "").strip() or None, client_id, user_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def list_hearings_for_client(conn, user_id, client_id, today=None):
+    """Every still-to-come hearing across the bills this client is
+    assigned to, soonest first.
+
+    The client-scoped cut of list_hearings_for_flagged_bills: same
+    "still upcoming" test against the same California date (see
+    today_in_california), narrowed to one client's bills. On the client
+    record this is the answer to "what is coming up for them", which
+    previously required reading the bill table row by row."""
+    today = today or today_in_california()
+    rows = conn.execute(
+        f"""SELECT h.bill_id, h.date, h.time, h.event_type, h.location, h.description,
+                  b.state, b.bill_number, b.title, l.position
+             FROM bill_hearings h
+             JOIN bill_client_links l ON l.bill_id = h.bill_id AND {_org_scope("l.user_id")}
+             JOIN bills b ON b.id = h.bill_id
+            WHERE l.client_id = ? AND h.date >= ?
+            ORDER BY h.date, h.time""",
+        (user_id, client_id, today),
+    ).fetchall()
+    out = []
+    for row in rows:
+        hearing = dict(row)
+        hearing["days_until"] = _days_between(today, hearing["date"])
+        out.append(hearing)
+    return out
+
+
+def create_client(conn, user_id, fields):
+    columns = ", ".join(CLIENT_FIELDS)
+    placeholders = ", ".join("?" for _ in CLIENT_FIELDS)
+    cur = conn.execute(
+        f"""INSERT INTO clients (user_id, {columns}, created_at)
+            VALUES (?, {placeholders}, datetime('now'))""",
+        (user_id, *_client_values(fields)),
     )
     return cur.lastrowid
 
@@ -1145,26 +1312,19 @@ def get_client_bills(conn, user_id, client_id):
 
 
 def update_client(conn, user_id, client_id, fields):
-    """Scoped to user_id, same reasoning as delete_client. Added so a
-    client created before effective_date/contract_period/
-    agencies_lobbied existed (or before a user had that information
-    handy) can still have them filled in later — without this, those
-    three fields could only ever be set at creation time, which would
-    leave every already-existing client permanently gapped."""
+    """Scoped to user_id, same reasoning as delete_client. Exists so a
+    client created before a column did (or before the user had that
+    information handy) can still have it filled in later — without this,
+    every field could only ever be set at creation time, leaving every
+    already-existing client permanently gapped.
+
+    Writes CLIENT_FIELDS through the same builder create_client uses, so
+    a column added to the record can't end up settable at creation and
+    not afterwards, or the reverse."""
+    assignments = ", ".join(f"{key} = ?" for key in CLIENT_FIELDS)
     conn.execute(
-        f"""UPDATE clients
-           SET name = ?, bus_addr1 = ?, bus_city = ?, bus_st = ?, bus_zip4 = ?, bus_phone = ?,
-               interests = ?, existing_filer_id = ?, effective_date = ?,
-               contract_period = ?, agencies_lobbied = ?
-           WHERE id = ? AND {ORG_SCOPE}""",
-        (
-            fields.get("name"), fields.get("bus_addr1"), fields.get("bus_city"),
-            fields.get("bus_st"), fields.get("bus_zip4"), fields.get("bus_phone"),
-            fields.get("interests"),
-            fields.get("existing_filer_id") or None, fields.get("effective_date") or None,
-            fields.get("contract_period") or None, fields.get("agencies_lobbied") or None,
-            client_id, user_id,
-        ),
+        f"UPDATE clients SET {assignments} WHERE id = ? AND {ORG_SCOPE}",
+        (*_client_values(fields), client_id, user_id),
     )
 
 

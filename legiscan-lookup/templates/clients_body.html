@@ -57,6 +57,29 @@
       <div class="sub" style="margin:1.2rem 0 0.3rem">Agencies to be lobbied on this client's behalf</div>
       <textarea id="agencies_lobbied" rows="2" style="width:100%"></textarea>
     </label>
+    <!-- Two inputs rather than one "$5,000/month" box: the quarterly
+         forms report a figure, and a figure that arrives with its basis
+         glued to it can't be added up. See the clients table in
+         schema.sql. -->
+    <label style="flex:1">
+      <div class="sub" style="margin:1.2rem 0 0.3rem">Compensation</div>
+      <input id="compensation_amount" inputmode="decimal" placeholder="e.g. 5000" style="width:100%">
+    </label>
+    <label style="flex:1">
+      <div class="sub" style="margin:1.2rem 0 0.3rem">Per</div>
+      <select id="compensation_period" style="width:100%">
+        <option value="monthly">Month</option>
+        <option value="quarterly">Quarter</option>
+        <option value="annual">Year</option>
+        <option value="hourly">Hour</option>
+        <option value="other">Other basis</option>
+      </select>
+    </label>
+    <div class="sub" style="flex:1 1 100%;margin:0.35rem 0 0">
+      What the firm is paid for this client. The quarterly forms report this per client, so
+      it lives here rather than being re-typed into each filing. A range or a formula belongs
+      in the notes on the client's own page — this field has to stay a number a form can report.
+    </div>
 
     <button type="submit" id="submit-client-btn" style="margin-top:1rem">Add client →</button>
     <button type="button" id="cancel-client-btn" class="secondary" style="margin-top:1rem">Cancel</button>
@@ -287,6 +310,8 @@ function editClient(id) {
   document.getElementById('effective_date').value = c.effective_date || '';
   document.getElementById('contract_period').value = c.contract_period || '';
   document.getElementById('agencies_lobbied').value = c.agencies_lobbied || '';
+  document.getElementById('compensation_amount').value = c.compensation_amount || '';
+  document.getElementById('compensation_period').value = c.compensation_period || 'monthly';
   submitBtn.textContent = 'Save changes →';
   nameAutofillNoteEl.style.display = 'none';
   showForm();
@@ -313,6 +338,8 @@ form.addEventListener('submit', async (e) => {
       effective_date: document.getElementById('effective_date').value.trim(),
       contract_period: document.getElementById('contract_period').value.trim(),
       agencies_lobbied: document.getElementById('agencies_lobbied').value.trim(),
+      compensation_amount: document.getElementById('compensation_amount').value.trim(),
+      compensation_period: document.getElementById('compensation_period').value,
     };
     if (editingId) body.id = editingId;
     const res = await fetch('/api/clients', {
