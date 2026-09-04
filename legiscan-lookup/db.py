@@ -169,6 +169,53 @@ def _migrate(conn):
         conn.execute("ALTER TABLE users ADD COLUMN org_id INTEGER REFERENCES organizations(id)")
     _backfill_organizations(conn)
     _migrate_bill_views(conn)
+    _migrate_calaccess_dates(conn)
+
+
+def _migrate_calaccess_dates(conn):
+    """Rewrite CAL-ACCESS's "M/D/YYYY h:mm:ss AM" dates to ISO in place.
+
+    The pipeline now normalizes on the way in (see
+    calaccess-pipeline/calaccess_db.normalize_filing_date), but the rows
+    already on disk were written before it did — 667k of them — and
+    every one of them sorts lexically: "9/5/2007" above "10/31/2024",
+    so the lobbying detail page's "most recent filings" led with 2007
+    and the search page's MAX(filed_date) returned whichever string
+    happened to start with the largest digit. Both queries are correct
+    the moment the column is; neither needed changing.
+
+    Done in SQL rather than by importing the pipeline's own normalizer,
+    for two reasons: db.py has no business reaching into the sibling
+    project (app.py does the sys.path insert for that, tests don't), and
+    a bulk in-place rewrite of 667k rows belongs in the database rather
+    than round-tripping every row through Python. CAST() on a string
+    takes its leading integer, which is what reads the month and day
+    without a nested substr for each.
+
+    The guard is one row rather than a scan for any remaining slash: the
+    UPDATE below is a single statement in the caller's transaction, so
+    the column is either wholly converted or wholly not, and probing all
+    667k rows on every boot to learn that costs about a second.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='lobbying_disclosures'"
+    ).fetchone():
+        return
+    probe = conn.execute(
+        "SELECT filed_date FROM lobbying_disclosures WHERE filed_date IS NOT NULL LIMIT 1"
+    ).fetchone()
+    if not probe or "/" not in (probe["filed_date"] or ""):
+        return
+    for col in ("filed_date", "period_start", "period_end"):
+        conn.execute(f"""
+            UPDATE lobbying_disclosures
+               SET {col} =
+                   substr(substr({col}, instr({col}, '/') + 1),
+                          instr(substr({col}, instr({col}, '/') + 1), '/') + 1, 4)
+                   || '-' || printf('%02d', CAST({col} AS INTEGER))
+                   || '-' || printf('%02d', CAST(substr({col}, instr({col}, '/') + 1) AS INTEGER))
+             WHERE {col} LIKE '_/%/%' OR {col} LIKE '__/%/%'
+        """)
 
 
 def _backfill_organizations(conn):
