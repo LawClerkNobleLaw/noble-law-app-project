@@ -532,6 +532,17 @@
   select.position-select.support { border-color: var(--good); color: var(--good); }
   select.position-select.oppose { border-color: var(--error); color: var(--error); }
   select.position-select.watch { border-color: var(--accent); color: var(--accent); }
+  /* Sponsors & votes' scorecard (P2-25): whether a BILL's own outcome —
+     not any legislator's personal vote, which this app has never had —
+     landed with or against one of the firm's positions on it. Always
+     paired with the position-badge it's next to and spelled in words,
+     same non-colour-alone rule .position-badge follows above. */
+  .verdict-chip { display: inline-block; font-size: 0.75rem; font-weight: 700;
+    padding: var(--space-1) var(--space-2); border-radius: var(--radius-pill);
+    border: 1px solid currentColor; }
+  .verdict-chip.with_us { background: var(--good-soft); color: var(--good); }
+  .verdict-chip.against_us { background: var(--error-soft); color: var(--error); }
+  .verdict-chip.pending { background: transparent; color: var(--slate); border-color: var(--rule-strong); font-weight: 600; }
   /* ── The client record's own facts (P2-26) ──
      Compensation, effective date, period of contract and agencies
      lobbied. The Form 601 review asked each client for these and the

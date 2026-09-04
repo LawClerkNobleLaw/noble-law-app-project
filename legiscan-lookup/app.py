@@ -1220,7 +1220,12 @@ CALENDAR_PAGE = page("Hearing Calendar — Rotunda", "/flagged", CALENDAR_BODY)
 # a bill too (see bill_sponsors), and this list doesn't filter those
 # out, matching how every other Sponsors listing in this app (e.g.
 # LOOKUP_BODY's own sponsor chips) already treats them.
-SPONSOR_ROLLUP_BODY = _render_template("sponsor_rollup_body.html")
+SPONSOR_ROLLUP_BODY = _render_template(
+    "sponsor_rollup_body.html",
+    BILL_STATUS_SRC=BILL_STATUS_SRC,
+    POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
+    TITLE_CASE_SRC=TITLE_CASE_SRC,
+)
 
 SPONSOR_ROLLUP_PAGE = page("Sponsors &amp; Votes — Rotunda", "/flagged", SPONSOR_ROLLUP_BODY)
 

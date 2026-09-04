@@ -1,9 +1,8 @@
-
 <div class="page-head"><div><a href="/flagged" class="sub">← Flagged bills</a></div></div>
 <div class="page-head">
   <div>
     <h1>Sponsors &amp; votes</h1>
-    <p class="sub">Every sponsor across your flagged bills, and how each bill they sponsored was voted on. A sponsor can be a committee, not only an individual legislator — LegiScan lists both the same way.</p>
+    <p class="sub">Every legislator who sponsored one of your flagged bills, and whether that bill's own outcome landed with or against the position you took on it. A sponsor can be a committee, not only an individual — LegiScan lists both the same way. <strong>Not shown, because this app doesn't have it:</strong> chamber, district, committee seats, or office contact for a sponsor, and no legislator's own personal vote — LegiScan's vote data here is a chamber-level tally, not a per-person ballot.</p>
   </div>
 </div>
 
@@ -11,14 +10,41 @@
 <div id="loading"><span class="spinner"></span>Loading…</div>
 <div id="sponsors"></div>
 
+<script src="{{BILL_STATUS_SRC}}"></script>
+<script src="{{POSITION_HISTORY_SRC}}"></script>
+<script src="{{TITLE_CASE_SRC}}"></script>
 <script>
 const sponsorsEl = document.getElementById('sponsors');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
 
-function voteSummary(votes) {
-  if (!votes.length) return '<span class="sub" style="margin:0">No recorded votes yet.</span>';
-  return votes.map(v => `
+function escapeText(text) {
+  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+const PARTY_LABELS = { D: 'Democrat', R: 'Republican', I: 'Independent' };
+function partyLabel(party) {
+  return PARTY_LABELS[party] || party;
+}
+
+const VERDICT_LABELS = { with_us: 'With us', against_us: 'Against us', pending: 'Pending' };
+
+// Client-position badge (same shape /lookup's search results and
+// /report use), immediately followed by the verdict chip if there is
+// one — "watch" carries no chip (db._bill_position_verdict returns None
+// for it: not a stance that can win or lose).
+function positionsHtml(positions) {
+  if (!positions || !positions.length) {
+    return '<span class="sub" style="margin:0">No client assigned.</span>';
+  }
+  return positions.map(p => {
+    const verdict = p.verdict ? ` <span class="verdict-chip ${p.verdict}">${VERDICT_LABELS[p.verdict]}</span>` : '';
+    return `<span class="position-badge ${p.position}">${escapeText(titleCaseName(p.name))} · ${positionLabel(p.position)}</span>${verdict}`;
+  }).join(' ');
+}
+
+function voteRowHtml(v) {
+  return `
     <div style="margin-top:0.35rem">
       <span class="tag">${v.chamber || ''}</span>
       <span class="sub" style="margin:0 0 0 0.4rem">${v.date || ''} — ${v.description || ''}</span>
@@ -27,7 +53,36 @@ function voteSummary(votes) {
         ${v.passed ? ' <span class="tag">Passed</span>' : ''}
       </div>
     </div>
-  `).join('');
+  `;
+}
+
+// A roll call with no dissent and nobody absent says nothing about
+// anyone's disposition — every unanimous procedural motion used to
+// print in full above the one vote that actually mattered. Collapsed
+// behind a toggle instead of hidden outright: it's real data, just not
+// data worth leading with (see db.list_sponsor_vote_rollup's own
+// "unanimous" flag).
+function votesHtml(billId, votes) {
+  if (!votes.length) return '<span class="sub" style="margin:0">No recorded votes yet.</span>';
+  const contested = votes.filter(v => !v.unanimous);
+  const unanimous = votes.filter(v => v.unanimous);
+  const contestedHtml = contested.map(voteRowHtml).join('');
+  if (!unanimous.length) return contestedHtml;
+  const toggleId = `unanimous-${billId}`;
+  const label = `${unanimous.length} unanimous procedural vote${unanimous.length === 1 ? '' : 's'}`;
+  return `
+    ${contestedHtml}
+    <button type="button" class="secondary" style="margin-top:0.4rem;font-size:0.75rem"
+            onclick="toggleUnanimous('${toggleId}', this)">Show ${label}</button>
+    <div id="${toggleId}" hidden>${unanimous.map(voteRowHtml).join('')}</div>
+  `;
+}
+
+function toggleUnanimous(id, btn) {
+  const el = document.getElementById(id);
+  const showing = !el.hidden;
+  el.hidden = showing;
+  btn.textContent = btn.textContent.replace(showing ? 'Hide' : 'Show', showing ? 'Show' : 'Hide');
 }
 
 function render(sponsors) {
@@ -39,17 +94,19 @@ function render(sponsors) {
     <div class="panel" style="margin-bottom:1rem">
       <div class="panel-head">
         <div>
-          <div class="title">${s.name}</div>
-          <div class="sub">${s.party || 'No party on file'}</div>
+          <div class="title">${escapeText(s.name)}</div>
+          <div class="sub">${s.party ? partyLabel(s.party) : 'No party on file'} · Sponsors ${s.bill_count} of your flagged bill${s.bill_count === 1 ? '' : 's'}</div>
         </div>
       </div>
       <div>
         ${s.bills.map(b => `
-          <div class="bill-row" style="padding:0.85rem 1.15rem;border-bottom:1px solid var(--rule);align-items:flex-start">
-            <div style="flex:1;min-width:0">
+          <div class="bill-row" style="padding:0.85rem 1.15rem;border-bottom:1px solid var(--rule);align-items:flex-start;flex-direction:column;gap:0.4rem">
+            <div>
               <div class="bill-id"><a href="/report?bill_id=${b.bill_id}">${b.state} ${b.bill_number}</a> — ${b.title || ''}${b.role ? ` <span class="tag">${b.role}</span>` : ''}</div>
-              ${voteSummary(b.votes)}
+              ${statusBadgeHtml(b.status_label || 'In progress')}
             </div>
+            <div>${positionsHtml(b.positions)}</div>
+            <div style="width:100%">${votesHtml(b.bill_id, b.votes)}</div>
           </div>
         `).join('')}
       </div>

@@ -822,11 +822,40 @@ def list_hearings_for_flagged_bills(conn, user_id, today=None):
     }
 
 
+def _bill_position_verdict(status_label, position):
+    """How a bill's outcome lines up with one of the firm's own positions
+    on it — 'with_us', 'against_us', 'pending' (still moving), or None
+    for 'watch' (not a stance that can win or lose). P2-25's fix for real:
+    the audit asked for "their vote against your client's position" —
+    but LegiScan's votes table is a chamber-level tally, never a
+    per-legislator ballot (see this function's caller), so there is no
+    honest "their vote" to compare. This compares the BILL's own outcome
+    instead, which the app already has.
+
+    LegiScan's status is a small closed vocabulary (see STATUS_LABELS in
+    legiscan_client.py) — passed/failed/vetoed are the only terminal
+    ones (same three TERMINAL_STATUSES keys flagged_body.html's own
+    next-action column uses), so this is a plain lookup, not a guess."""
+    if position == "watch":
+        return None
+    status = (status_label or "").lower()
+    if status not in ("passed", "failed", "vetoed"):
+        return "pending"
+    became_law = status == "passed"
+    if position == "support":
+        return "with_us" if became_law else "against_us"
+    if position == "oppose":
+        return "against_us" if became_law else "with_us"
+    return None
+
+
 def list_sponsor_vote_rollup(conn, user_id):
     """For every sponsor across this user's flagged bills: which of
-    those specific bills they sponsored, and how each one's own votes
-    turned out. Pure aggregation of bill_sponsors + votes, both already
-    stored by the daily refresh job — no new LegiScan call.
+    those specific bills they sponsored, how each one's own votes turned
+    out, and — per assigned client — whether the bill's outcome landed
+    with or against the position taken on it. Pure aggregation of
+    bill_sponsors + votes + bill_client_links, all already stored by the
+    daily refresh job or entered by the firm — no new LegiScan call.
 
     Grouped by sponsor NAME as stored in bill_sponsors (which doesn't
     carry LegiScan's people_id — shape_bill() never captured it, see
@@ -842,9 +871,10 @@ def list_sponsor_vote_rollup(conn, user_id):
     exists on LegiScan's side (getRollCall, confirmed live to return
     each vote keyed by people_id) but this app has never called it;
     doing so would be a new integration, not reuse of what's already
-    stored, so it's deliberately out of scope here."""
+    stored, so it's deliberately out of scope here. See
+    _bill_position_verdict for what this builds instead."""
     sponsor_rows = conn.execute(
-        f"""SELECT s.name, s.party, s.role, s.bill_id, b.state, b.bill_number, b.title
+        f"""SELECT s.name, s.party, s.role, s.bill_id, b.state, b.bill_number, b.title, b.status_label
            FROM bill_sponsors s
            JOIN bills b ON b.id = s.bill_id
            JOIN flagged_bills f ON f.bill_id = s.bill_id
@@ -862,17 +892,34 @@ def list_sponsor_vote_rollup(conn, user_id):
            ORDER BY v.date""",
         (user_id,),
     ).fetchall():
-        votes_by_bill.setdefault(r["bill_id"], []).append(dict(r))
+        vote = dict(r)
+        # A roll call where nobody voted no and nobody sat out carries no
+        # information about anyone's disposition — the sponsor page
+        # collapses these behind "show all roll calls" rather than
+        # burying the contested ones under a wall of them.
+        vote["unanimous"] = vote["nay"] == 0 and vote["nv"] == 0
+        votes_by_bill.setdefault(r["bill_id"], []).append(vote)
+
+    bill_ids = sorted({r["bill_id"] for r in sponsor_rows})
+    clients_by_bill = clients_for_bills(conn, user_id, bill_ids)
 
     by_sponsor = {}
     for r in sponsor_rows:
         name = r["name"] or "Unknown"
         entry = by_sponsor.setdefault(name, {"name": name, "party": r["party"], "bills": []})
+        positions = [
+            {**c, "verdict": _bill_position_verdict(r["status_label"], c["position"])}
+            for c in clients_by_bill.get(r["bill_id"], [])
+        ]
         entry["bills"].append({
             "bill_id": r["bill_id"], "state": r["state"], "bill_number": r["bill_number"],
-            "title": r["title"], "role": r["role"], "votes": votes_by_bill.get(r["bill_id"], []),
+            "title": r["title"], "role": r["role"], "status_label": r["status_label"],
+            "positions": positions, "votes": votes_by_bill.get(r["bill_id"], []),
         })
-    return sorted(by_sponsor.values(), key=lambda s: s["name"])
+    result = sorted(by_sponsor.values(), key=lambda s: s["name"])
+    for s in result:
+        s["bill_count"] = len(s["bills"])
+    return result
 
 
 # ── Support for the daily digest email — see digest.py. ──
