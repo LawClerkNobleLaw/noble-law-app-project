@@ -1299,6 +1299,28 @@
   .selection-count { font-weight: 700; font-size: 0.85rem; }
   .selection-bar select { font-size: 0.78rem; padding: 0.25rem 0.4rem; }
 
+  /* ── The search page's start state (P2-28) ──
+     A heading, a sentence and an empty input, on one of the most-visited
+     screens in the app. Recent searches and a client's interest terms
+     are both one-click queries, so both are chips: the affordance is
+     "press this and something happens", which a list row doesn't
+     promise. Distinct from .filter-chip below, which REMOVES a filter
+     when pressed — same shape would mean two opposite actions. */
+  .start-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: 0.9rem 1.15rem; }
+  .start-chip {
+    font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer;
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--rule-strong); border-radius: var(--radius-pill);
+    padding: 0.3rem 0.7rem; max-width: 22rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .start-chip:hover { border-color: var(--accent-solid); background: var(--accent-soft); }
+  /* A search term is content someone typed, so it gets a real touch
+     target rather than the tighter density the filter rail uses. */
+  @media (pointer: coarse) {
+    .start-chip { min-height: 2.5rem; }
+  }
+
   /* ── Search filters (P1-11) ──
      The rail above the results. Every dimension here is DERIVED from a
      field getSearch already returns (see _shape_search_rows in
