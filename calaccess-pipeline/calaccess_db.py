@@ -17,6 +17,7 @@ from here via the same file, not a duplicate copy.
 """
 
 import os
+import re
 import sqlite3
 
 # schema.sql is always the repo's own copy (source, not data). The actual
@@ -36,6 +37,39 @@ def get_connection():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+# CAL-ACCESS ships every date as "M/D/YYYY h:mm:ss AM" — a US-format
+# string with no zero padding. Stored as-is, it is unsortable: SQLite
+# compares it lexically, so "9/5/2007" sorts above "10/31/2024" and any
+# ORDER BY filed_date puts September ahead of October ahead of January.
+# That is not theoretical — the lobbying detail page's "most recent
+# filings" list led with 2007 filings for the busiest filer in the
+# database until this existed.
+#
+# So dates are normalized to ISO (YYYY-MM-DD) on the way in, which is
+# what the rest of the app already stores (db.py writes datetime('now'))
+# and what makes the two comparable at all. Only the date survives: the
+# time component is always midnight in this export and carries nothing.
+_ISO_DATE_RE = re.compile(r"^\s*(\d{1,2})/(\d{1,2})/(\d{4})")
+
+
+def normalize_filing_date(value):
+    """"3/31/2000 12:00:00 AM" -> "2000-03-31".
+
+    Anything that isn't in that shape comes back untouched — a value
+    already in ISO, an empty string, a None, or a malformed date the
+    state filed. Silently dropping an unparseable date would lose the
+    fact that a filing has one; keeping it verbatim leaves it visible
+    and merely unsorted, which is where it started.
+    """
+    if not isinstance(value, str):
+        return value
+    m = _ISO_DATE_RE.match(value)
+    if not m:
+        return value
+    month, day, year = m.groups()
+    return f"{year}-{int(month):02d}-{int(day):02d}"
 
 
 def _table_exists(conn, table):
@@ -142,7 +176,10 @@ def upsert_disclosure(conn, disclosure):
              filed_date=excluded.filed_date""",
         (
             disclosure["filing_id"], disclosure["filer_entity_id"], disclosure.get("client_name"),
-            disclosure.get("form_type"), disclosure.get("period_start"), disclosure.get("period_end"),
-            disclosure.get("amount_spent"), disclosure.get("raw_bill_text"), disclosure.get("filed_date"),
+            disclosure.get("form_type"),
+            normalize_filing_date(disclosure.get("period_start")),
+            normalize_filing_date(disclosure.get("period_end")),
+            disclosure.get("amount_spent"), disclosure.get("raw_bill_text"),
+            normalize_filing_date(disclosure.get("filed_date")),
         ),
     )
