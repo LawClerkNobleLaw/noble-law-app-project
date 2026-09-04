@@ -2,7 +2,7 @@
 <div class="page-head">
   <div>
     <h1>Search bills</h1>
-    <p class="sub">Look up an exact bill number or search free text across every California bill — powered by LegiScan.</p>
+    <p class="sub">Look up an exact bill number, search titles and summaries across every California bill, or search the bills' full text.</p>
   </div>
 </div>
 
@@ -147,6 +147,11 @@ let sortMode = 'relevance';
 // about live bills — and because getSearch's own default already
 // behaves this way, so this makes an inherited behaviour a stated one.
 let sessionScope = 'current';
+// 'summary' asks LegiScan, which indexes titles and summaries.
+// 'text' asks the local corpus, which holds the bills' own words —
+// the only one of the two that can answer "which bills say anything
+// about local control" (see bill_text.py).
+let searchMode = 'summary';
 
 // Only used by the "flag selected" bar's client picker. A signed-out
 // visitor gets an empty list and no picker, which is right — they can't
@@ -336,7 +341,7 @@ async function runSearch(q, keepFilters) {
   form.querySelector('button').disabled = true;
 
   try {
-    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&session=${sessionScope}`);
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&session=${sessionScope}&mode=${searchMode}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Search failed');
     renderResults(data);
@@ -352,6 +357,14 @@ async function runSearch(q, keepFilters) {
 function setSessionScope(scope) {
   if (scope === sessionScope) return;
   sessionScope = scope;
+  if (currentQuery) runSearch(currentQuery, true);
+}
+
+// Same search, different index — so filters are kept, exactly as
+// changing the session scope keeps them.
+function setSearchMode(mode) {
+  if (mode === searchMode) return;
+  searchMode = mode;
   if (currentQuery) runSearch(currentQuery, true);
 }
 
@@ -398,7 +411,21 @@ function highlightTerms(text, terms) {
   return safe.replace(pattern, '<mark class="match-hit">$1</mark>');
 }
 
+// A full-text hit comes back with the words around it. The sentinels
+// are swapped for <mark> only AFTER escaping — the snippet is a span of
+// the bill's own fetched text, so it is escaped like any other remote
+// string and the markers are the one thing added back (see
+// db.search_bill_text for why they aren't tags on the wire).
+function snippetHtml(raw) {
+  return escapeText(raw)
+    .replace(/\u0002/g, '<mark class="match-hit">')
+    .replace(/\u0003/g, '</mark>');
+}
+
 function matchNoteHtml(row, terms) {
+  if (row.snippet) {
+    return `<div class="match-note match-snippet">${snippetHtml(row.snippet)}</div>`;
+  }
   if (!terms.length) return '';
   const title = (row.title || '').toLowerCase();
   if (terms.some(t => title.includes(t))) return '';
@@ -406,7 +433,11 @@ function matchNoteHtml(row, terms) {
   if (terms.some(t => action.includes(t))) {
     return '<div class="match-note">Matched in the latest action, not the title.</div>';
   }
-  return '<div class="match-note">Matched somewhere in the bill text — open it to see where.</div>';
+  // Only reachable in summary mode now — LegiScan searches the text and
+  // returns none of it. "Full bill text" answers this properly.
+  return `<div class="match-note">Matched somewhere in the bill text —
+    <button type="button" class="linklike" onclick="setSearchMode('text')">search the text</button>
+    to see where.</div>`;
 }
 
 // Every search — one hit or a hundred — renders as this same row
@@ -516,6 +547,18 @@ function filterRailHtml() {
        aria-pressed="${sessionScope === value}" onclick="setSessionScope('${value}')">${label}</button>`
   ).join('');
 
+  const modeTabs = [['summary', 'Title & summary'], ['text', 'Full bill text']].map(([value, label]) =>
+    `<button type="button" class="filter-tab${searchMode === value ? ' active' : ''}"
+       aria-pressed="${searchMode === value}" onclick="setSearchMode('${value}')">${label}</button>`
+  ).join('');
+
+  // The session tabs are LegiScan's, and the corpus only holds the
+  // current one — offering "All sessions" beside a text search would
+  // be a control that silently does nothing.
+  const scopeGroup = searchMode === 'text'
+    ? ''
+    : `<div class="filter-group"><span class="filter-group-label">Session</span>${sessionTabs}</div>`;
+
   const sortHtml = `
     <div class="filter-sort">
       <label class="filter-group-label" for="sort-mode" style="min-width:0">Sort</label>
@@ -528,7 +571,8 @@ function filterRailHtml() {
 
   return `
     <div class="search-filters">
-      <div class="filter-group"><span class="filter-group-label">Session</span>${sessionTabs}${sortHtml}</div>
+      <div class="filter-group"><span class="filter-group-label">Search in</span>${modeTabs}${sortHtml}</div>
+      ${scopeGroup}
       ${groupsHtml}
       ${activeChipsHtml()}
     </div>`;
@@ -613,6 +657,7 @@ function renderRows() {
     : `${all.length.toLocaleString()} bill${all.length === 1 ? '' : 's'} match`;
 
   resultsEl.innerHTML = `
+    ${corpusNoticeHtml()}
     ${truncationHtml()}
     ${filterRailHtml()}
     ${selectionBarHtml()}
@@ -658,7 +703,29 @@ function emptyFilterHtml() {
 
 // Said out loud, because a filter over the first 200 of 1,504 matches is
 // not the filter it appears to be.
+// A text search can only find what has been indexed, and the corpus is
+// built in budgeted passes (see build_bill_corpus.py). Saying how much
+// of the session it covers is the difference between "no bills say
+// this" and "the bills that say it aren't fetched yet" — which look
+// identical on an empty results page and mean opposite things.
+const SESSION_BILL_ESTIMATE = 4243;
+
+function corpusNoticeHtml() {
+  if (searchMode !== 'text' || !searchMeta.corpus) return '';
+  const held = searchMeta.corpus.bills || 0;
+  if (!held) {
+    return `<div class="result-truncated">No bill text has been indexed yet, so this
+      search had nothing to read. Run <code>build_bill_corpus.py</code> to build it.</div>`;
+  }
+  if (held >= SESSION_BILL_ESTIMATE) return '';
+  const pct = Math.round((held / SESSION_BILL_ESTIMATE) * 100);
+  return `<div class="result-truncated">Searching the full text of
+    ${held.toLocaleString()} bills — about ${pct}% of the session. The rest
+    aren't indexed yet, so this isn't the whole answer.</div>`;
+}
+
 function truncationHtml() {
+  if (searchMode === 'text') return '';
   if (searchMeta.complete !== false) return '';
   return `<div class="result-truncated">Filtering and sorting the first
     ${(searchMeta.count || 0).toLocaleString()} matches — LegiScan reports about

@@ -688,3 +688,79 @@ CREATE TABLE IF NOT EXISTS saved_views (
   UNIQUE(user_id, name)
 );
 CREATE INDEX IF NOT EXISTS idx_saved_views_user ON saved_views(user_id);
+
+-- ── The searchable bill corpus (see bill_text.py) ──────────────────
+--
+-- Everything above this line is about bills someone in this firm has
+-- looked at. This table is about every bill in the session, whether
+-- anyone ever has: 5,060 of them in 2025-26, held so that "which bills
+-- touch my client's concern" can be answered from the operative text
+-- rather than from LegiScan's index of titles and summaries.
+--
+-- Deliberately NOT a set of columns on `bills`, and deliberately
+-- carrying its own copy of bill_number/title/url/last_action even
+-- though `bills` has columns by those names. The two have different
+-- lifecycles and wildly different sizes — `bills` holds the handful
+-- this app has pulled full detail for and refreshes nightly (7 rows at
+-- the time of writing), the corpus holds the session (5,060). Making
+-- search join against `bills` would mean a full-text index that can
+-- only find bills somebody already found, which is the problem it
+-- exists to fix.
+--
+-- One row per bill, holding its CURRENT version only. Indexing every
+-- prior version as well is ~5x the rows, the API calls and the disk
+-- (measured — see bill_text.py's header); it is a deferral, not an
+-- omission.
+CREATE TABLE IF NOT EXISTS bill_texts (
+  bill_id          INTEGER PRIMARY KEY,   -- LegiScan's bill_id, same space as bills.id
+  bill_number      TEXT,
+  title            TEXT,
+  description      TEXT,
+  url              TEXT,
+  last_action      TEXT,
+  last_action_date TEXT,
+  doc_id           INTEGER,               -- LegiScan's doc_id for the indexed version
+  version_date     TEXT,
+  version_type     TEXT,                  -- 'Introduced' | 'Amended' | 'Enrolled' | ...
+  body             TEXT,                  -- plain text, markup stripped
+  byte_size        INTEGER,               -- of the HTML as fetched, for corpus sizing
+  change_hash      TEXT,                  -- the getBill hash this row was built from
+  fetched_at       TEXT
+);
+
+-- External-content FTS5: the index points at bill_texts rather than
+-- keeping its own copy of `body`, which is the difference between ~75MB
+-- and ~150MB of text on disk. content_rowid is bill_id, so a MATCH
+-- returns rowids that are already bill_ids with nothing to join.
+--
+-- porter so that "licensing" finds "license", unicode61 so that
+-- punctuation in the Legislature's own markup doesn't glue words
+-- together. Both are compiled into SQLite by default (FTS5 has shipped
+-- standard since 3.9) — no extension to load and nothing to add to
+-- requirements.txt, which is the whole reason this is FTS5 and not an
+-- external search engine.
+CREATE VIRTUAL TABLE IF NOT EXISTS bill_text_fts USING fts5(
+  bill_number, title, description, body,
+  content='bill_texts',
+  content_rowid='bill_id',
+  tokenize='porter unicode61'
+);
+
+-- External-content tables do not index themselves; these keep the index
+-- and the table in step. The 'delete' command re-supplies the OLD row's
+-- values, which is how FTS5 finds the terms to remove — hence the
+-- old.* on the update trigger before the fresh insert.
+CREATE TRIGGER IF NOT EXISTS bill_texts_ai AFTER INSERT ON bill_texts BEGIN
+  INSERT INTO bill_text_fts(rowid, bill_number, title, description, body)
+  VALUES (new.bill_id, new.bill_number, new.title, new.description, new.body);
+END;
+CREATE TRIGGER IF NOT EXISTS bill_texts_ad AFTER DELETE ON bill_texts BEGIN
+  INSERT INTO bill_text_fts(bill_text_fts, rowid, bill_number, title, description, body)
+  VALUES ('delete', old.bill_id, old.bill_number, old.title, old.description, old.body);
+END;
+CREATE TRIGGER IF NOT EXISTS bill_texts_au AFTER UPDATE ON bill_texts BEGIN
+  INSERT INTO bill_text_fts(bill_text_fts, rowid, bill_number, title, description, body)
+  VALUES ('delete', old.bill_id, old.bill_number, old.title, old.description, old.body);
+  INSERT INTO bill_text_fts(rowid, bill_number, title, description, body)
+  VALUES (new.bill_id, new.bill_number, new.title, new.description, new.body);
+END;

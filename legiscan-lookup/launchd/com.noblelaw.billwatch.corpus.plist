@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.noblelaw.billwatch.corpus</string>
+
+    <!-- Same zsh-with-a-path-argument form as the refresh job's plist,
+         and for the same reason — see the comment there. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>/Users/daezhongilbarg/Projects/noble law app project/legiscan-lookup/build_corpus.sh</string>
+    </array>
+
+    <!-- Once a day, at 3am, and deliberately nowhere near the refresh
+         job's 6am/1pm/8pm. Two reasons: the digest depends on the
+         refresh finishing promptly and should never queue behind a
+         corpus pass, and both jobs spend the same LegiScan quota, so
+         interleaving them makes a rate-limit rejection look like a
+         data problem.
+
+         Once a day rather than three times, because the corpus is a
+         search index and not a deadline: a bill amended this morning
+         being findable by its new text tomorrow is fine, where a
+         hearing set this morning that goes unmentioned until tomorrow
+         is not.
+
+         At the default budget (see build_bill_corpus.DEFAULT_BUDGET)
+         one pass spends at most 1,200 calls, so a first full build of
+         the ~4,200 substantive bills completes over about a week of
+         nightly runs and every pass after that is a cheap top-up —
+         only bills whose change_hash actually moved cost anything. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/daezhongilbarg/Projects/noble law app project/legiscan-lookup/logs/launchd.corpus.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/daezhongilbarg/Projects/noble law app project/legiscan-lookup/logs/launchd.corpus.err.log</string>
+</dict>
+</plist>

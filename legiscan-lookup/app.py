@@ -87,6 +87,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote
 
 import accounts
+import build_bill_corpus
 import config
 import db
 import disclosure_fields
@@ -189,13 +190,13 @@ REFRESH_SECRET = config.REFRESH_SECRET
 # maps job name -> bool. Not persisted; a restart just clears it, which is
 # fine, since the worst case is one extra run, not a corrupted one (every
 # refresh is upsert-based already).
-_refresh_running = {"watchlist": False, "calaccess": False}
+_refresh_running = {"watchlist": False, "calaccess": False, "corpus": False}
 
 # What /internal/status reports back for "did the last refresh actually
 # work" — filled in by _trigger_refresh's run() below. Not persisted,
 # same tradeoff as _refresh_running: a restart just means this is empty
 # until the next refresh runs, not a corrupted answer.
-_last_refresh = {"watchlist": None, "calaccess": None}
+_last_refresh = {"watchlist": None, "calaccess": None, "corpus": None}
 _refresh_lock = threading.Lock()
 
 # Basic brute-force guard for /api/login — maps lowercased email to
@@ -2645,15 +2646,42 @@ class Handler(BaseHTTPRequestHandler):
             scope = (qs.get("session") or ["current"])[0]
             year = (legiscan_client.YEAR_ALL_SESSIONS if scope == "all"
                     else legiscan_client.YEAR_CURRENT_SESSION)
-            try:
-                data = smart_search(
-                    q, page=page, year=year,
-                    pages=legiscan_client.SEARCH_PAGE_CAP if deep else 1,
-                )
-            except Exception:
-                traceback.print_exc()
-                self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
-                return
+            # Two searches behind one endpoint. The default asks
+            # LegiScan, which indexes titles and summaries; mode=text
+            # asks the local corpus, which holds the bills' actual words
+            # (see bill_text.py). They are different questions — "which
+            # bill is SB 122" versus "which bills say anything about
+            # local control" — and the second one has no answer at
+            # LegiScan, at any parameter.
+            mode = (qs.get("mode") or ["summary"])[0]
+            if mode == "text":
+                conn = db.get_connection()
+                try:
+                    results = db.search_bill_text(conn, q)
+                    stats = db.corpus_stats(conn)
+                finally:
+                    conn.close()
+                data = {
+                    "results": results,
+                    "count": len(results),
+                    "complete": True,
+                    # What the corpus actually holds, passed through so
+                    # the page can say "searched 40 bills" rather than
+                    # letting an empty result read as "no such bill"
+                    # when it really means "not indexed yet."
+                    "corpus": stats,
+                }
+            else:
+                try:
+                    data = smart_search(
+                        q, page=page, year=year,
+                        pages=legiscan_client.SEARCH_PAGE_CAP if deep else 1,
+                    )
+                except Exception:
+                    traceback.print_exc()
+                    self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
+                    return
+            data["mode"] = mode
             data["session_scope"] = scope
             # Annotate each row with what this user already tracks. A
             # search of 119 results across three pages otherwise asks
@@ -2695,13 +2723,25 @@ class Handler(BaseHTTPRequestHandler):
     def _do_POST(self):
         parsed = urlparse(self.path)
 
-        if parsed.path in ("/internal/refresh-watchlist", "/internal/refresh-calaccess"):
+        if parsed.path in ("/internal/refresh-watchlist", "/internal/refresh-calaccess",
+                           "/internal/build-corpus"):
             if not self._authorized_for_refresh():
                 self.send_response(404)  # not 401 — don't reveal the route exists
                 self.end_headers()
                 return
-            job = "watchlist" if parsed.path == "/internal/refresh-watchlist" else "calaccess"
-            target = refresh_watchlist.main if job == "watchlist" else refresh_calaccess.main
+            job = {
+                "/internal/refresh-watchlist": "watchlist",
+                "/internal/refresh-calaccess": "calaccess",
+                "/internal/build-corpus": "corpus",
+            }[parsed.path]
+            target = {
+                "watchlist": refresh_watchlist.main,
+                "calaccess": refresh_calaccess.main,
+                # Budget left at the module default rather than taken
+                # from the request: the cap exists to make a runaway
+                # impossible, and a cap the caller sets is not a cap.
+                "corpus": build_bill_corpus.main,
+            }[job]
             if _trigger_refresh(job, target):
                 self._send_json(202, {"status": f"{job} refresh started"})
             else:
