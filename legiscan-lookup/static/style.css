@@ -1548,6 +1548,12 @@
     padding: 0.35rem 0; border-top: 1px dashed var(--rule);
     border-bottom: 1px dashed var(--rule); margin: 0.6rem 0;
   }
+  /* The Legislature's own deadlines, above the hearing list (see
+     deadlines.py). Tinted so it reads as a different KIND of date from
+     the hearings below it — one is where your bill has to be, the other
+     is when it stops mattering. */
+  .deadline-panel { border-left: 3px solid var(--accent); }
+  .deadline-panel .bill-row { align-items: center; }
 
   .head-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 

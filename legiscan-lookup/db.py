@@ -20,10 +20,11 @@ import json
 import os
 import re
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import config
+import deadlines
 import routing
 
 _REPO_DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db")
@@ -816,6 +817,81 @@ def cached_version_doc_ids(conn, bill_id):
         row["doc_id"] for row in
         conn.execute("SELECT doc_id FROM bill_text_versions WHERE bill_id = ?", (bill_id,))
     }
+# ── The Legislature's deadline calendar (see deadlines.py) ─────────
+
+def replace_deadlines(conn, user_id, session_year, rows):
+    """Store one pasted calendar, replacing that session's rows.
+
+    Replace rather than merge, and scoped to the session: a calendar is
+    one document, and pasting a corrected version should not leave the
+    superseded dates sitting beside the new ones. Other sessions' rows
+    are left alone, so last session's history survives.
+    """
+    conn.execute(
+        f"DELETE FROM legislative_deadlines WHERE {ORG_SCOPE} AND session_year IS ?",
+        (user_id, session_year),
+    )
+    conn.executemany(
+        """INSERT INTO legislative_deadlines
+             (user_id, session_year, date, label, kind, created_at)
+           VALUES (?,?,?,?,?, datetime('now'))""",
+        [(user_id, session_year, row["date"], row["label"], row.get("kind"))
+         for row in rows],
+    )
+    return len(rows)
+
+
+def _as_date(value):
+    """A date, an ISO string, or None -> a date.
+
+    Both forms are in circulation here: dashboard_summary carries `today`
+    as an ISO string (it goes into SQL comparisons), while deadlines.py
+    works in dates. Accepting either beats making every caller convert,
+    and beats the AttributeError that comes of assuming.
+    """
+    if value is None:
+        return date.today()
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return date.today()
+    return value
+
+
+def list_deadlines(conn, user_id, session_year=None, upcoming_only=False, today=None):
+    """A firm's deadlines, soonest first, each with its countdown."""
+    where, params = [ORG_SCOPE], [user_id]
+    if session_year is not None:
+        where.append("session_year IS ?")
+        params.append(session_year)
+    if upcoming_only:
+        where.append("date >= ?")
+        params.append(_as_date(today).isoformat())
+    rows = [dict(row) for row in conn.execute(
+        f"""SELECT id, session_year, date, label, kind
+              FROM legislative_deadlines WHERE {' AND '.join(where)}
+             ORDER BY date, id""",
+        params,
+    )]
+    reference = _as_date(today)
+    for row in rows:
+        row["days_until"] = deadlines.days_until(row["date"], reference)
+    return rows
+
+
+def delete_deadline(conn, user_id, deadline_id):
+    conn.execute(
+        f"DELETE FROM legislative_deadlines WHERE id = ? AND {ORG_SCOPE}",
+        (deadline_id, user_id),
+    )
+
+
+def next_deadline(conn, user_id, today=None):
+    """The soonest deadline still ahead, or None. What the dashboard
+    counts down to."""
+    upcoming = list_deadlines(conn, user_id, upcoming_only=True, today=today)
+    return upcoming[0] if upcoming else None
 
 
 def code_section_stats(conn):
@@ -2968,6 +3044,22 @@ HEARING_HORIZON_DAYS = 14
 # Matches the .due-chip.soon threshold the disclosures list already uses.
 FILING_SOON_DAYS = 14
 
+# How far ahead a legislative deadline starts appearing on the dashboard.
+# Wider than FILING_SOON_DAYS because the response is different in kind:
+# a filing needs a day's work, and a bill facing a committee deadline
+# needs amendments negotiated with an author's office, which is weeks.
+DEADLINE_SOON_DAYS = 30
+
+# A bill in one of these states is finished, and no committee deadline
+# threatens it any more. Matched on the LABEL rather than the numeric
+# status because list_flagged_bills selects status_label and not
+# status_code — reading a key that isn't there counts every dead bill as
+# live, which is the wrong direction to be wrong in on a deadline
+# warning. "Chaptered" is here too: it isn't one of
+# legiscan_client.STATUS_LABELS' values, but bill_status.js infers it
+# for signed bills and it means the same thing.
+_SETTLED_STATUS_LABELS = {"Passed", "Vetoed", "Failed", "Chaptered"}
+
 
 def recent_bill_changes(conn, user_id, limit=8, since=None):
     """The newest changes the refresh job recorded across this user's
@@ -3011,7 +3103,7 @@ def days_ago_in_california(days):
             - timedelta(days=days)).strftime("%Y-%m-%d")
 
 
-def _attention_items(flagged, filings, today):
+def _attention_items(flagged, filings, today, deadline=None):
     """The one merged queue the dashboard leads with: everything with a
     deadline attached, from whichever part of the app it came from,
     ordered by how soon it bites.
@@ -3024,6 +3116,28 @@ def _attention_items(flagged, filings, today):
     date at all, so it sorts last (None → +inf) and appears as cleanup
     once the dated work is clear rather than as an interruption."""
     items = []
+
+    # The Legislature's own deadline, if one is close. One row rather
+    # than one per threatened bill: the deadline is a single event that
+    # applies to all of them at once, and N copies of the same date
+    # would push every other kind of work off a capped queue.
+    if deadline and deadline.get("days_until") is not None \
+            and 0 <= deadline["days_until"] <= DEADLINE_SOON_DAYS:
+        live = sum(1 for bill in flagged
+                   if (bill.get("status_label") or "") not in _SETTLED_STATUS_LABELS)
+        items.append({
+            "kind": "deadline",
+            "days": deadline["days_until"],
+            "title": deadline["label"],
+            # Says what it counted, because "3 bills" is only meaningful
+            # if the reader knows it means "still in progress" and not
+            # "definitely affected" — which this app can't know (it
+            # doesn't know whether a bill is fiscal).
+            "detail": f"Legislative deadline · {live} flagged bill"
+                      f"{'' if live == 1 else 's'} still in progress",
+            "date": deadline["date"],
+            "href": "/flagged/calendar",
+        })
 
     for filing in filings:
         days = filing.get("days_until_due")
@@ -3154,7 +3268,8 @@ def dashboard_summary(conn, user_id, today=None):
             # in words rather than showing a countdown it can't compute.
             "nearest_due_days": dated_drafts[0]["days_until_due"] if dated_drafts else None,
         },
-        "attention": _attention_items(flagged, filings, today),
+        "attention": _attention_items(flagged, filings, today,
+                                      deadline=next_deadline(conn, user_id, today=today)),
         "recent": recent_bill_changes(conn, user_id),
         "hearings": upcoming[:5],
         "by_client": rollup["clients"],
