@@ -817,81 +817,7 @@ def cached_version_doc_ids(conn, bill_id):
         row["doc_id"] for row in
         conn.execute("SELECT doc_id FROM bill_text_versions WHERE bill_id = ?", (bill_id,))
     }
-# ── The Legislature's deadline calendar (see deadlines.py) ─────────
 
-def replace_deadlines(conn, user_id, session_year, rows):
-    """Store one pasted calendar, replacing that session's rows.
-
-    Replace rather than merge, and scoped to the session: a calendar is
-    one document, and pasting a corrected version should not leave the
-    superseded dates sitting beside the new ones. Other sessions' rows
-    are left alone, so last session's history survives.
-    """
-    conn.execute(
-        f"DELETE FROM legislative_deadlines WHERE {ORG_SCOPE} AND session_year IS ?",
-        (user_id, session_year),
-    )
-    conn.executemany(
-        """INSERT INTO legislative_deadlines
-             (user_id, session_year, date, label, kind, created_at)
-           VALUES (?,?,?,?,?, datetime('now'))""",
-        [(user_id, session_year, row["date"], row["label"], row.get("kind"))
-         for row in rows],
-    )
-    return len(rows)
-
-
-def _as_date(value):
-    """A date, an ISO string, or None -> a date.
-
-    Both forms are in circulation here: dashboard_summary carries `today`
-    as an ISO string (it goes into SQL comparisons), while deadlines.py
-    works in dates. Accepting either beats making every caller convert,
-    and beats the AttributeError that comes of assuming.
-    """
-    if value is None:
-        return date.today()
-    if isinstance(value, str):
-        try:
-            return date.fromisoformat(value)
-        except ValueError:
-            return date.today()
-    return value
-
-
-def list_deadlines(conn, user_id, session_year=None, upcoming_only=False, today=None):
-    """A firm's deadlines, soonest first, each with its countdown."""
-    where, params = [ORG_SCOPE], [user_id]
-    if session_year is not None:
-        where.append("session_year IS ?")
-        params.append(session_year)
-    if upcoming_only:
-        where.append("date >= ?")
-        params.append(_as_date(today).isoformat())
-    rows = [dict(row) for row in conn.execute(
-        f"""SELECT id, session_year, date, label, kind
-              FROM legislative_deadlines WHERE {' AND '.join(where)}
-             ORDER BY date, id""",
-        params,
-    )]
-    reference = _as_date(today)
-    for row in rows:
-        row["days_until"] = deadlines.days_until(row["date"], reference)
-    return rows
-
-
-def delete_deadline(conn, user_id, deadline_id):
-    conn.execute(
-        f"DELETE FROM legislative_deadlines WHERE id = ? AND {ORG_SCOPE}",
-        (deadline_id, user_id),
-    )
-
-
-def next_deadline(conn, user_id, today=None):
-    """The soonest deadline still ahead, or None. What the dashboard
-    counts down to."""
-    upcoming = list_deadlines(conn, user_id, upcoming_only=True, today=today)
-    return upcoming[0] if upcoming else None
 
 
 def code_section_stats(conn):
@@ -1384,6 +1310,83 @@ def list_sponsor_vote_rollup(conn, user_id):
     for s in result:
         s["bill_count"] = len(s["bills"])
     return result
+
+
+# ── The Legislature's deadline calendar (see deadlines.py) ─────────
+
+def replace_deadlines(conn, user_id, session_year, rows):
+    """Store one pasted calendar, replacing that session's rows.
+
+    Replace rather than merge, and scoped to the session: a calendar is
+    one document, and pasting a corrected version should not leave the
+    superseded dates sitting beside the new ones. Other sessions' rows
+    are left alone, so last session's history survives.
+    """
+    conn.execute(
+        f"DELETE FROM legislative_deadlines WHERE {ORG_SCOPE} AND session_year IS ?",
+        (user_id, session_year),
+    )
+    conn.executemany(
+        """INSERT INTO legislative_deadlines
+             (user_id, session_year, date, label, kind, created_at)
+           VALUES (?,?,?,?,?, datetime('now'))""",
+        [(user_id, session_year, row["date"], row["label"], row.get("kind"))
+         for row in rows],
+    )
+    return len(rows)
+
+
+def _as_date(value):
+    """A date, an ISO string, or None -> a date.
+
+    Both forms are in circulation here: dashboard_summary carries `today`
+    as an ISO string (it goes into SQL comparisons), while deadlines.py
+    works in dates. Accepting either beats making every caller convert,
+    and beats the AttributeError that comes of assuming.
+    """
+    if value is None:
+        return date.today()
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return date.today()
+    return value
+
+
+def list_deadlines(conn, user_id, session_year=None, upcoming_only=False, today=None):
+    """A firm's deadlines, soonest first, each with its countdown."""
+    where, params = [ORG_SCOPE], [user_id]
+    if session_year is not None:
+        where.append("session_year IS ?")
+        params.append(session_year)
+    if upcoming_only:
+        where.append("date >= ?")
+        params.append(_as_date(today).isoformat())
+    rows = [dict(row) for row in conn.execute(
+        f"""SELECT id, session_year, date, label, kind
+              FROM legislative_deadlines WHERE {' AND '.join(where)}
+             ORDER BY date, id""",
+        params,
+    )]
+    reference = _as_date(today)
+    for row in rows:
+        row["days_until"] = deadlines.days_until(row["date"], reference)
+    return rows
+
+
+def delete_deadline(conn, user_id, deadline_id):
+    conn.execute(
+        f"DELETE FROM legislative_deadlines WHERE id = ? AND {ORG_SCOPE}",
+        (deadline_id, user_id),
+    )
+
+
+def next_deadline(conn, user_id, today=None):
+    """The soonest deadline still ahead, or None. What the dashboard
+    counts down to."""
+    upcoming = list_deadlines(conn, user_id, upcoming_only=True, today=today)
+    return upcoming[0] if upcoming else None
 
 
 # ── Support for the daily digest email — see digest.py. ──
