@@ -171,6 +171,10 @@ def _migrate(conn):
     _migrate_bill_views(conn)
     _migrate_calaccess_dates(conn)
 
+    corpus_cols = {row["name"] for row in conn.execute("PRAGMA table_info(bill_texts)")}
+    if "sections_parsed_at" not in corpus_cols:
+        conn.execute("ALTER TABLE bill_texts ADD COLUMN sections_parsed_at TEXT")
+
 
 def _migrate_calaccess_dates(conn):
     """Rewrite CAL-ACCESS's "M/D/YYYY h:mm:ss AM" dates to ISO in place.
@@ -627,6 +631,133 @@ def search_bill_text(conn, query, limit=200):
         (match, limit),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def replace_bill_code_sections(conn, bill_id, sections):
+    """The citations one bill makes, replacing whatever was there.
+
+    Full replace rather than merge, same as upsert_bill_text above it:
+    a re-parse means the sections are being re-derived from scratch,
+    and a section dropped from an amended bill's title has to actually
+    disappear or the search keeps answering for an edit that is no
+    longer in the bill.
+
+    Stamping sections_parsed_at in the same statement run is what makes
+    "text fetched" and "citations derived" one fact rather than two that
+    can disagree.
+    """
+    conn.execute("DELETE FROM bill_code_sections WHERE bill_id = ?", (bill_id,))
+    conn.executemany(
+        """INSERT OR IGNORE INTO bill_code_sections
+             (bill_id, code, section, action, citation, is_range)
+           VALUES (?,?,?,?,?,?)""",
+        [
+            (bill_id, s["code"], s["section"], s["action"],
+             s.get("citation"), 1 if s.get("is_range") else 0)
+            for s in sections
+        ],
+    )
+    conn.execute(
+        "UPDATE bill_texts SET sections_parsed_at = datetime('now') WHERE bill_id = ?",
+        (bill_id,),
+    )
+
+
+def bills_needing_section_parse(conn):
+    """Corpus rows whose text is here but whose citations aren't derived
+    yet. Costs no API calls to work through — see the schema note on
+    bill_texts.sections_parsed_at."""
+    return [
+        (row["bill_id"], row["body"])
+        for row in conn.execute(
+            "SELECT bill_id, body FROM bill_texts WHERE sections_parsed_at IS NULL AND body IS NOT NULL"
+        )
+    ]
+
+
+def search_code_sections(conn, code=None, section=None, limit=200):
+    """Bills touching a code section, newest action first.
+
+    Either half of the citation may be absent: a section with no code
+    ("17053.5") searches every code, and a code with no section ("Health
+    and Safety Code") is "everything moving against this code" — which
+    is a real question a lobbyist asks at the start of a session.
+
+    Rows come back shaped like the other two search modes so /lookup
+    renders them unchanged, plus `sections`: the citations that matched,
+    which is this mode's answer to "why is this bill here" the way
+    `snippet` is full-text search's.
+
+    Ordered by last action rather than relevance — every hit is an exact
+    citation match, so there is no relevance to rank by, and what
+    distinguishes them is which one moved most recently.
+    """
+    if not code and not section:
+        return []
+    where, params = [], []
+    if code:
+        where.append("s.code = ?")
+        params.append(code)
+    if section:
+        where.append("s.section = ?")
+        params.append(section)
+    params.append(limit)
+    rows = conn.execute(
+        f"""SELECT t.bill_id, t.bill_number, t.title, t.description, t.url,
+                   t.last_action, t.last_action_date, t.version_type, t.version_date
+              FROM bill_texts t
+              JOIN bill_code_sections s ON s.bill_id = t.bill_id
+             WHERE {' AND '.join(where)}
+             GROUP BY t.bill_id
+             ORDER BY t.last_action_date DESC, t.bill_id DESC
+             LIMIT ?""",
+        params,
+    ).fetchall()
+    results = [dict(row) for row in rows]
+    matched = sections_for_bills(conn, [r["bill_id"] for r in results], code=code, section=section)
+    for row in results:
+        row["sections"] = matched.get(row["bill_id"], [])
+    return results
+
+
+def sections_for_bills(conn, bill_ids, code=None, section=None):
+    """bill_id -> its citations, optionally narrowed to the ones that
+    matched a search. One query for the whole page rather than one per
+    row."""
+    if not bill_ids:
+        return {}
+    placeholders = ",".join("?" for _ in bill_ids)
+    where, params = [f"bill_id IN ({placeholders})"], list(bill_ids)
+    if code:
+        where.append("code = ?")
+        params.append(code)
+    if section:
+        where.append("section = ?")
+        params.append(section)
+    out = {}
+    for row in conn.execute(
+        f"""SELECT bill_id, code, section, action, citation, is_range
+              FROM bill_code_sections
+             WHERE {' AND '.join(where)}
+             ORDER BY code, section""",
+        params,
+    ):
+        out.setdefault(row["bill_id"], []).append({
+            "code": row["code"], "section": row["section"], "action": row["action"],
+            "citation": row["citation"], "is_range": bool(row["is_range"]),
+        })
+    return out
+
+
+def code_section_stats(conn):
+    """How much of the corpus has been parsed, so an empty result can
+    say which kind of empty it is."""
+    row = conn.execute(
+        """SELECT COUNT(*) AS parsed,
+                  (SELECT COUNT(*) FROM bill_code_sections) AS citations
+             FROM bill_texts WHERE sections_parsed_at IS NOT NULL"""
+    ).fetchone()
+    return {"parsed": row["parsed"], "citations": row["citations"]}
 
 
 def corpus_stats(conn):

@@ -9,6 +9,7 @@ Run it directly:
     python3 build_bill_corpus.py --budget 500 # spend at most 500 calls
     python3 build_bill_corpus.py --all-types  # resolutions too, not just AB/SB
     python3 build_bill_corpus.py --dry-run    # say what it would fetch
+    python3 build_bill_corpus.py --reparse    # re-derive citations, no API calls
 
 Deliberately a separate script from refresh_watchlist.py rather than a
 step inside it. That job is a nightly must-run whose whole point is the
@@ -42,6 +43,13 @@ So two things keep it bounded:
     IS the bookmark, so an interrupted run and a resumed one are the
     same code path.
 
+Every run also derives each bill's code citations from the text it just
+stored (see code_sections.py), and sweeps up any bill whose text was
+already here but whose citations weren't parsed yet. That pass spends no
+API calls, so it runs in full before a single call of the budget is
+touched — and --reparse re-derives the whole corpus after a parser
+change without refetching a byte.
+
 Resolutions (ACR/SR/AJR/…) are skipped by default. They are ~16% of the
 session and almost never the subject of a client position; --all-types
 includes them for the firm that wants the completeness.
@@ -52,6 +60,7 @@ import os
 import time
 
 import bill_text
+import code_sections
 import db
 import legiscan_client
 
@@ -158,14 +167,37 @@ def index_one(conn, bill_id):
         return 1
     body, _mime, byte_size = bill_text.fetch_document(document.get("doc_id"))
     db.upsert_bill_text(conn, bill_text.searchable_row(bill, document, body, byte_size))
+    # Derived from the text just stored, in the same transaction — the
+    # citations and the text they came from should never be separately
+    # true. Costs no API call (see code_sections.py).
+    db.replace_bill_code_sections(conn, bill.get("bill_id"), code_sections.extract(body))
     conn.commit()
     return 2
 
 
-def main(budget=DEFAULT_BUDGET, all_types=False, dry_run=False):
+def parse_pending(conn):
+    """Derive citations for every corpus row that has text but no parse.
+    Returns how many were done. Spends no API calls, so the caller runs
+    this before anything that has a budget."""
+    pending = db.bills_needing_section_parse(conn)
+    for bill_id, body in pending:
+        db.replace_bill_code_sections(conn, bill_id, code_sections.extract(body))
+    if pending:
+        conn.commit()
+    return len(pending)
+
+
+def main(budget=DEFAULT_BUDGET, all_types=False, dry_run=False, reparse=False):
     db.init_db()
     conn = db.get_connection()
     try:
+        if reparse:
+            # Re-derive from text already held — for a parser change.
+            # Deliberately does not touch `body` or `change_hash`, so
+            # nothing is refetched.
+            conn.execute("UPDATE bill_texts SET sections_parsed_at = NULL")
+            conn.commit()
+
         session = current_session_id()
         bills = master_list(session["session_id"])
         indexed = db.indexed_change_hashes(conn)
@@ -178,6 +210,15 @@ def main(budget=DEFAULT_BUDGET, all_types=False, dry_run=False):
         )
         if dry_run:
             return {"queued": len(queue), "indexed": 0, "errors": 0, "spent": 0}
+
+        # Free pass first: any bill whose text is already here but whose
+        # citations aren't derived yet. Costs no budget, so it runs in
+        # full before a single call is spent — including after a parser
+        # change, where clearing sections_parsed_at re-derives the whole
+        # corpus without refetching a byte of it.
+        reparsed = parse_pending(conn)
+        if reparsed:
+            log(f"parsed citations for {reparsed} bill(s) already held (no API calls)")
 
         spent = 0
         done = 0
@@ -218,5 +259,8 @@ if __name__ == "__main__":
                         help="index resolutions too, not just AB/SB")
     parser.add_argument("--dry-run", action="store_true",
                         help="report what would be fetched, spend nothing")
+    parser.add_argument("--reparse", action="store_true",
+                        help="re-derive code citations from text already held (no API calls)")
     args = parser.parse_args()
-    main(budget=args.budget, all_types=args.all_types, dry_run=args.dry_run)
+    main(budget=args.budget, all_types=args.all_types, dry_run=args.dry_run,
+         reparse=args.reparse)

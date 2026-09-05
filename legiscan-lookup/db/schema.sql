@@ -725,7 +725,14 @@ CREATE TABLE IF NOT EXISTS bill_texts (
   body             TEXT,                  -- plain text, markup stripped
   byte_size        INTEGER,               -- of the HTML as fetched, for corpus sizing
   change_hash      TEXT,                  -- the getBill hash this row was built from
-  fetched_at       TEXT
+  fetched_at       TEXT,
+  -- When bill_code_sections was last derived from `body` (see
+  -- code_sections.py). NULL means the text is here but its citations
+  -- aren't parsed yet — which is the whole queue the corpus builder
+  -- works through for free, since parsing spends no API calls. Also
+  -- what makes a parser improvement redeployable: clear this column and
+  -- the next run re-derives every bill without refetching one.
+  sections_parsed_at TEXT
 );
 
 -- External-content FTS5: the index points at bill_texts rather than
@@ -764,3 +771,42 @@ CREATE TRIGGER IF NOT EXISTS bill_texts_au AFTER UPDATE ON bill_texts BEGIN
   INSERT INTO bill_text_fts(rowid, bill_number, title, description, body)
   VALUES (new.bill_id, new.bill_number, new.title, new.description, new.body);
 END;
+
+-- ── Which code sections a bill touches (see code_sections.py) ──────
+--
+-- Derived from bill_texts.body, not fetched: the citation is stated in
+-- the Legislative Counsel's own title on the front of every bill, so
+-- this table costs parsing rather than API calls, and can be rebuilt
+-- from text already held.
+--
+-- Exists because a section number is a bad full-text search term even
+-- with the corpus in place. Searching "17053.5" as words also returns
+-- every bill that merely cross-references it, and matches "17053.55"
+-- besides. A citation is not a word, so it is stored as a citation.
+--
+-- One row per (bill, code, section, action). "Repeal and add Section
+-- 602" is genuinely two rows: a search for what is being repealed and a
+-- search for what is being added should each find it, and one row with
+-- a merged action would be answerable to neither.
+CREATE TABLE IF NOT EXISTS bill_code_sections (
+  bill_id  INTEGER NOT NULL,
+  code     TEXT NOT NULL,             -- one of code_sections.CALIFORNIA_CODES
+  section  TEXT NOT NULL,             -- as cited: '290', '17053.5', '1798.99.80'
+  action   TEXT NOT NULL,             -- 'add' | 'amend' | 'repeal'
+  -- The citation this was read out of, kept verbatim so a result can
+  -- show its own source ("Sections 290 to 290.024, inclusive") rather
+  -- than only the number that was matched.
+  citation TEXT,
+  -- Whether that citation was a range. Ranges record their endpoints
+  -- and nothing between: ordering California section numbers is
+  -- genuinely ambiguous (290.024 sorts before 290.1 read as decimals
+  -- and after it read as sequence numbers), and a wrong guess would
+  -- silently return bills that don't touch the section. See
+  -- code_sections.py's header.
+  is_range INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (bill_id, code, section, action)
+);
+-- The two shapes of the question: "what's moving against Gov Code
+-- 65660" and "what's moving against 65660, whichever code that is".
+CREATE INDEX IF NOT EXISTS idx_bill_code_sections_cite ON bill_code_sections(code, section);
+CREATE INDEX IF NOT EXISTS idx_bill_code_sections_section ON bill_code_sections(section);
