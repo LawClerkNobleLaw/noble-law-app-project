@@ -782,6 +782,40 @@ def routing_for_bill(conn, user_id, bill_id):
     # nobody to write to.
     result["have_directory"] = bool(legislators)
     return result
+def get_bill_text_version(conn, doc_id):
+    """A cached version document, or None. Keyed by LegiScan's doc_id —
+    see the bill_text_versions note in schema.sql."""
+    row = conn.execute(
+        "SELECT doc_id, bill_id, version_date, version_type, blocks, byte_size"
+        " FROM bill_text_versions WHERE doc_id = ?", (doc_id,)
+    ).fetchone()
+    if not row:
+        return None
+    record = dict(row)
+    record["blocks"] = (record["blocks"] or "").split("\n")
+    return record
+
+
+def upsert_bill_text_version(conn, bill_id, document, blocks, byte_size):
+    """Cache one fetched version. Blocks are joined with newlines, which
+    to_blocks never produces inside a block, so the split is lossless."""
+    conn.execute(
+        """INSERT INTO bill_text_versions
+             (doc_id, bill_id, version_date, version_type, blocks, byte_size, fetched_at)
+           VALUES (?,?,?,?,?,?, datetime('now'))
+           ON CONFLICT(doc_id) DO UPDATE SET
+             blocks=excluded.blocks, byte_size=excluded.byte_size,
+             fetched_at=excluded.fetched_at""",
+        (document.get("doc_id"), bill_id, document.get("date"),
+         document.get("type"), "\n".join(blocks), byte_size),
+    )
+
+
+def cached_version_doc_ids(conn, bill_id):
+    return {
+        row["doc_id"] for row in
+        conn.execute("SELECT doc_id FROM bill_text_versions WHERE bill_id = ?", (bill_id,))
+    }
 
 
 def code_section_stats(conn):

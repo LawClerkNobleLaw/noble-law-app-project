@@ -487,6 +487,22 @@ function render(r) {
         : '<p class="empty" style="padding:1rem 1.15rem">No amendments recorded.</p>'}
     </div>
 
+    <!-- Redline (US-A4). Deliberately NOT loaded with the page: the
+         version list is one LegiScan call and each version's text is
+         another, and spending three calls every time anybody opens a
+         bill report is how a 30,000-query month disappears. The button
+         is the consent. -->
+    <div class="panel" style="margin-top:1rem" id="redline-panel">
+      <div class="panel-head">
+        <div>
+          <div class="title">Compare versions</div>
+          <div class="sub" id="redline-sub">See what changed between two versions of this bill.</div>
+        </div>
+        <button type="button" class="secondary" id="redline-load" onclick="loadRedline()">Load versions</button>
+      </div>
+      <div id="redline-body" style="padding:0 1.15rem 1rem"></div>
+    </div>
+
     <div class="panel" style="margin-top:1rem">
       <div class="panel-head"><div class="title">Upcoming hearings</div></div>
       ${hearingRows
@@ -684,6 +700,137 @@ async function confirmFlagBill(e) {
     submitBtn.disabled = false;
     submitBtn.textContent = 'Confirm Flagged Bill';
   }
+}
+
+/* ── Redline (US-A4) ───────────────────────────────────────────────
+ *
+ * Every step here costs LegiScan calls, so every step is a click.
+ * "Load versions" is one getBill; "Compare" is up to two getBillText,
+ * and none at all for a pair already cached — which is why comparing
+ * v2→v3 then v3→v4 costs one call, not four.
+ */
+let redlineVersions = null;
+
+// Bill text is the Legislature's own words, not user input — but it is
+// still remote content going into innerHTML, and a redline renders far
+// more of it than anything else on this page does.
+function escapeHtml(text) {
+  return String(text == null ? '' : text)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Bound inline in the panel markup above, not here: this panel is
+// painted by load()'s template literal, so at script-parse time the
+// button does not exist yet — and an addEventListener on null throws,
+// taking the rest of this file's top-level code down with it.
+async function loadRedline() {
+  const btn = document.getElementById('redline-load');
+  const body = document.getElementById('redline-body');
+  btn.disabled = true;
+  btn.textContent = 'Loading…';
+  try {
+    // Asking for the diff straight away rather than the list alone: the
+    // answer wanted nine times out of ten is "what did the last
+    // amendment do", and making that two clicks to save one call is a
+    // bad trade.
+    const res = await fetch(`/api/bill-diff?bill_id=${encodeURIComponent(billId)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load the versions.');
+    redlineVersions = data.versions || [];
+    if (data.single_version) {
+      body.innerHTML = `<p class="sub" style="margin:0">This bill has only one version
+        (${escapeHtml(versionLabel(redlineVersions[0]))}), so there's nothing to compare yet.</p>`;
+      btn.remove();
+      return;
+    }
+    btn.remove();
+    renderRedline(data);
+  } catch (err) {
+    body.innerHTML = `<p class="sub" style="margin:0">${escapeHtml(err.message)}</p>`;
+    btn.disabled = false;
+    btn.textContent = 'Try again';
+  }
+}
+
+function versionLabel(v) {
+  if (!v) return '';
+  return `${v.version_type || 'Version'} — ${v.version_date || 'undated'}`;
+}
+
+function renderRedline(data) {
+  const body = document.getElementById('redline-body');
+  const options = (from, selected) => redlineVersions.map(v =>
+    `<option value="${v.doc_id}"${String(v.doc_id) === String(selected) ? ' selected' : ''}>${
+      escapeHtml(versionLabel(v))}</option>`).join('');
+
+  const counts = data.summary || {};
+  const parts = [];
+  if (counts.changed) parts.push(`${counts.changed} paragraph${counts.changed === 1 ? '' : 's'} changed`);
+  if (counts.added) parts.push(`${counts.added} added`);
+  if (counts.removed) parts.push(`${counts.removed} removed`);
+  document.getElementById('redline-sub').textContent =
+    data.identical ? 'These two versions are identical.'
+                   : (parts.join(' · ') || 'No textual changes.');
+
+  body.innerHTML = `
+    <div class="redline-picker">
+      <label><span class="sub">From</span>
+        <select id="redline-from">${options(true, data.from && data.from.doc_id)}</select></label>
+      <label><span class="sub">To</span>
+        <select id="redline-to">${options(false, data.to && data.to.doc_id)}</select></label>
+      <button type="button" id="redline-go" class="secondary">Compare</button>
+    </div>
+    <div class="redline" id="redline-out">${entriesHtml(data.entries || [])}</div>`;
+
+  document.getElementById('redline-go').onclick = compareVersions;
+}
+
+async function compareVersions() {
+  const from = document.getElementById('redline-from').value;
+  const to = document.getElementById('redline-to').value;
+  const go = document.getElementById('redline-go');
+  const out = document.getElementById('redline-out');
+  if (from === to) {
+    out.innerHTML = '<p class="sub">Those are the same version.</p>';
+    return;
+  }
+  go.disabled = true;
+  go.textContent = 'Comparing…';
+  try {
+    const res = await fetch(
+      `/api/bill-diff?bill_id=${encodeURIComponent(billId)}&from=${from}&to=${to}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not compare those versions.');
+    renderRedline(data);
+  } catch (err) {
+    out.innerHTML = `<p class="sub">${escapeHtml(err.message)}</p>`;
+  } finally {
+    go.disabled = false;
+    go.textContent = 'Compare';
+  }
+}
+
+function entriesHtml(entries) {
+  if (!entries.length) return '<p class="sub">No differences to show.</p>';
+  return entries.map(e => {
+    if (e.kind === 'skipped') {
+      return `<div class="redline-skip">… ${e.count} unchanged paragraph${
+        e.count === 1 ? '' : 's'}</div>`;
+    }
+    if (e.kind === 'changed') {
+      // Struck text and its replacement inline, which is how a redline
+      // is read on paper. <del>/<ins> rather than styled spans so the
+      // meaning survives a screen reader and a copy-paste.
+      return `<p class="redline-block">${e.runs.map(run =>
+        run.kind === 'equal' ? escapeHtml(run.text)
+        : run.kind === 'delete' ? `<del>${escapeHtml(run.text)}</del>`
+        : `<ins>${escapeHtml(run.text)}</ins>`).join('')}</p>`;
+    }
+    if (e.kind === 'added') return `<p class="redline-block"><ins>${escapeHtml(e.text)}</ins></p>`;
+    if (e.kind === 'removed') return `<p class="redline-block"><del>${escapeHtml(e.text)}</del></p>`;
+    return `<p class="redline-block redline-equal">${escapeHtml(e.text)}</p>`;
+  }).join('');
 }
 
 load();

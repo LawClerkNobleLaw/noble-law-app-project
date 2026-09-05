@@ -1520,6 +1520,35 @@
      One card per office, a table of its staff inside. Cards rather than
      one long table because the office is the unit people think in —
      "who's in Wicks's office" is the question, not "row 340". */
+  /* ── Redline (see bill_diff.py) ──────────────────────────────────
+     Struck text and its replacement inline, the way a redline reads on
+     paper. <del>/<ins> carry the meaning to a screen reader and survive
+     a copy-paste, so colour is reinforcement rather than the signal. */
+  .redline-picker {
+    display: flex; align-items: flex-end; gap: 0.6rem; flex-wrap: wrap;
+    padding-bottom: 0.8rem; border-bottom: 1px solid var(--rule); margin-bottom: 0.4rem;
+  }
+  .redline-picker label { display: flex; flex-direction: column; gap: 0.2rem; }
+  /* Bill text is long; the panel scrolls rather than the page. */
+  .redline { max-height: 34rem; overflow-y: auto; font-size: 0.82rem; line-height: 1.55; }
+  .redline-block { margin: 0.55rem 0; }
+  .redline-equal { color: var(--slate); }
+  .redline del {
+    background: var(--warn-soft); color: var(--ink);
+    text-decoration: line-through; text-decoration-thickness: 1px;
+  }
+  .redline ins {
+    background: var(--accent-soft); color: var(--ink); text-decoration: none;
+    box-shadow: inset 0 -1px 0 var(--accent);
+  }
+  /* The bill's untouched bulk, said as a count. The point of opening a
+     redline is the parts that are not the same. */
+  .redline-skip {
+    color: var(--slate); font-size: 0.72rem; font-style: italic;
+    padding: 0.35rem 0; border-top: 1px dashed var(--rule);
+    border-bottom: 1px dashed var(--rule); margin: 0.6rem 0;
+  }
+
   .head-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 
   /* One suggested recipient on the letter editor (see routing.py). A
