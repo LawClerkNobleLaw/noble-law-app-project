@@ -1521,6 +1521,21 @@
      one long table because the office is the unit people think in —
      "who's in Wicks's office" is the question, not "row 340". */
   .head-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  /* One suggested recipient on the letter editor (see routing.py). A
+     row rather than a card: this is a list to scan down, and the reason
+     each name is on it matters as much as the name. */
+  .routing-row {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 1rem; padding: 0.55rem 0; border-bottom: 1px solid var(--rule);
+  }
+  .routing-row:last-child { border-bottom: 0; }
+  .routing-row .sub { margin: 0.15rem 0 0; font-size: 0.75rem; }
+  .routing-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
+  @media (max-width: 640px) {
+    .routing-row { flex-direction: column; }
+  }
+
   .office { margin-bottom: 0.9rem; }
   .office-head {
     display: flex; justify-content: space-between; align-items: baseline;

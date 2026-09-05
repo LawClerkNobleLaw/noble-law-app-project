@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import config
+import routing
 
 _REPO_DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db")
 # config.BILLWATCH_DATA_DIR is just the raw env var (or None) — the
@@ -747,6 +748,40 @@ def sections_for_bills(conn, bill_ids, code=None, section=None):
             "citation": row["citation"], "is_range": bool(row["is_range"]),
         })
     return out
+
+
+def routing_for_bill(conn, user_id, bill_id):
+    """Who in the firm's directory to address a letter on this bill to
+    (see routing.py). Read-only, and offers names rather than filling
+    anything in — the app never sends, so who a letter is addressed to
+    stays something the user types.
+    """
+    if not bill_id:
+        return {"committee": "", "chamber": "", "suggestions": [], "have_directory": False}
+
+    hearing = conn.execute(
+        """SELECT event_type, date, time, location, description
+             FROM bill_hearings WHERE bill_id = ?
+            ORDER BY date DESC LIMIT 1""",
+        (bill_id,),
+    ).fetchone()
+    sponsors = [
+        {"name": row["name"], "role": row["role"]}
+        for row in conn.execute(
+            "SELECT name, role FROM bill_sponsors WHERE bill_id = ?", (bill_id,)
+        )
+    ]
+    legislators = search_directory(conn, user_id)
+    result = routing.suggest(
+        legislators,
+        hearing=dict(hearing) if hearing else None,
+        sponsors=sponsors,
+    )
+    # Said separately from "no suggestions": a firm that has not
+    # imported a directory yet needs to be told that, not told there is
+    # nobody to write to.
+    result["have_directory"] = bool(legislators)
+    return result
 
 
 def code_section_stats(conn):

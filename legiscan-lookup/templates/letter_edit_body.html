@@ -13,6 +13,20 @@
     </div>
   </div>
 
+  <!-- Who this goes to (US-I2). Above the letter rather than beside it:
+       the recipient is decided before the argument is written, and a
+       panel below the 26-row textarea would be found after the letter
+       was finished. -->
+  <div class="panel" id="routing-panel" hidden style="margin-top:1rem">
+    <div class="panel-head">
+      <div>
+        <div class="title">Who handles this</div>
+        <div class="sub" id="routing-sub"></div>
+      </div>
+    </div>
+    <div id="routing-list" style="padding:0.4rem 1.15rem 1rem"></div>
+  </div>
+
   <div class="panel" style="margin-top:1rem">
     <div class="panel-head">
       <div>
@@ -56,12 +70,121 @@ async function load() {
     const bits = [data.bill_label, data.client_name].filter(Boolean);
     document.getElementById('context').textContent = bits.join(' · ') || 'No bill attached';
     document.getElementById('letter').hidden = false;
+    loadRouting();
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';
   } finally {
     document.getElementById('loading').className = '';
   }
+}
+
+/* ── Who handles this (US-I2) ──────────────────────────────────────
+ *
+ * Suggestions, never an action. The panel offers names and the copy
+ * buttons put one on the clipboard; it does not address the letter, and
+ * nothing here writes to it. Same boundary the rest of drafting keeps
+ * (see letter_drafts.py): the app never sends, so who a letter is
+ * addressed to stays something the user decides and types.
+ *
+ * Loaded after the letter rather than with it, so a firm with no
+ * directory — or a slow lookup across a few hundred offices — never
+ * delays the thing the page is actually for.
+ */
+async function loadRouting() {
+  const panel = document.getElementById('routing-panel');
+  try {
+    const res = await fetch(`/api/letters/routing?id=${letterId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.have_directory) {
+      // Worth saying rather than staying blank: this is the one place
+      // where the value of importing a directory is obvious.
+      panel.hidden = false;
+      document.getElementById('routing-sub').textContent = '';
+      document.getElementById('routing-list').innerHTML =
+        `<p class="sub" style="margin:0">No Capitol directory imported yet.
+         <a href="/directory">Import your staff sheet</a> and this will suggest
+         who in each office handles the committee this bill is in front of.</p>`;
+      return;
+    }
+    renderRouting(data);
+  } catch (err) {
+    // A failed suggestion lookup is not a failed page. The letter is
+    // the point; this panel just stays hidden.
+  }
+}
+
+function renderRouting(data) {
+  const panel = document.getElementById('routing-panel');
+  const list = document.getElementById('routing-list');
+  const sub = document.getElementById('routing-sub');
+  panel.hidden = false;
+
+  const committee = [data.chamber, data.committee].filter(Boolean).join(' ');
+  if (!data.suggestions.length) {
+    sub.textContent = committee ? `Last heard in ${committee}.` : '';
+    list.innerHTML = `<p class="sub" style="margin:0">${committee
+      ? `Nobody in your directory is listed as handling ${escapeText(committee)}.`
+      : `This bill has no committee hearing on record, so there's nothing to match against yet.`}</p>`;
+    return;
+  }
+  sub.textContent = committee
+    ? `Matched against ${committee}, the committee this bill was last before.`
+    : 'Matched against the bill\u2019s author.';
+
+  list.innerHTML = data.suggestions.map(s => {
+    const person = s.staff, office = s.legislator;
+    const contact = [person.email, person.phone].filter(Boolean);
+    return `
+    <div class="routing-row">
+      <div>
+        <strong>${escapeText(person.full_name)}</strong>
+        ${person.title ? `<span class="sub"> — ${escapeText(person.title)}</span>` : ''}
+        ${person.is_stale ? '<span class="cite cite-repeal">flagged stale</span>' : ''}
+        <div class="sub">${escapeText(office.full_name)}${
+          office.chamber ? ` · ${escapeText(office.chamber)}` : ''} — ${escapeText(s.reason)}</div>
+        ${contact.length ? `<div class="sub">${contact.map(escapeText).join(' · ')}</div>` : ''}
+      </div>
+      <div class="routing-actions">
+        ${person.email ? `<button type="button" class="secondary"
+           onclick="copyValue('${escapeAttr(person.email)}', 'Email address copied.')">Copy email</button>` : ''}
+        <button type="button" class="secondary"
+          onclick="copyValue('${escapeAttr(addressLine(person, office))}', 'Address block copied.')">Copy address</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// What goes at the top of a letter, assembled from what the directory
+// holds. Copied rather than inserted — see the panel's note above.
+function addressLine(person, office) {
+  return [person.full_name, person.title,
+          `Office of ${office.full_name}`,
+          office.office_room ? `Room ${office.office_room}, State Capitol` : '',
+          'Sacramento, CA 95814'].filter(Boolean).join('\n');
+}
+
+async function copyValue(text, message) {
+  const value = text.replace(/\\n/g, '\n');
+  try {
+    await navigator.clipboard.writeText(value);
+    statusEl.textContent = message;
+  } catch (err) {
+    // Same fallback as copyLetter() below, and for the same reasons.
+    window.prompt('Copy this:', value);
+  }
+}
+
+function escapeText(text) {
+  return String(text == null ? '' : text)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// For a value going inside a single-quoted inline handler, where the
+// quote and the backslash both have to survive as data.
+function escapeAttr(text) {
+  return escapeText(text).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
 }
 
 // Saves on blur rather than per keystroke — same shape as the bill

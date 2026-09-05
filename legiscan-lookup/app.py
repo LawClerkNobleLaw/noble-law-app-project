@@ -2464,6 +2464,25 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        if parsed.path == "/api/letters/routing":
+            letter_id = (qs.get("id") or [""])[0]
+            if not letter_id.isdigit():
+                self._send_json(400, {"error": "Missing or invalid id parameter."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to read your letters.")
+                if not user_id:
+                    return
+                letter = db.get_letter(conn, user_id, int(letter_id))
+                if not letter:
+                    self._send_json(404, {"error": "No letter with that ID."})
+                    return
+                self._send_json(200, db.routing_for_bill(conn, user_id, letter["bill_id"]))
+            finally:
+                conn.close()
+            return
+
         if parsed.path == "/disclosures":
             if not self._require_user_for_page():
                 return
