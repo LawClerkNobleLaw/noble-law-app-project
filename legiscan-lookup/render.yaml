@@ -111,3 +111,34 @@ services:
           name: legiscan-lookup
           type: web
           property: hostport
+
+  # Tops up the searchable bill corpus (see build_bill_corpus.py). Same
+  # thin-trigger shape as the two above — the web service holds the disk
+  # and does the work.
+  - type: cron
+    name: billwatch-build-corpus
+    runtime: python
+    plan: starter
+    # 3am Pacific ≈ 10:00 UTC. Deliberately not sharing an hour with
+    # either job above: both spend the same LegiScan quota, and the
+    # digest should never queue behind a corpus pass. Same DST caveat as
+    # the others.
+    #
+    # Once a day rather than three times — the corpus is a search index,
+    # not a deadline. The endpoint runs at the module's default budget
+    # (1,200 calls), so a first full build of the ~4,200 substantive
+    # bills completes over about a week of nightly runs and every pass
+    # after that only pays for bills whose change_hash actually moved.
+    schedule: "0 10 * * *"
+    buildCommand: "true"
+    startCommand: >
+      curl -fsS -X POST -H "X-Refresh-Secret: $REFRESH_SECRET"
+      "http://$WEB_HOSTPORT/internal/build-corpus"
+    envVars:
+      - key: REFRESH_SECRET
+        sync: false
+      - key: WEB_HOSTPORT
+        fromService:
+          name: legiscan-lookup
+          type: web
+          property: hostport

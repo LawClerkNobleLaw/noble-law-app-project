@@ -1475,6 +1475,27 @@
   }
   .match-note { margin-top: 0.25rem; font-size: 0.72rem; color: var(--slate); font-style: italic; }
 
+  /* A real full-text snippet, unlike the italic note above it replaces:
+     this is the bill's own words, so it is set upright and readable
+     rather than as an aside about the result. Clamped to three lines —
+     the point is to see the hit in context, not to read the statute in
+     a table cell. */
+  .match-snippet {
+    font-style: normal; color: var(--ink); line-height: 1.45;
+    font-size: 0.74rem; max-width: 62ch;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* A button that has to read as a link because it sits mid-sentence.
+     Kept a <button> so it is reachable and announced as the action it
+     is, rather than an <a href="#"> that goes nowhere. */
+  .linklike {
+    background: none; border: 0; padding: 0; font: inherit; color: var(--accent);
+    text-decoration: underline; cursor: pointer;
+  }
+  .linklike:hover { color: var(--accent-solid); }
+
   /* Said out loud when filters cover only a prefix of the matches (see
      SEARCH_PAGE_CAP). A filter over part of a result set that presents
      itself as a filter over all of it is the failure this avoids. */

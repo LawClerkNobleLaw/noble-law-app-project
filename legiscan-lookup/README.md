@@ -130,19 +130,22 @@ touches it. The actual "talk to LegiScan" logic lives in
 `calaccess-pipeline/calaccess_db.py`) — shared with the daily refresh
 scripts so nothing is duplicated between the live app and the jobs.
 
-**Locally**, both daily refreshes run via `launchd` (see `launchd/` in
+**Locally**, the scheduled jobs run via `launchd` (see `launchd/` in
 this folder and in `calaccess-pipeline/`) — independent scripts that open
 the database file directly, which only works because everything's on one
-Mac sharing one local file.
+Mac sharing one local file. There are three: the watch-list refresh
+(3x/day), the CAL-ACCESS pipeline (daily), and the bill-corpus top-up
+(`build_bill_corpus.py`, nightly at 3am) that keeps full-text search
+current.
 
 **Hosted (see below)**, that local mechanism doesn't apply — Render's Cron
 Job service type can't attach a persistent disk at all, so a cron job
 can't touch the database directly. Instead, the web app exposes two
-internal, secret-gated endpoints (`POST /internal/refresh-watchlist` and
-`/internal/refresh-calaccess`) that run the exact same refresh code in a
-background thread of the one always-on process that *does* hold the
-disk. The two Render cron services are just thin triggers — each one
-wakes up, makes one authenticated call, and exits.
+internal, secret-gated endpoints (`POST /internal/refresh-watchlist`,
+`/internal/refresh-calaccess` and `/internal/build-corpus`) that run the
+exact same code in a background thread of the one always-on process that
+*does* hold the disk. The three Render cron services are just thin
+triggers — each one wakes up, makes one authenticated call, and exits.
 
 ## Why not a claude.ai artifact?
 

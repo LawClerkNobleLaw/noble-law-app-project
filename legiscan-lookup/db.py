@@ -503,6 +503,147 @@ def list_watchlist_bill_ids(conn):
     return [row["bill_id"] for row in conn.execute("SELECT bill_id FROM watchlist")]
 
 
+# ── The searchable bill corpus — see bill_text.py and the schema.sql
+# note. Distinct from everything above: `bills` and `watchlist` hold
+# what this firm is tracking, `bill_texts` holds the whole session so
+# that a search can find a bill nobody here has ever opened. ──
+
+# FTS5's MATCH argument is a query language, not a string, so raw user
+# input in it is at best a syntax error ("cannabis (licensing") and at
+# worst a query that silently means something else (a bare "OR", a
+# leading "-", a column filter like "title:x"). Every token is
+# therefore requoted as a literal phrase, which is FTS5's own escape
+# hatch: inside double quotes, its operators are just words.
+#
+# Quoted runs in the user's own input survive as phrases, so
+#   cannabis "local control"
+# is two terms, the second matched adjacently — the one bit of query
+# syntax worth exposing, because a lobbyist searching a term of art is
+# searching for the phrase and not for its words scattered apart.
+_FTS_PHRASE = re.compile(r'"([^"]*)"')
+_FTS_WORD = re.compile(r"[^\W_]+", re.UNICODE)
+
+
+def fts_query(text):
+    """User input -> an FTS5 MATCH expression, or None if there is
+    nothing left to search for once the punctuation is dropped."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    terms = []
+    for phrase in _FTS_PHRASE.findall(text):
+        words = _FTS_WORD.findall(phrase)
+        if words:
+            terms.append(" ".join(words))
+    remainder = _FTS_PHRASE.sub(" ", text)
+    terms.extend(_FTS_WORD.findall(remainder))
+    if not terms:
+        return None
+    # Every term required, rather than FTS5's default of any: a
+    # two-word search that returns everything matching either word is a
+    # search that got broader when the user tried to narrow it.
+    return " AND ".join(f'"{term}"' for term in terms)
+
+
+def upsert_bill_text(conn, row):
+    """One bill's current version into the corpus. Full replace, like
+    upsert_bill — a new version supersedes the old one outright, and
+    there is nothing in the old row worth merging forward."""
+    conn.execute(
+        """INSERT INTO bill_texts
+             (bill_id, bill_number, title, description, url, last_action,
+              last_action_date, doc_id, version_date, version_type, body,
+              byte_size, change_hash, fetched_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
+           ON CONFLICT(bill_id) DO UPDATE SET
+             bill_number=excluded.bill_number, title=excluded.title,
+             description=excluded.description, url=excluded.url,
+             last_action=excluded.last_action,
+             last_action_date=excluded.last_action_date,
+             doc_id=excluded.doc_id, version_date=excluded.version_date,
+             version_type=excluded.version_type, body=excluded.body,
+             byte_size=excluded.byte_size, change_hash=excluded.change_hash,
+             fetched_at=datetime('now')""",
+        (
+            row["bill_id"], row.get("bill_number"), row.get("title"),
+            row.get("description"), row.get("url"), row.get("last_action"),
+            row.get("last_action_date"), row.get("doc_id"),
+            row.get("version_date"), row.get("version_type"), row.get("body"),
+            row.get("byte_size"), row.get("change_hash"),
+        ),
+    )
+
+
+def indexed_change_hashes(conn):
+    """bill_id -> the change_hash the corpus was built from, for deciding
+    what needs re-fetching. One read for the whole corpus rather than a
+    query per bill: the caller is comparing against a 5,060-row master
+    list, and 5,060 point lookups to avoid one scan is the wrong trade.
+    """
+    return {
+        row["bill_id"]: row["change_hash"]
+        for row in conn.execute("SELECT bill_id, change_hash FROM bill_texts")
+    }
+
+
+def search_bill_text(conn, query, limit=200):
+    """Full-text search across the corpus, best match first.
+
+    Returns rows shaped like legiscan_client's search rows — same keys,
+    so /lookup renders them with the code it already has — plus the
+    `snippet` that is the whole point of searching text rather than
+    titles: the user needs to see WHY a bill matched, because a hit
+    somewhere in 40KB of statute is otherwise indistinguishable from a
+    false positive.
+
+    bm25() is negated because FTS5 returns it as "lower is better" and
+    every other relevance number in this app sorts descending.
+
+    The match markers are control characters, not "<mark>", and that is
+    deliberate: snippet() wraps them around a span of the BILL'S OWN
+    TEXT, which is fetched HTML that this app stripped tags out of but
+    does not otherwise trust. Returning "<mark>" would mean the page
+    could not escape the snippet without also escaping the markup it
+    needs, i.e. the one field on the page that has to be inserted as
+    HTML would be the one field built from remote input. Sentinels the
+    page swaps for tags AFTER escaping keeps it inert; U+0002/U+0003
+    are the choice because bill text does not contain control
+    characters and JSON carries them fine.
+    """
+    match = fts_query(query)
+    if not match:
+        return []
+    rows = conn.execute(
+        """SELECT t.bill_id, t.bill_number, t.title, t.description, t.url,
+                  t.last_action, t.last_action_date, t.version_type,
+                  t.version_date,
+                  snippet(bill_text_fts, 3, char(2), char(3), '…', 24) AS snippet,
+                  -bm25(bill_text_fts, 4.0, 8.0, 4.0, 1.0) AS relevance
+             FROM bill_text_fts
+             JOIN bill_texts t ON t.bill_id = bill_text_fts.rowid
+            WHERE bill_text_fts MATCH ?
+            ORDER BY relevance DESC
+            LIMIT ?""",
+        (match, limit),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def corpus_stats(conn):
+    """What the corpus holds, for telling the user whether a text search
+    just searched the session or searched four bills."""
+    row = conn.execute(
+        """SELECT COUNT(*) AS bills, MAX(fetched_at) AS last_fetched,
+                  COALESCE(SUM(byte_size), 0) AS bytes
+             FROM bill_texts"""
+    ).fetchone()
+    return {
+        "bills": row["bills"],
+        "last_fetched": row["last_fetched"],
+        "bytes": row["bytes"],
+    }
+
+
 # ── Flagged bills — a personal, per-user list, unlike the shared
 # watchlist above. Reuses it underneath: flagging still upserts into
 # `bills` and `watchlist` (via add_to_watchlist) so the daily refresh
