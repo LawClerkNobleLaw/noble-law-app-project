@@ -100,4 +100,29 @@ of them is a product decision to raise with the user first, not a cleanup to do 
 
 Every change ships as its own branch + PR into `main` (see recent PR history) — branch off `origin/main`, not off whatever another branch happens to be checked out, and open a PR rather than committing straight to `main`.
 
+**Add new code next to what it relates to, not at whatever anchor is convenient.** `db.py` is
+sectioned by topic (`# ── The searchable bill corpus`, `# ── Flagged bills`, `# ── Clients`, …),
+`db/schema.sql` groups a feature's tables with a comment block, and `static/style.css` has a
+region per page. Put a new function, table or rule inside the section it belongs to.
+
+This is a merge-conflict rule as much as a tidiness one. Five parallel PRs (#65–#69) each
+appended their new `db.py` functions immediately before `def code_section_stats(conn):` — one
+170-line gap in a 3,000-line file — and produced **four separate conflicts**, every one of them
+purely additive: independent blocks of new functions that git could not order because they
+shared an insertion point and no surrounding context. Inserting each feature's queries beside
+its own section instead would have merged cleanly with no rebase at all, and would not have
+left the deadline-calendar section wedged into the middle of the bill-corpus one. The same
+applies to `schema.sql` and `style.css`, where blind appending has the same effect.
+
+When a conflict does happen this way, the fix is to keep both sides — check first that the two
+sides define disjoint names (`def`/`CREATE TABLE`/class selector), since a name defined on both
+sides means it is a real conflict and not two additions.
+
+**Rebase an open PR onto `main` as soon as a sibling PR merges**, rather than waiting for the
+user to report "CONFLICTING". Parallel branches off one base all collide the moment the first
+of them lands, and each subsequent merge re-conflicts the rest. Prefer independent PRs off
+`origin/main`; stack branches only when a slice genuinely depends on unmerged work, since a
+stacked PR has to be reviewed against its parent rather than against `main` and blocks
+everything above it if one slice is deferred.
+
 **This repo's working directory may be shared by more than one concurrent Claude Code session** (observed directly: a `git checkout`/`git reset --hard` from another session mid-task silently discarded this session's uncommitted edits, and separately, two sessions' uncommitted edits to the same file ended up swept into the same commit). Before trusting that your edits are still on disk, re-check with `git status`/`git diff` rather than assuming — and commit + push promptly once a change is verified working, rather than leaving substantial uncommitted work sitting in the working tree.
