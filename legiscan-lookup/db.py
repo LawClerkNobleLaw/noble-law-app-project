@@ -1495,6 +1495,241 @@ def changes_by_bill_since(conn, since_date):
     return out
 
 
+# ── The Capitol directory — legislators, their staff, and who owns
+# which portfolio. Org-owned like clients (see the schema.sql note on
+# why that scoping is a boundary here and not just a convenience). ──
+
+def save_directory_import(conn, user_id, source_name, as_of, legislators):
+    """Write one parsed import — see directory.build_records for the
+    shape it takes.
+
+    Replaces the firm's directory rather than merging into it. A sheet
+    is a snapshot of who works where on a date, and merging two
+    snapshots produces a roster that never existed: the staffer who left
+    in March survives forever because the June sheet simply doesn't
+    mention them. Replacing means the directory always says exactly what
+    one real sheet said, and the import row records which.
+
+    The one thing carried across is the stale flags — those are a
+    person's own reports about contacts they found wrong, not the
+    sheet's content, and re-importing shouldn't quietly discard them.
+    """
+    stale = {
+        (row["legislator"] or "", row["full_name"] or "")
+        for row in conn.execute(
+            f"""SELECT s.full_name, l.full_name AS legislator
+                  FROM capitol_staff s
+                  LEFT JOIN legislators l ON l.id = s.legislator_id
+                 WHERE s.is_stale = 1 AND {_org_scope("s.user_id")}""",
+            (user_id,),
+        )
+    }
+
+    cur = conn.execute(
+        """INSERT INTO directory_imports (user_id, source_name, as_of, created_at)
+           VALUES (?, ?, ?, datetime('now'))""",
+        (user_id, source_name, as_of),
+    )
+    import_id = cur.lastrowid
+
+    clear_directory(conn, user_id, keep_import_id=import_id)
+
+    staff_count = 0
+    for legislator in legislators:
+        cur = conn.execute(
+            """INSERT INTO legislators
+                 (user_id, import_id, full_name, chamber, district, party,
+                  office_room, office_phone, updated_at)
+               VALUES (?,?,?,?,?,?,?,?, datetime('now'))""",
+            (user_id, import_id, legislator["full_name"], legislator.get("chamber"),
+             legislator.get("district"), legislator.get("party"),
+             legislator.get("office_room"), legislator.get("office_phone")),
+        )
+        legislator_id = cur.lastrowid
+        for staff in legislator.get("staff", []):
+            cur = conn.execute(
+                """INSERT INTO capitol_staff
+                     (user_id, legislator_id, import_id, full_name, title, email,
+                      phone, is_stale, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?, datetime('now'))""",
+                (user_id, legislator_id, import_id, staff["full_name"],
+                 staff.get("title"), staff.get("email"), staff.get("phone"),
+                 1 if (legislator["full_name"], staff["full_name"]) in stale else 0),
+            )
+            staff_id = cur.lastrowid
+            staff_count += 1
+            for assignment in staff.get("assignments", []):
+                conn.execute(
+                    """INSERT OR IGNORE INTO staff_assignments
+                         (user_id, staff_id, kind, name) VALUES (?,?,?,?)""",
+                    (user_id, staff_id, assignment["kind"], assignment["name"]),
+                )
+
+    conn.execute(
+        "UPDATE directory_imports SET legislators = ?, staff = ? WHERE id = ?",
+        (len(legislators), staff_count, import_id),
+    )
+    return {"import_id": import_id, "legislators": len(legislators), "staff": staff_count}
+
+
+def clear_directory(conn, user_id, keep_import_id=None):
+    """Drop the firm's directory. Children first, since SQLite's foreign
+    keys are on (see get_connection) and the parents are about to go."""
+    conn.execute(
+        f"""DELETE FROM staff_assignments WHERE {ORG_SCOPE}""", (user_id,))
+    conn.execute(
+        f"""DELETE FROM capitol_staff WHERE {ORG_SCOPE}""", (user_id,))
+    conn.execute(
+        f"""DELETE FROM legislators WHERE {ORG_SCOPE}""", (user_id,))
+    if keep_import_id is None:
+        conn.execute(f"DELETE FROM directory_imports WHERE {ORG_SCOPE}", (user_id,))
+    else:
+        conn.execute(
+            f"DELETE FROM directory_imports WHERE {ORG_SCOPE} AND id != ?",
+            (user_id, keep_import_id),
+        )
+
+
+def latest_directory_import(conn, user_id):
+    row = conn.execute(
+        f"""SELECT id, source_name, as_of, legislators, staff, created_at
+              FROM directory_imports WHERE {ORG_SCOPE}
+             ORDER BY id DESC LIMIT 1""",
+        (user_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def search_directory(conn, user_id, query=None, chamber=None, limit=400):
+    """The directory, filtered by one search box.
+
+    `query` matches a legislator, a staffer, or an assignment — one box
+    rather than three, because "water" and "Wicks" and "Ramirez" are the
+    same question asked three ways ("who do I call about this") and
+    making the user pick which field they're searching first is asking
+    them to know the answer.
+
+    Returns legislators with their staff nested, since that is how the
+    page renders and how the user thinks: an office, then the people in
+    it.
+    """
+    where = [_org_scope("l.user_id")]
+    params = [user_id]
+    if chamber:
+        where.append("l.chamber = ?")
+        params.append(chamber)
+    if query:
+        like = f"%{query.strip()}%"
+        where.append(
+            """(l.full_name LIKE ? OR l.district LIKE ?
+                OR EXISTS (SELECT 1 FROM capitol_staff s2
+                            WHERE s2.legislator_id = l.id
+                              AND (s2.full_name LIKE ? OR s2.title LIKE ? OR s2.email LIKE ?))
+                OR EXISTS (SELECT 1 FROM capitol_staff s3
+                            JOIN staff_assignments a3 ON a3.staff_id = s3.id
+                            WHERE s3.legislator_id = l.id AND a3.name LIKE ?))"""
+        )
+        params.extend([like] * 6)
+    params.append(limit)
+
+    legislators = [dict(row) for row in conn.execute(
+        f"""SELECT l.id, l.full_name, l.chamber, l.district, l.party,
+                   l.office_room, l.office_phone
+              FROM legislators l
+             WHERE {' AND '.join(where)}
+             ORDER BY l.full_name
+             LIMIT ?""",
+        params,
+    )]
+    if not legislators:
+        return []
+
+    ids = [row["id"] for row in legislators]
+    placeholders = ",".join("?" for _ in ids)
+    staff_by_legislator = {}
+    for row in conn.execute(
+        f"""SELECT id, legislator_id, full_name, title, email, phone, is_stale
+              FROM capitol_staff WHERE legislator_id IN ({placeholders})
+             ORDER BY full_name""",
+        ids,
+    ):
+        staff_by_legislator.setdefault(row["legislator_id"], []).append({
+            "id": row["id"], "full_name": row["full_name"], "title": row["title"],
+            "email": row["email"], "phone": row["phone"],
+            "is_stale": bool(row["is_stale"]), "assignments": [],
+        })
+
+    staff_ids = [s["id"] for group in staff_by_legislator.values() for s in group]
+    if staff_ids:
+        by_id = {s["id"]: s for group in staff_by_legislator.values() for s in group}
+        placeholders = ",".join("?" for _ in staff_ids)
+        for row in conn.execute(
+            f"""SELECT staff_id, kind, name FROM staff_assignments
+                 WHERE staff_id IN ({placeholders}) ORDER BY kind, name""",
+            staff_ids,
+        ):
+            by_id[row["staff_id"]]["assignments"].append(
+                {"kind": row["kind"], "name": row["name"]})
+
+    for legislator in legislators:
+        staff = staff_by_legislator.get(legislator["id"], [])
+        # Mark which staff the query actually hit, and put them first.
+        # The office is worth showing whole — you want to see who else is
+        # in it — but a search for "water" that lists four names with
+        # nothing to say which one handles water has buried its own
+        # answer in context.
+        if query:
+            needle = query.strip().lower()
+            for person in staff:
+                person["matched"] = _staff_matches(person, needle)
+            staff.sort(key=lambda p: (not p["matched"], p["full_name"]))
+        legislator["staff"] = staff
+    return legislators
+
+
+def _staff_matches(person, needle):
+    haystack = [person.get("full_name"), person.get("title"), person.get("email")]
+    haystack += [a["name"] for a in person.get("assignments", [])]
+    return any(needle in (value or "").lower() for value in haystack)
+
+
+def set_staff_stale(conn, user_id, staff_id, is_stale):
+    """Flag a contact as out of date. US-I4's whole point: a static
+    sheet nobody owns goes wrong silently, and the fix is letting the
+    person who just found it wrong say so."""
+    conn.execute(
+        f"UPDATE capitol_staff SET is_stale = ?, updated_at = datetime('now')"
+        f" WHERE id = ? AND {ORG_SCOPE}",
+        (1 if is_stale else 0, staff_id, user_id),
+    )
+
+
+def update_staff(conn, user_id, staff_id, fields):
+    """Correct a contact in place. The other half of US-I4 — flagging a
+    row as wrong is only useful if the person who knows the right answer
+    can also type it in."""
+    allowed = ("full_name", "title", "email", "phone", "notes")
+    sets = {k: v for k, v in (fields or {}).items() if k in allowed}
+    if not sets:
+        return
+    assignments = ", ".join(f"{k} = ?" for k in sets)
+    conn.execute(
+        f"UPDATE capitol_staff SET {assignments}, is_stale = 0,"
+        f" updated_at = datetime('now') WHERE id = ? AND {ORG_SCOPE}",
+        (*sets.values(), staff_id, user_id),
+    )
+
+
+def directory_stats(conn, user_id):
+    row = conn.execute(
+        f"""SELECT (SELECT COUNT(*) FROM legislators WHERE {ORG_SCOPE}) AS legislators,
+                   (SELECT COUNT(*) FROM capitol_staff WHERE {ORG_SCOPE}) AS staff,
+                   (SELECT COUNT(*) FROM capitol_staff WHERE {ORG_SCOPE} AND is_stale = 1) AS stale""",
+        (user_id, user_id, user_id),
+    ).fetchone()
+    return dict(row)
+
+
 # ── Clients — one-to-many with a user, unlike flagged_bills (many-to-
 # many) or lobbyist_profiles (one-to-one). No cross-checking against
 # lobbying_entities yet — existing_filer_id is stored for that future

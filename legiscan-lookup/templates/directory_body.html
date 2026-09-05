@@ -1,0 +1,408 @@
+<div class="page-head">
+  <div>
+    <h1>Capitol directory</h1>
+    <p class="sub">Legislators, their staff, and who handles what. Shared with everyone at your firm.</p>
+  </div>
+  <button type="button" id="import-btn">Import a sheet</button>
+</div>
+
+<div class="stat-grid" id="stats"></div>
+
+<!-- ── Import: pick a file, check the mapping, commit ──────────────
+     Two steps rather than one, because a wide crowdsourced sheet has
+     columns this app has never seen and guessing silently would file a
+     committee under a phone number. The guess is shown and corrected
+     before anything is written. -->
+<div class="card" id="import-card" hidden>
+  <h2 class="section" style="margin-top:0">Import a staff directory</h2>
+  <p class="sub">
+    A CSV or a block of spreadsheet cells pasted straight in. Wide sheets are expected —
+    one row per office with a column per committee is the format this is built for.
+  </p>
+
+  <div id="import-step-file">
+    <div class="import-row">
+      <label class="file-drop" for="csv-file">
+        <input type="file" id="csv-file" accept=".csv,.tsv,.txt,text/csv" hidden>
+        <span id="file-label">Choose a CSV file…</span>
+      </label>
+      <span class="sub">or paste below</span>
+    </div>
+    <label>
+      <div class="sub" style="margin:0.6rem 0 0.3rem">Paste rows (including the header row)</div>
+      <textarea id="csv-paste" rows="5" style="width:100%"
+        placeholder="Legislator,District,Party,Chief of Staff,Appropriations,Health&#10;Buffy Wicks,AD-14,D,K. Alvarez,J. Ramirez,J. Ramirez"></textarea>
+    </label>
+    <div class="import-actions">
+      <button type="button" id="inspect-btn">Read the columns</button>
+      <button type="button" class="secondary" onclick="closeImport()">Cancel</button>
+    </div>
+  </div>
+
+  <div id="import-step-map" hidden>
+    <p class="sub" id="map-summary"></p>
+    <div class="table-scroll">
+      <table id="map-table">
+        <thead>
+          <tr><th>Column</th><th>What it is</th><th>First rows</th></tr>
+        </thead>
+        <tbody id="map-body"></tbody>
+      </table>
+    </div>
+    <div class="import-row" style="margin-top:0.9rem">
+      <label>
+        <div class="sub" style="margin:0 0 0.3rem">This sheet is current as of</div>
+        <input type="date" id="as-of">
+      </label>
+    </div>
+    <div id="replace-warning"></div>
+    <p class="sub" id="import-warning" style="margin-top:0.7rem"></p>
+    <div class="import-actions">
+      <button type="button" id="commit-btn">Import</button>
+      <button type="button" class="secondary" onclick="backToFile()">Back</button>
+    </div>
+  </div>
+</div>
+
+<div id="freshness"></div>
+
+<div class="search-filters" id="dir-filters" hidden>
+  <!-- No flex-basis on the group: .search-filters stacks its groups in a
+       COLUMN (that is how /lookup's rows of tabs are laid out), so a
+       basis here is read as a height, not a width. -->
+  <div class="filter-group">
+    <span class="filter-group-label">Find</span>
+    <input id="q" placeholder="A legislator, a staffer, a committee — e.g. water, Wicks, Ramirez"
+      aria-label="Search the directory" class="dir-search">
+  </div>
+  <div class="filter-group">
+    <span class="filter-group-label">Chamber</span>
+    <span id="chamber-tabs"></span>
+  </div>
+</div>
+
+<div id="loading" class="skeleton">
+  <div class="skeleton-row"></div><div class="skeleton-row"></div><div class="skeleton-row"></div>
+</div>
+<div id="error" role="alert" aria-live="assertive"></div>
+<div id="results"></div>
+
+<script src="{{TOAST_SRC}}"></script>
+<script>
+const resultsEl = document.getElementById('results');
+const loadingEl = document.getElementById('loading');
+const errorEl = document.getElementById('error');
+const filtersEl = document.getElementById('dir-filters');
+
+let chamber = '';
+let inspected = null;   // the parsed columns awaiting a mapping
+let sourceText = '';    // the CSV text those columns came from
+let sourceName = '';
+let latestImport = null;
+
+// The roles a column can be given, in the order they're offered. Mirrors
+// directory.COLUMN_ROLES — the server validates against its own copy, so
+// a stale option here is refused rather than trusted.
+const ROLES = [
+  ['ignore', "Don't import"],
+  ['legislator', 'Legislator name'],
+  ['chamber', 'Chamber'],
+  ['district', 'District'],
+  ['party', 'Party'],
+  ['office_room', 'Capitol room'],
+  ['office_phone', 'Office phone'],
+  ['staff_name', 'Staffer name'],
+  ['staff_role', 'Staffer for this job (header is the title)'],
+  ['staff_title', 'Staffer title'],
+  ['staff_email', 'Staffer email'],
+  ['staff_phone', 'Staffer phone'],
+  ['committee', 'Committee (header is the committee)'],
+  ['caucus', 'Caucus (header is the caucus)'],
+  ['issue', 'Issue area (header is the issue)'],
+];
+
+/* ── Loading the directory ─────────────────────────────────────────── */
+
+// Every load carries a sequence number and a late response is dropped.
+// The search box fires one of these per keystroke (debounced), and
+// without this an earlier, slower request can resolve last and paint
+// its results over the newer ones — typing "water" showed the whole
+// directory because the empty-query load landed after it.
+let loadSeq = 0;
+
+async function load() {
+  const seq = ++loadSeq;
+  errorEl.className = '';
+  loadingEl.className = 'skeleton show';
+  try {
+    const q = document.getElementById('q') ? document.getElementById('q').value.trim() : '';
+    const res = await fetch(`/api/directory?q=${encodeURIComponent(q)}&chamber=${encodeURIComponent(chamber)}`);
+    const data = await res.json();
+    if (seq !== loadSeq) return;
+    if (!res.ok) throw new Error(data.error || 'Could not load the directory.');
+    latestImport = data.import || null;
+    renderStats(data.stats);
+    renderFreshness(data.import, data.stats);
+    render(data.legislators || [], data.stats);
+  } catch (err) {
+    if (seq !== loadSeq) return;
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    // Only the newest request owns the spinner; an outrun one clearing
+    // it would uncover a page that is still loading.
+    if (seq === loadSeq) loadingEl.className = 'skeleton';
+  }
+}
+
+function renderStats(stats) {
+  document.getElementById('stats').innerHTML = [
+    ['Legislators', stats.legislators],
+    ['Staff contacts', stats.staff],
+    ['Flagged as stale', stats.stale],
+  ].map(([label, value]) =>
+    `<div class="stat"><div class="stat-value">${value.toLocaleString()}</div>
+       <div class="stat-label">${label}</div></div>`).join('');
+}
+
+// How old the sheet is, said in months rather than as a date. US-I4's
+// premise is that these go out of date silently; a date in the corner
+// is something to read past, "eight months old" is something to act on.
+function renderFreshness(imported, stats) {
+  const el = document.getElementById('freshness');
+  if (!imported || !stats.staff) { el.innerHTML = ''; return; }
+  const asOf = imported.as_of || '';
+  const months = asOf ? monthsSince(asOf) : null;
+  const source = imported.source_name ? ` from ${escapeText(imported.source_name)}` : '';
+  if (months === null) {
+    el.innerHTML = `<div class="result-note">Imported${source}. No "as of" date was
+      given, so there's no way to say how current this is.</div>`;
+    return;
+  }
+  const age = months < 1 ? 'this month' : months === 1 ? 'a month old' : `${months} months old`;
+  const stale = months >= 6;
+  el.innerHTML = `<div class="${stale ? 'result-truncated' : 'result-note'}">
+    Current as of ${escapeText(asOf)} — ${age}${source}.
+    ${stale ? 'Capitol staff turn over quickly; check anything important before you rely on it.' : ''}</div>`;
+}
+
+function monthsSince(isoDate) {
+  const then = new Date(isoDate + 'T00:00:00');
+  if (isNaN(then)) return null;
+  const now = new Date();
+  return Math.max(0, (now.getFullYear() - then.getFullYear()) * 12 + (now.getMonth() - then.getMonth()));
+}
+
+function render(legislators, stats) {
+  filtersEl.hidden = !stats.staff;
+  if (!stats.staff) {
+    resultsEl.innerHTML = `<p class="empty" style="padding:1.4rem 1.15rem">
+      No directory yet. Import the staff sheet you already keep and it becomes searchable —
+      by committee, by caucus, by whose name you half-remember.
+      <button type="button" onclick="openImport()">Import a sheet</button></p>`;
+    return;
+  }
+  if (!legislators.length) {
+    resultsEl.innerHTML = `<p class="empty" style="padding:1.4rem 1.15rem">
+      Nothing in the directory matches that.</p>`;
+    return;
+  }
+  resultsEl.innerHTML = legislators.map(officeHtml).join('');
+}
+
+function officeHtml(l) {
+  const meta = [l.chamber, l.district ? `District ${escapeText(l.district)}` : '', l.party]
+    .filter(Boolean).map(escapeText).join(' · ');
+  const room = [l.office_room ? `Room ${escapeText(l.office_room)}` : '',
+                l.office_phone ? escapeText(l.office_phone) : ''].filter(Boolean).join(' · ');
+  return `
+    <div class="card office">
+      <div class="office-head">
+        <div>
+          <div class="office-name">${escapeText(l.full_name)}</div>
+          <div class="sub">${meta}${room ? ' — ' + room : ''}</div>
+        </div>
+        <div class="sub">${l.staff.length} staff</div>
+      </div>
+      ${l.staff.length ? `<div class="table-scroll"><table>
+        <thead><tr><th>Staffer</th><th>Handles</th><th>Contact</th><th></th></tr></thead>
+        <tbody>${l.staff.map(staffRowHtml).join('')}</tbody>
+      </table></div>` : '<p class="sub" style="margin:0.5rem 0 0">No staff listed.</p>'}
+    </div>`;
+}
+
+function staffRowHtml(s) {
+  const chips = s.assignments.map(a =>
+    `<span class="cite cite-${escapeText(a.kind)}">${escapeText(a.name)}</span>`).join('');
+  // mailto/tel rather than plain text: the whole point of this table is
+  // that someone is about to get in touch, and on a phone the number
+  // should dial.
+  const contact = [
+    s.email ? `<a href="mailto:${escapeText(s.email)}">${escapeText(s.email)}</a>` : '',
+    s.phone ? `<a href="tel:${escapeText(s.phone.replace(/[^\d+]/g, ''))}">${escapeText(s.phone)}</a>` : '',
+  ].filter(Boolean).join('<br>');
+  const classes = [s.is_stale ? 'stale-row' : '', s.matched ? 'matched-row' : ''].filter(Boolean).join(' ');
+  return `
+    <tr class="${classes}">
+      <td>
+        <strong>${escapeText(s.full_name)}</strong>
+        ${s.title ? `<div class="sub">${escapeText(s.title)}</div>` : ''}
+        ${s.is_stale ? '<div class="sub stale-note">Flagged as out of date</div>' : ''}
+        ${s.matched ? '<div class="sub matched-note">Matches your search</div>' : ''}
+      </td>
+      <td>${chips || '<span class="sub">—</span>'}</td>
+      <td>${contact || '<span class="sub">—</span>'}</td>
+      <td class="flag-cell">
+        <button type="button" class="secondary" onclick="toggleStale(${s.id}, ${s.is_stale ? 'false' : 'true'})">
+          ${s.is_stale ? 'Still good' : 'Flag as stale'}</button>
+      </td>
+    </tr>`;
+}
+
+async function toggleStale(staffId, isStale) {
+  try {
+    const res = await fetch('/api/directory/stale', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ staff_id: staffId, is_stale: isStale }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || 'Could not save that.');
+    showToast(isStale ? 'Flagged as out of date.' : 'Marked as current.');
+    load();
+  } catch (err) { showToast(err.message); }
+}
+
+/* ── Import ────────────────────────────────────────────────────────── */
+
+function openImport() {
+  document.getElementById('import-card').hidden = false;
+  backToFile();
+  document.getElementById('import-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function closeImport() { document.getElementById('import-card').hidden = true; }
+function backToFile() {
+  document.getElementById('import-step-file').hidden = false;
+  document.getElementById('import-step-map').hidden = true;
+}
+
+document.getElementById('import-btn').onclick = openImport;
+
+document.getElementById('csv-file').onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  sourceName = file.name;
+  document.getElementById('file-label').textContent = file.name;
+  // Read in the browser and POST the text as JSON. The server has no
+  // multipart parser and doesn't need one for a file this size — and
+  // this keeps the upload path the same one every other form here uses.
+  sourceText = await file.text();
+  document.getElementById('csv-paste').value = '';
+};
+
+document.getElementById('inspect-btn').onclick = async () => {
+  const pasted = document.getElementById('csv-paste').value.trim();
+  const text = pasted || sourceText;
+  if (!text) { showToast('Choose a file or paste some rows first.'); return; }
+  if (pasted) { sourceText = pasted; sourceName = 'pasted rows'; }
+  try {
+    const res = await fetch('/api/directory/inspect', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: sourceText }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not read that file.');
+    if (!data.columns.length) throw new Error('That file had no header row.');
+    inspected = data;
+    renderMapping(data);
+    document.getElementById('import-step-file').hidden = true;
+    document.getElementById('import-step-map').hidden = false;
+  } catch (err) { showToast(err.message); }
+};
+
+// Importing REPLACES the directory rather than merging into it (see
+// db.save_directory_import for why), which is destructive and has to be
+// said before the button is pressed rather than discovered after.
+function renderReplaceWarning() {
+  const el = document.getElementById('replace-warning');
+  const staff = latestImport && latestImport.staff;
+  if (!staff) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="result-truncated" style="margin-top:0.9rem">
+    This replaces the directory you already have —
+    ${staff.toLocaleString()} contact(s) from
+    ${escapeText(latestImport.source_name || 'an earlier import')}. A sheet is a
+    snapshot of who works where on a date, so merging two would keep staff who
+    have since left. Contacts you flagged as stale stay flagged.</div>`;
+}
+
+function renderMapping(data) {
+  renderReplaceWarning();
+  document.getElementById('map-summary').textContent =
+    `${data.row_count.toLocaleString()} row(s), ${data.columns.length} column(s). ` +
+    `Each column's role is a guess — change any that are wrong.`;
+  document.getElementById('map-body').innerHTML = data.columns.map(col => `
+    <tr>
+      <td><strong>${escapeText(col.header || '(no header)')}</strong></td>
+      <td>
+        <label for="role-${col.index}" class="visually-hidden">Role for ${escapeText(col.header)}</label>
+        <select id="role-${col.index}" data-index="${col.index}">
+          ${ROLES.map(([value, label]) =>
+            `<option value="${value}"${col.role === value ? ' selected' : ''}>${escapeText(label)}</option>`).join('')}
+        </select>
+      </td>
+      <td class="sub">${data.preview.map(row => escapeText(row[col.index] || '')).filter(Boolean).slice(0, 3).join(' · ') || '—'}</td>
+    </tr>`).join('');
+}
+
+document.getElementById('commit-btn').onclick = async () => {
+  const mapping = {};
+  document.querySelectorAll('#map-body select').forEach(sel => {
+    mapping[sel.dataset.index] = sel.value;
+  });
+  const warning = document.getElementById('import-warning');
+  warning.textContent = '';
+  try {
+    const res = await fetch('/api/directory/import', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: sourceText, mapping,
+        source_name: sourceName,
+        as_of: document.getElementById('as-of').value || null,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Import failed.');
+    if (data.warnings && data.warnings.length) warning.textContent = data.warnings.join(' ');
+    showToast(`Imported ${data.legislators} office(s) and ${data.staff} staff contact(s).`);
+    closeImport();
+    load();
+  } catch (err) { warning.textContent = err.message; }
+};
+
+/* ── Filters ───────────────────────────────────────────────────────── */
+
+function setChamber(value) {
+  chamber = value;
+  renderChamberTabs();
+  load();
+}
+
+function renderChamberTabs() {
+  document.getElementById('chamber-tabs').innerHTML =
+    [['', 'Both'], ['Assembly', 'Assembly'], ['Senate', 'Senate']].map(([value, label]) =>
+      `<button type="button" class="filter-tab${chamber === value ? ' active' : ''}"
+         aria-pressed="${chamber === value}" onclick="setChamber('${value}')">${label}</button>`).join('');
+}
+
+let searchTimer = null;
+document.getElementById('q').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(load, 200);
+});
+
+function escapeText(text) {
+  return String(text == null ? '' : text)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+renderChamberTabs();
+load();
+</script>
