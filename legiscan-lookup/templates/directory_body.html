@@ -3,7 +3,11 @@
     <h1>Capitol directory</h1>
     <p class="sub">Legislators, their staff, and who handles what. Shared with everyone at your firm.</p>
   </div>
-  <button type="button" id="import-btn">Import a sheet</button>
+  <div class="head-actions">
+    <button type="button" class="secondary" id="export-vcf">Send to my phone</button>
+    <button type="button" class="secondary" id="export-csv">Export CSV</button>
+    <button type="button" id="import-btn">Import a sheet</button>
+  </div>
 </div>
 
 <div class="stat-grid" id="stats"></div>
@@ -99,6 +103,7 @@ let inspected = null;   // the parsed columns awaiting a mapping
 let sourceText = '';    // the CSV text those columns came from
 let sourceName = '';
 let latestImport = null;
+let lastLegislators = [];
 
 // The roles a column can be given, in the order they're offered. Mirrors
 // directory.COLUMN_ROLES — the server validates against its own copy, so
@@ -143,7 +148,8 @@ async function load() {
     latestImport = data.import || null;
     renderStats(data.stats);
     renderFreshness(data.import, data.stats);
-    render(data.legislators || [], data.stats);
+    lastLegislators = data.legislators || [];
+    render(lastLegislators, data.stats);
   } catch (err) {
     if (seq !== loadSeq) return;
     errorEl.textContent = err.message;
@@ -195,6 +201,8 @@ function monthsSince(isoDate) {
 
 function render(legislators, stats) {
   filtersEl.hidden = !stats.staff;
+  document.getElementById('export-vcf').hidden = !stats.staff;
+  document.getElementById('export-csv').hidden = !stats.staff;
   if (!stats.staff) {
     resultsEl.innerHTML = `<p class="empty" style="padding:1.4rem 1.15rem">
       No directory yet. Import the staff sheet you already keep and it becomes searchable —
@@ -378,6 +386,40 @@ document.getElementById('commit-btn').onclick = async () => {
 };
 
 /* ── Filters ───────────────────────────────────────────────────────── */
+
+/* ── Export ────────────────────────────────────────────────────────
+ *
+ * Both formats export WHAT IS ON SCREEN — the same search, the same
+ * chamber filter. "Export" on a page narrowed to three offices should
+ * not hand over four hundred, and narrowing first is how you get "just
+ * this client's key contacts" (US-I5) without a second concept.
+ *
+ * A plain link to the endpoint rather than a fetch: on iOS, navigating
+ * to a .vcf is what hands the file to Contacts, which is the entire
+ * feature. A blob built here would download a file the phone then has
+ * to be told what to do with.
+ */
+function exportHref(format) {
+  const q = document.getElementById('q').value.trim();
+  return `/api/directory/export?format=${format}&q=${encodeURIComponent(q)}` +
+         `&chamber=${encodeURIComponent(chamber)}`;
+}
+
+function runExport(format) {
+  const staff = countVisibleStaff();
+  if (!staff) { showToast('Nothing to export — no contacts match this view.'); return; }
+  window.location.href = exportHref(format);
+  showToast(format === 'csv'
+    ? `Exporting ${staff} contact(s) as a spreadsheet.`
+    : `Exporting ${staff} contact(s). Open the file on your phone to add them to Contacts.`);
+}
+
+function countVisibleStaff() {
+  return lastLegislators.reduce((n, l) => n + (l.staff ? l.staff.length : 0), 0);
+}
+
+document.getElementById('export-vcf').onclick = () => runExport('vcf');
+document.getElementById('export-csv').onclick = () => runExport('csv');
 
 function setChamber(value) {
   chamber = value;

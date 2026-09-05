@@ -1520,6 +1520,7 @@
      One card per office, a table of its staff inside. Cards rather than
      one long table because the office is the unit people think in —
      "who's in Wicks's office" is the question, not "row 340". */
+  .head-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
   .office { margin-bottom: 0.9rem; }
   .office-head {
     display: flex; justify-content: space-between; align-items: baseline;

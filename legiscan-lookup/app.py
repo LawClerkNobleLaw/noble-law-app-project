@@ -97,6 +97,7 @@ import letter_drafts
 import mailer
 import pdf_forms
 import refresh_watchlist
+import vcard
 import legiscan_client
 from legiscan_client import lookup_bill, get_bill_detail, search_bills, smart_search
 
@@ -1802,12 +1803,17 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_bytes(self, status, content_type, body, filename=None):
+    def _send_bytes(self, status, content_type, body, filename=None,
+                    disposition="inline"):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         if filename:
-            self.send_header("Content-Disposition", f'inline; filename="{filename}"')
+            # `attachment` for anything meant to be saved rather than
+            # shown — a .vcf rendered inline is a wall of text where the
+            # whole point is that the phone hands it to Contacts.
+            self.send_header(
+                "Content-Disposition", f'{disposition}; filename="{filename}"')
         self.end_headers()
         self.wfile.write(body)
 
@@ -2228,6 +2234,42 @@ class Handler(BaseHTTPRequestHandler):
             if not self._require_user_for_page():
                 return
             self._send_html(200, DIRECTORY_PAGE)
+            return
+
+        if parsed.path == "/api/directory/export":
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to export the directory.")
+                if not user_id:
+                    return
+                chamber = (qs.get("chamber") or [""])[0]
+                # Exports whatever the page is currently showing, filters
+                # and all — "export" on a screen that has been narrowed
+                # to three offices should not hand over four hundred.
+                legislators = db.search_directory(
+                    conn, user_id,
+                    query=(qs.get("q") or [""])[0],
+                    chamber=chamber if chamber in ("Assembly", "Senate") else None,
+                )
+                imported = db.latest_directory_import(conn, user_id)
+                as_of = (imported or {}).get("as_of")
+            finally:
+                conn.close()
+
+            stamp = datetime.date.today().isoformat()
+            if (qs.get("format") or ["vcf"])[0] == "csv":
+                # A BOM, same reason flagged_body.html's export has one:
+                # without it Excel reads a UTF-8 file as Latin-1 and
+                # mangles every accented name in the directory.
+                body = ("\ufeff" + vcard.render_csv(legislators, as_of=as_of)).encode("utf-8")
+                self._send_bytes(200, "text/csv; charset=utf-8", body,
+                                 filename=f"capitol-directory-{stamp}.csv",
+                                 disposition="attachment")
+                return
+            body = vcard.render(legislators, as_of=as_of).encode("utf-8")
+            self._send_bytes(200, "text/vcard; charset=utf-8", body,
+                             filename=f"capitol-directory-{stamp}.vcf",
+                             disposition="attachment")
             return
 
         if parsed.path == "/api/directory":
