@@ -13,12 +13,12 @@ disclosures, draft position letters, and prepare (never file) FPPC disclosure fo
 
 **Where it's headed** is a broader product — see `docs/Rotunda_Concept_Summary.docx` (the
 business/product concept) and `docs/roadmap.md` (the build sequence against this codebase).
-Read those before proposing anything large. Treat the concept doc as an aspiration under
-active diligence, not a spec: several of its pillars (hearing video, PAC contributions,
-"one-click" CAL-ACCESS e-filing, multi-state) have unresolved legal or licensing questions
-recorded in `docs/roadmap.md`, and **nothing in it is built until it's in this repo.** When a
-request maps to a concept-doc feature, say what exists today rather than describing the doc's
-version as if it shipped.
+Read those before proposing anything large, and not otherwise — `roadmap.md` alone is 400
+lines. Treat the concept doc as an aspiration under active diligence, not a spec: several of
+its pillars (hearing video, PAC contributions, "one-click" CAL-ACCESS e-filing, multi-state)
+have unresolved legal or licensing questions recorded in `docs/roadmap.md`, and **nothing in
+it is built until it's in this repo.** When a request maps to a concept-doc feature, say what
+exists today rather than describing the doc's version as if it shipped.
 
 Two top-level projects share one SQLite database:
 
@@ -36,7 +36,7 @@ All run from `legiscan-lookup/`:
 python3 app.py                          # same, directly
 
 pip3 install -r requirements-dev.txt    # one-time, for tests
-pytest                                  # run the full suite
+pytest -q                               # the whole suite — always run this one
 pytest tests/test_db.py                 # one file
 pytest tests/test_db.py::test_flag_bill_adds_to_flagged_and_watchlist   # one test
 
@@ -45,34 +45,144 @@ python3 build_bill_corpus.py             # top up the corpus (budgeted, resumabl
 python3 build_bill_corpus.py --reparse   # re-derive code citations only (no API calls)
 ```
 
-No build step, no linter/formatter configured. `requirements.txt` has exactly one entry (`pypdf`, used only by `pdf_forms.py`) — everything else in the app is the Python standard library on purpose (see that file's own comment).
+## Finding things without reading files
 
-Tests run entirely against an in-memory SQLite DB (`conftest.py`'s `conn` fixture calls `db.init_db(conn=...)` on `sqlite3.connect(":memory:")` — the exact same schema/migration path a real boot uses). They never touch `db/billwatch.db` or call LegiScan, and need no `LEGISCAN_API_KEY`.
+`app.py` is ~4,400 lines and `db.py` ~3,300. Reading either one whole costs more than most
+tasks are worth, and neither rewards linear reading. Every index below regenerates from the
+file itself, so none of them can go stale:
+
+```bash
+grep -n '# ──' app.py db.py          # the section index of both big files
+grep -n 'parsed.path ==' app.py      # every route, in dispatch order
+grep -n '_BODY = ' app.py            # the page constants
+ls templates/ static/js/ tests/      # never enumerate these in prose — they change
+```
+
+Mechanical mappings, so there is nothing to look up:
+
+- page constant `FOO_BODY` ⇄ `templates/foo_body.html`
+- module `foo.py` ⇄ `tests/test_foo.py`
+- a module's **why** is its own docstring: `sed -n '1,60p' bill_diff.py`. The module bullets
+  under Architecture below are the tripwires only — the reasoning behind each one lives in
+  the file, and is one cheap read away when it's actually needed.
+
+## Established facts — don't re-check these
+
+- `pytest -q` is ~640 tests in ~13 seconds and prints about five lines. Run the whole suite;
+  never hand-pick files to save time, and never skip it to save tokens.
+- Tests run against an in-memory SQLite DB (`conftest.py`'s `conn` fixture calls
+  `db.init_db(conn=...)` on `sqlite3.connect(":memory:")` — the same schema/migration path a
+  real boot uses). They never touch `db/billwatch.db`, never call LegiScan, and need no
+  `LEGISCAN_API_KEY` or any other env var.
+- No build step, and no linter, formatter or type checker is configured. There is nothing to
+  run and nothing to add.
+- `requirements.txt` has exactly one entry (`pypdf`, used only by `pdf_forms.py`). That is
+  deliberate — see Scope boundaries.
+- Templates and static files are read into constants **at import**, so editing one needs an
+  app restart, same as editing the Python.
 
 ## Architecture
 
-**Not Flask, not any framework.** `app.py`'s `Handler` class subclasses `http.server.BaseHTTPRequestHandler` directly, served by a `ThreadingHTTPServer`. Routes are manual `if parsed.path == "/foo":` checks inside `_do_GET`/`_do_POST`/`_do_DELETE` — there's no `@app.route`, no blueprints, no middleware chain. When adding a route, find the right method's dispatch block and add another `if` (existing ones are grouped by concern, not alphabetically). This is a single ~2900-line file; use grep for `parsed.path ==`, a page-body constant name (`REPORT_BODY`, `FLAGGED_BODY`, etc.), or a function name rather than trying to read it linearly.
+**Not Flask, not any framework.** `app.py`'s `Handler` class subclasses
+`http.server.BaseHTTPRequestHandler` directly, served by a `ThreadingHTTPServer`. Routes are
+manual `if parsed.path == "/foo":` checks inside `_do_GET`/`_do_POST`/`_do_DELETE` — no
+`@app.route`, no blueprints, no middleware chain. Each dispatch block is divided by `# ──`
+banners into sections by concern (flagged bills, clients and directory, disclosures, …), the
+same convention `db.py` uses. **A new route goes inside the banner it belongs to**, not at the
+end of the method — see the insertion-point rule under Working in this repo.
 
-**Pages are HTML files under `legiscan-lookup/templates/`, filled in by `_render_template()`.** Each page is a module-level constant in `app.py` (e.g. `REPORT_BODY`, `LOOKUP_BODY`, `CLIENTS_BODY`) whose value is read from `templates/<lower_case_name>.html` **once at import**, not per request — so editing a template needs a restart, same as editing the Python. Placeholders are `{{name}}`, deliberately not `str.format()`'s `{}` (every CSS brace would read as a format field) and not `string.Template`'s `$name` (every JS `${...}` would collide); `_render_template()` raises at boot on a slot with no value or a value with no slot. Those constants are assembled by shared helpers (`page()` wraps `<html>`/`<head>`, `app_shell()` adds the sidebar+topbar chrome, `account_widget()` is the one avatar/dropdown component used everywhere). Page-specific interactivity is still an inline `<script>` in the same template, fetching the page's own `/api/...` JSON endpoint client-side rather than server-rendering data into the HTML.
+**Pages are HTML files under `templates/`, filled in by `_render_template()`.** Each page is a
+module-level constant in `app.py` (`REPORT_BODY`, `LOOKUP_BODY`, …) read from
+`templates/<lower_case_name>.html`. Placeholders are `{{name}}`, deliberately not
+`str.format()`'s `{}` (every CSS brace would read as a format field) and not
+`string.Template`'s `$name` (every JS `${...}` would collide); `_render_template()` raises at
+boot on a slot with no value or a value with no slot. Shared helpers assemble the constants:
+`page()` wraps `<html>`/`<head>`, `app_shell()` adds the sidebar+topbar chrome,
+`account_widget()` is the one avatar/dropdown used everywhere. Page-specific interactivity is
+an inline `<script>` in the same template, fetching that page's own `/api/...` JSON endpoint
+rather than server-rendering data into the HTML.
 
-**CSS and shared JS are real static files, served, not inlined.** `static/style.css` is the one shared stylesheet (light/dark via `data-theme` + `prefers-color-scheme`, not a second stylesheet); comments in `app.py` that say "see STYLE" mean that file. `static/js/` holds the blocks shared across pages (`bill_tables`, `bill_clients`, `bill_status`, `client_quickadd`, `confirm_delete`, `hearing_time`, `title_case`, `row_menu`), pulled in with `<script src>` ahead of each page's own inline `<script>`. Both are read into module-level constants at import and served by `Handler._send_static` from the `STATIC_ASSETS` dict — an explicit name → bytes mapping, not a filesystem join, so there's no path traversal to get wrong. Every URL carries `?v=<content hash>` (`_asset_url()`), which is what makes the year-long `Cache-Control` on that route safe. **Adding a static file means adding it to `STATIC_ASSETS`**, not just dropping it in the directory.
+**CSS and shared JS are real static files, served, not inlined.** `static/style.css` is the one
+shared stylesheet (light/dark via `data-theme` + `prefers-color-scheme`, not a second
+stylesheet); comments saying "see STYLE" mean that file. `static/js/` holds the blocks shared
+across pages, pulled in with `<script src>` ahead of each page's own inline `<script>`. Both
+are read into module-level constants at import and served by `Handler._send_static` from the
+`STATIC_ASSETS` dict — an explicit name → bytes mapping, not a filesystem join, so there is no
+path traversal to get wrong. Every URL carries `?v=<content hash>` (`_asset_url()`), which is
+what makes the year-long `Cache-Control` on that route safe. **Adding a static file means
+adding it to `STATIC_ASSETS`**, not just dropping it in the directory.
 
-**Every module below `app.py` has one job, and `app.py` is the only thing that imports the web-facing pieces together:**
-- `db.py` — all SQLite access for the app's own tables (users, clients, bills, flagged_bills, bill_client_links, prepared_filings, ...). `db/schema.sql` is the one canonical schema, every `CREATE TABLE` using `IF NOT EXISTS`, applied fresh on every boot (`init_db()`). Since `CREATE TABLE IF NOT EXISTS` can't add a column to an already-existing table, any new column goes in **two** places: the `CREATE TABLE` in `schema.sql` (for brand-new DBs) *and* a guarded `ALTER TABLE ... ADD COLUMN` in `db.py`'s `_migrate()` (for existing ones) — follow the existing pattern there (check `PRAGMA table_info`, only alter if the column's missing) rather than a numbered migrations folder.
-- `bill_text.py` / `build_bill_corpus.py` — the **searchable bill corpus** behind `/lookup`'s "Full bill text" mode. `bill_texts` holds one row per bill in the session (5,060 in 2025-26) with its current version's text, indexed by an FTS5 external-content table kept in sync by triggers in `schema.sql`. Deliberately separate from `bills`/`watchlist`, which hold only what this firm tracks — a full-text index that joins against those could only find bills someone already found. The builder is budgeted and resumable (`--budget`, default 1,200 calls) because a first full build is ~8,500 LegiScan calls; `getMasterList` returns every bill's `change_hash` in one call, so ongoing cost is two calls per bill that actually moved. **Current version only** — indexing prior versions too is ~5x on both quota and disk (numbers in `bill_text.py`'s header) and is a deferral, not an omission.
-- `bill_diff.py` — the redline between two versions of a bill (US-A4), behind "Compare versions" on `/report`. **On-demand, not indexed**: `bill_text.py`'s header measures every version of every bill at ~24,600 calls and ~857MB, so versions are fetched when someone asks for a redline and cached in `bill_text_versions` (keyed by LegiScan `doc_id`, not org-scoped — public bill text is the same for everyone). Every step is a click, because every step spends quota. Two passes: blocks first (`bill_text.to_blocks`, the structure-preserving sibling of `to_plain_text`) to find and skip the unchanged 90%, then words within a changed block. Unrelated blocks are kept apart by comparing **words, not characters** — character similarity scores unrelated prose ~0.54 and pairs it into a fake mutual rewrite.
-- `code_sections.py` — which sections of which California code a bill touches, behind `/lookup`'s "Code section" mode. Parses **only the Legislative Counsel's preamble** ("An act to amend Section 290 of the Penal Code, and to…"), never the body — the body's citations are as likely to be cross-references as operative headings, and the preamble is drafted to be the authoritative statement. Code names match a fixed 29-entry vocabulary rather than a `[A-Z][a-z]+ Code` shape, which is both stricter and gets "Health and Safety". Derived into `bill_code_sections` at ingest, so it costs parsing rather than API calls and `--reparse` re-derives everything from text already held. **Ranges are stored, not expanded**, and indirect amendment is out of scope — both explained in that module's header, both deliberate.
-- `deadlines.py` — the Legislature's own deadline calendar (US-B3), on `/flagged/calendar` and in the dashboard's attention queue. `bill_hearings` says when a bill is heard; this says when it dies. **No dates are hard-coded in this repo** — they're set each session by house resolution, and a wrong one is a bill the firm thought it had another week to amend. A firm pastes the published tentative calendar, `parse_calendar` reads it, the page shows what it read before storing (same guess-then-confirm as `directory.py`). The deadline *kinds* are stable and are a vocabulary; classification order is load-bearing, because "…pass bills introduced in that house" (house of origin) is a substring of "…pass bills" (end of session) three months later.
-- `directory.py` — the Capitol staff directory (`/directory`). Imports the crowdsourced wide sheet the industry keeps (one row per office, a column per committee, cells naming the staffer who covers it) through a **guess-then-confirm** flow: `inspect()` proposes a role per column, the page shows the guesses as dropdowns, `build_records()` applies whatever comes back. An unrecognised column defaults to a committee assignment, because in that sheet most are. Handles both shapes — one row per office, and one row per staffer. **Org-scoped as a boundary, not a convenience** (see the schema.sql note): this is a firm's own copy of a directory holding direct contact details for identifiable people, so there is no cross-org read and nothing seeded in the repo. An import *replaces* the firm's directory rather than merging — a sheet is a snapshot, and merging two keeps staff who have left — but user-set stale flags carry across.
-- `routing.py` — who to address a position letter to (US-I2), shown on the letter editor. Joins the directory's committee assignments to the bill's committee of reference, which it reads off `bill_hearings.description` ("Senate Education Hearing") rather than adding a column — LegiScan's own `committee` field is dropped by `shape_bill`, and adding it back is a schema + refresh-path change to learn what the hearing row already says. Match rule: **every** significant token of the sheet's label must be covered by the bill's committee, by prefix or by a short explicit alias list. Strict on purpose — "Public Safety" must not match "Public Employment and Retirement", because a wrong suggestion is worse than none. **Suggests only**: it offers names and copy buttons, never addresses or sends.
-- `vcard.py` — the directory as a `.vcf` or `.csv` a phone or spreadsheet will accept (US-I5). vCard **3.0**, not 4.0, because 3.0 is what iOS/Android/Outlook all import without argument. Served from a URL rather than built in the browser: on iOS, navigating to a `.vcf` is what hands it to Contacts, which is the feature. Exports **whatever the page is currently showing**, filters included. It is an export, not a sync — every card's note carries the directory's "as of" date so a contact sitting in a phone two years later can still say how old it is.
-- `legiscan_client.py` — the only module that talks to LegiScan's API. Two distinct search modes matter here: `getSearch(bill=...)` is a precise, cheap, number-shaped match (and — checked live — already returns every bill type/chamber sharing a bare number, e.g. searching `72` returns AB72/SB72/ACR72/etc. at once); `getSearch(query=...)` is free-text relevance search and is comparatively noisy for a number-shaped query. Both return lightweight list rows; full detail (`getBill`) is a separate, more expensive call, only made per-bill, never per search result row.
+**Every module below `app.py` has one job, and `app.py` is the only thing that imports the
+web-facing pieces together.** Each bullet is the constraint that would be expensive to
+rediscover; the reasoning is in the module's docstring.
+
+- `db.py` — all SQLite access for the app's own tables. `db/schema.sql` is the one canonical
+  schema, every `CREATE TABLE` using `IF NOT EXISTS`, applied fresh on every boot
+  (`init_db()`). **A new column goes in two places**: the `CREATE TABLE` in `schema.sql` (new
+  DBs) *and* a guarded `ALTER TABLE ... ADD COLUMN` in `db.py`'s `_migrate()` (existing ones,
+  which `IF NOT EXISTS` cannot reach). Follow the pattern there — check `PRAGMA table_info`,
+  alter only if missing — rather than a numbered migrations folder.
+- `bill_text.py` / `build_bill_corpus.py` — the searchable bill corpus behind `/lookup`'s
+  "Full bill text" mode; `bill_texts` + an FTS5 external-content table kept in sync by triggers
+  in `schema.sql`. **Deliberately separate from `bills`/`watchlist`** — an index joined against
+  those could only find bills someone already found. Builder is budgeted and resumable
+  (`--budget`, default 1,200) because a first full build is ~8,500 LegiScan calls; ongoing cost
+  is two calls per bill that moved. **Current version only** — a deferral, not an omission.
+- `bill_diff.py` — the redline between two versions (US-A4), behind "Compare versions" on
+  `/report`. **On-demand, not indexed** (~24,600 calls and ~857MB to hold every version);
+  cached in `bill_text_versions`, keyed by LegiScan `doc_id` and *not* org-scoped, since public
+  bill text is the same for everyone. Every step is a click, because every step spends quota.
+  Blocks are compared by **words, not characters** — character similarity pairs unrelated prose
+  into a fake mutual rewrite.
+- `code_sections.py` — which California code sections a bill touches, behind `/lookup`'s "Code
+  section" mode. Parses **only the Legislative Counsel's preamble**, never the body. Code names
+  match a **fixed 29-entry vocabulary**, not a `[A-Z][a-z]+ Code` shape. Derived at ingest, so
+  `--reparse` re-derives with no API calls. **Ranges are stored, not expanded**; indirect
+  amendment is out of scope.
+- `deadlines.py` — the Legislature's deadline calendar (US-B3), on `/flagged/calendar` and the
+  dashboard attention queue. `bill_hearings` says when a bill is heard; this says when it dies.
+  **No dates are hard-coded in this repo and none may be** — they are set each session by house
+  resolution. Firms paste the published calendar; `parse_calendar` reads it and the page shows
+  what it read before storing. **Classification order is load-bearing** (one deadline's wording
+  is a substring of another's).
+- `directory.py` — the Capitol staff directory (`/directory`), imported from the crowdsourced
+  wide sheet through a **guess-then-confirm** flow (`inspect()` proposes, the page confirms,
+  `build_records()` applies). Unrecognised columns default to a committee assignment. **Org-
+  scoped as a boundary, not a convenience**: real contact details for identifiable people, so
+  no cross-org read and nothing seeded in the repo. An import **replaces** rather than merges
+  (a sheet is a snapshot), but user-set stale flags carry across.
+- `routing.py` — who to address a position letter to (US-I2). Reads the bill's committee off
+  `bill_hearings.description` rather than adding a column. Match rule: **every** significant
+  token of the sheet's label must be covered by the bill's committee. Strict on purpose — a
+  wrong suggestion is worse than none. **Suggests only**: names and copy buttons, never
+  addresses or sends.
+- `vcard.py` — the directory as a `.vcf`/`.csv` (US-I5). vCard **3.0**, not 4.0 — 3.0 is what
+  iOS/Android/Outlook all import without argument. Served from a URL rather than built in the
+  browser, because on iOS navigating to a `.vcf` is what hands it to Contacts. Exports whatever
+  the page is currently showing, filters included. An export, not a sync.
+- `legiscan_client.py` — the only module that talks to LegiScan. `getSearch(bill=...)` is a
+  precise, cheap, number-shaped match and already returns every type/chamber sharing a bare
+  number (`72` → AB72/SB72/ACR72/…); `getSearch(query=...)` is noisy free-text relevance. Both
+  return light rows — `getBill` is a separate, more expensive call, **never made per search
+  result row**.
 - `accounts.py` — password hashing/verification, sessions, login-lockout.
-- `mailer.py` / `digest.py` — the daily "what changed" email. `digest.py` only emails a user when a diff (`db.snapshot_bill_state`/`db.diff_bill_state`) actually found a change on one of *their* flagged bills — no digest, no email. `mailer.py` degrades to logging instead of sending when SMTP env vars aren't set, rather than failing.
-- `pdf_forms.py` — fills real FPPC PDF form fields (starts with Form 601) via `pypdf`. The app **never files** anything; it only prepares a document for the user to review and file themselves (`db.sign_off_prepared_filing` is an explicit human sign-off gate, not a submission).
-- `config.py` — every environment variable the app reads, in one place. `validate()` is called once at real startup (not at import time, so tests importing `app`/`db` don't need every prod env var set) and raises listing every missing required setting at once.
+- `mailer.py` / `digest.py` — the daily "what changed" email. `digest.py` emails a user only
+  when a diff (`db.snapshot_bill_state`/`db.diff_bill_state`) found a change on one of *their*
+  flagged bills — no change, no email. `mailer.py` degrades to logging when SMTP env vars
+  aren't set, rather than failing.
+- `pdf_forms.py` — fills real FPPC PDF form fields (Form 601 first) via `pypdf`. The app
+  **never files**; `db.sign_off_prepared_filing` is a human sign-off gate, not a submission.
+- `config.py` — every environment variable in one place. `validate()` runs once at real startup
+  (not at import, so tests importing `app`/`db` need no prod env) and raises listing every
+  missing setting at once.
 
-**Local vs. hosted refresh — same refresh code, two different triggers.** Locally, `launchd` runs `refresh_watchlist.py` / `calaccess-pipeline/refresh_calaccess.py` directly on a schedule, each opening the DB file itself — works because everything's one process family on one Mac. Hosted on Render, cron job services can't attach a persistent disk, so `render.yaml` defines two thin cron services that just `curl` an internal, secret-gated endpoint (`POST /internal/refresh-watchlist` / `/internal/refresh-calaccess`) on the one always-on web service that *does* hold the disk; that endpoint runs the same refresh code in a background thread. `REFRESH_SECRET` unset (the local case) means those routes 404 and don't exist at all.
+**Local vs. hosted refresh — same refresh code, two triggers.** Locally, `launchd` runs
+`refresh_watchlist.py` / `calaccess-pipeline/refresh_calaccess.py` on a schedule, each opening
+the DB file itself. Hosted on Render, cron services can't attach a persistent disk, so
+`render.yaml` defines thin cron services that `curl` an internal, secret-gated endpoint
+(`POST /internal/refresh-watchlist` / `/internal/refresh-calaccess`) on the one always-on web
+service that *does* hold the disk; that endpoint runs the same code in a background thread.
+`REFRESH_SECRET` unset (the local case) means those routes 404 and don't exist at all.
 
 ## Scope boundaries that are decisions, not gaps
 
@@ -100,10 +210,10 @@ of them is a product decision to raise with the user first, not a cleanup to do 
 
 Every change ships as its own branch + PR into `main` (see recent PR history) — branch off `origin/main`, not off whatever another branch happens to be checked out, and open a PR rather than committing straight to `main`.
 
-**Add new code next to what it relates to, not at whatever anchor is convenient.** `db.py` is
-sectioned by topic (`# ── The searchable bill corpus`, `# ── Flagged bills`, `# ── Clients`, …),
-`db/schema.sql` groups a feature's tables with a comment block, and `static/style.css` has a
-region per page. Put a new function, table or rule inside the section it belongs to.
+**Add new code next to what it relates to, not at whatever anchor is convenient.** `app.py`'s
+dispatch blocks and `db.py` are both sectioned by `# ──` banners, `db/schema.sql` groups a
+feature's tables with a comment block, and `static/style.css` has a region per page. Put a new
+route, function, table or rule inside the section it belongs to.
 
 This is a merge-conflict rule as much as a tidiness one. Five parallel PRs (#65–#69) each
 appended their new `db.py` functions immediately before `def code_section_stats(conn):` — one
@@ -112,11 +222,11 @@ purely additive: independent blocks of new functions that git could not order be
 shared an insertion point and no surrounding context. Inserting each feature's queries beside
 its own section instead would have merged cleanly with no rebase at all, and would not have
 left the deadline-calendar section wedged into the middle of the bill-corpus one. The same
-applies to `schema.sql` and `style.css`, where blind appending has the same effect.
+applies to `app.py`, `schema.sql` and `style.css`, where blind appending has the same effect.
 
 When a conflict does happen this way, the fix is to keep both sides — check first that the two
-sides define disjoint names (`def`/`CREATE TABLE`/class selector), since a name defined on both
-sides means it is a real conflict and not two additions.
+sides define disjoint names (`def`/`CREATE TABLE`/route path/class selector), since a name
+defined on both sides means it is a real conflict and not two additions.
 
 **Rebase an open PR onto `main` as soon as a sibling PR merges**, rather than waiting for the
 user to report "CONFLICTING". Parallel branches off one base all collide the moment the first
@@ -126,3 +236,17 @@ stacked PR has to be reviewed against its parent rather than against `main` and 
 everything above it if one slice is deferred.
 
 **This repo's working directory may be shared by more than one concurrent Claude Code session** (observed directly: a `git checkout`/`git reset --hard` from another session mid-task silently discarded this session's uncommitted edits, and separately, two sessions' uncommitted edits to the same file ended up swept into the same commit). Before trusting that your edits are still on disk, re-check with `git status`/`git diff` rather than assuming — and commit + push promptly once a change is verified working, rather than leaving substantial uncommitted work sitting in the working tree.
+
+## Working style
+
+The costs that matter, in order: how much of the repo gets read to find the thing, how long
+the session runs, how many times finished work is re-verified. These rules attack all three.
+
+- **Don't re-read a file to confirm an edit landed.** The edit would have failed loudly.
+- **Don't echo back file contents, diffs, or code just written** unless asked to.
+- **Report tests as the result line**, not the output. `638 passed in 12.9s` is the whole value.
+- **Close with what changed and where, in a few lines** — not a walkthrough of the work.
+- **Don't start the app to verify something the tests already cover.** Run it when the change
+  is visual or interactive, and say so; otherwise the suite is the verification.
+- `.claude/PROMPTING.md` is the other half of this, written for the user rather than for
+  Claude. It doesn't need reading to do the work.
