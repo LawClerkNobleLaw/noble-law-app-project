@@ -5,7 +5,44 @@
     <h1>Hearing calendar</h1>
     <p class="sub">Hearings across the bills you've flagged. Upcoming first — past hearings are still here, behind the toggle. All times Pacific.</p>
   </div>
+  <button type="button" class="secondary" id="deadlines-btn">Legislative deadlines</button>
 </div>
+
+<!-- ── The Legislature's own deadlines (US-B3) ─────────────────────
+     Entered, not shipped: no dates are hard-coded in this repo, because
+     they are set each session by house resolution and a wrong one is a
+     bill the firm believed it had another week to amend. See
+     deadlines.py. -->
+<div class="card" id="deadlines-card" hidden>
+  <h2 class="section" style="margin-top:0">Legislative deadlines</h2>
+  <p class="sub">
+    Paste the Legislature's published tentative calendar for the session — one row per
+    line, starting with the month and day. Each line's category is read from its wording
+    and shown below before anything is saved.
+  </p>
+  <div class="import-row">
+    <label>
+      <div class="sub" style="margin:0 0 0.3rem">These dates fall in</div>
+      <input type="number" id="deadline-year" min="2000" max="2100" step="1" style="width:7rem">
+    </label>
+    <label>
+      <div class="sub" style="margin:0 0 0.3rem">Session starts</div>
+      <input type="number" id="session-year" min="2000" max="2100" step="1" style="width:7rem">
+    </label>
+  </div>
+  <label>
+    <div class="sub" style="margin:0.6rem 0 0.3rem">The calendar</div>
+    <textarea id="deadline-paste" rows="7" style="width:100%"
+      placeholder="Jan. 31 Last day for each house to pass bills introduced in that house in the odd-numbered year.&#10;May 29 Last day for each house to pass bills introduced in that house.&#10;Aug. 31 Last day for each house to pass bills."></textarea>
+  </label>
+  <div class="import-actions">
+    <button type="button" id="deadline-read">Read the dates</button>
+    <button type="button" class="secondary" onclick="closeDeadlines()">Cancel</button>
+  </div>
+  <div id="deadline-preview"></div>
+</div>
+
+<div id="deadline-strip"></div>
 
 <div id="error" role="alert" aria-live="assertive"></div>
 <div id="loading"><span class="spinner"></span>Loading…</div>
@@ -135,4 +172,151 @@ fetch('/api/flagged/calendar').then(r => r.json()).then(payload => {
   errorEl.textContent = 'Could not load the calendar.';
   errorEl.className = 'show';
 });
+
+/* ── Legislative deadlines (US-B3) ─────────────────────────────────
+ *
+ * Read-then-confirm, like the directory import: the paste is parsed and
+ * shown with the category read off each line, and nothing is stored
+ * until the user has looked at it. The source is a human document whose
+ * wording changes between sessions, so being wrong quietly is the one
+ * outcome worth engineering against.
+ */
+let parsedDeadlines = null;
+
+function escDl(text) {
+  return String(text == null ? '' : text)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+const KIND_LABELS = {
+  introduction: 'Bill introduction', two_year: 'Two-year bills',
+  policy_fiscal: 'Policy cmte — fiscal', policy_nonfiscal: 'Policy cmte — non-fiscal',
+  fiscal_committee: 'Fiscal committee', house_of_origin: 'House of origin',
+  budget: 'Budget', policy_second: 'Policy cmte — 2nd house',
+  fiscal_second: 'Fiscal cmte — 2nd house', floor_second: 'Floor passage',
+  recess: 'Recess', governor: 'Governor', effective: 'Effective date', other: 'Other',
+};
+
+function openDeadlines() {
+  const card = document.getElementById('deadlines-card');
+  card.hidden = false;
+  const year = new Date().getFullYear();
+  document.getElementById('deadline-year').value = year;
+  // A California session starts in an odd year and runs two, so the
+  // session's first year is this year or last, never next.
+  document.getElementById('session-year').value = year % 2 === 1 ? year : year - 1;
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function closeDeadlines() { document.getElementById('deadlines-card').hidden = true; }
+document.getElementById('deadlines-btn').onclick = openDeadlines;
+
+document.getElementById('deadline-read').onclick = async () => {
+  const text = document.getElementById('deadline-paste').value.trim();
+  const preview = document.getElementById('deadline-preview');
+  if (!text) { preview.innerHTML = '<p class="sub">Paste the calendar first.</p>'; return; }
+  try {
+    const res = await fetch('/api/deadlines/parse', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, year: document.getElementById('deadline-year').value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not read that calendar.');
+    parsedDeadlines = data.deadlines || [];
+    preview.innerHTML = `
+      ${(data.warnings || []).length
+        ? `<div class="result-truncated">${escDl(data.warnings.join(' '))}</div>` : ''}
+      ${parsedDeadlines.length ? `
+        <div class="table-scroll" style="max-height:20rem">
+          <table><thead><tr><th>Date</th><th>Category</th><th>Deadline</th></tr></thead>
+          <tbody>${parsedDeadlines.map(d => `
+            <tr><td>${escDl(d.date)}</td>
+                <td><span class="cite">${escDl(KIND_LABELS[d.kind] || d.kind)}</span></td>
+                <td class="sub">${escDl(d.label)}</td></tr>`).join('')}</tbody></table>
+        </div>
+        <div class="import-actions">
+          <button type="button" id="deadline-save">Save these ${parsedDeadlines.length} dates</button>
+        </div>` : ''}`;
+    const save = document.getElementById('deadline-save');
+    if (save) save.onclick = saveDeadlines;
+  } catch (err) {
+    preview.innerHTML = `<p class="sub">${escDl(err.message)}</p>`;
+  }
+};
+
+async function saveDeadlines() {
+  const btn = document.getElementById('deadline-save');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/deadlines/save', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deadlines: parsedDeadlines,
+        session_year: document.getElementById('session-year').value,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save those dates.');
+    closeDeadlines();
+    document.getElementById('deadline-paste').value = '';
+    document.getElementById('deadline-preview').innerHTML = '';
+    loadDeadlines();
+  } catch (err) {
+    document.getElementById('deadline-preview').innerHTML =
+      `<p class="sub">${escDl(err.message)}</p>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save';
+  }
+}
+
+async function loadDeadlines() {
+  const strip = document.getElementById('deadline-strip');
+  try {
+    const res = await fetch('/api/deadlines');
+    if (!res.ok) return;
+    const data = await res.json();
+    const rows = data.deadlines || [];
+    if (!rows.length) {
+      strip.innerHTML = `<div class="result-note">No legislative deadlines loaded.
+        <button type="button" class="linklike" onclick="openDeadlines()">Paste the
+        session's calendar</button> and this page will count down to them.</div>`;
+      return;
+    }
+    // Upcoming first, and only a handful: this is a strip above the
+    // hearings, not a second calendar. The rest stay reachable because
+    // they are all still in the list below it.
+    const upcoming = rows.filter(d => d.days_until !== null && d.days_until >= 0);
+    const shown = (upcoming.length ? upcoming : rows.slice(-3)).slice(0, 4);
+    strip.innerHTML = `
+      <div class="panel deadline-panel" style="margin-bottom:1rem">
+        <div class="panel-head">
+          <div>
+            <div class="title">Legislative deadlines</div>
+            <div class="sub">${upcoming.length
+              ? `${upcoming.length} still ahead this session`
+              : 'All of this session\u2019s deadlines have passed'}</div>
+          </div>
+          <button type="button" class="secondary" onclick="openDeadlines()">Replace</button>
+        </div>
+        <div>${shown.map(d => `
+          <div class="bill-row">
+            <div style="flex:1;min-width:0">
+              <div class="bill-title">${escDl(KIND_LABELS[d.kind] || 'Deadline')}
+                · ${escDl(d.date)}</div>
+              <div class="sub" style="font-size:0.78rem">${escDl(d.label)}</div>
+            </div>
+            ${d.days_until === null ? '' : `<span class="due-chip ${
+              d.days_until < 0 ? 'over' : d.days_until <= 14 ? 'over' : 'soon'
+            }">${d.days_until < 0 ? `${-d.days_until}d ago`
+                 : d.days_until === 0 ? 'today' : `in ${d.days_until}d`}</span>`}
+          </div>`).join('')}</div>
+      </div>`;
+  } catch (err) {
+    // A missing deadline strip is not a broken calendar page.
+  }
+}
+
+loadDeadlines();
 </script>

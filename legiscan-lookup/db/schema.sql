@@ -930,3 +930,32 @@ CREATE TABLE IF NOT EXISTS bill_text_versions (
   fetched_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_bill_text_versions_bill ON bill_text_versions(bill_id);
+-- ── The Legislature's own deadline calendar (see deadlines.py) ─────
+--
+-- US-B3. bill_hearings answers "when is my bill heard", which LegiScan
+-- publishes. This answers the one that actually loses bills — "which of
+-- mine has to clear a committee in nine days or die" — and nothing
+-- publishes that: the dates are set each session by house resolution.
+--
+-- So the rows here are ENTERED, not shipped. No dates are hard-coded in
+-- this repo, because they move every session and a wrong one is a bill
+-- the firm believed it had another week to amend. A firm pastes the
+-- published tentative calendar and confirms what was read.
+--
+-- Org-scoped like the directory, for the same practical reason rather
+-- than a privacy one: two firms may paste different calendars, or the
+-- same one at different times, and neither should silently overwrite
+-- the other's.
+CREATE TABLE IF NOT EXISTS legislative_deadlines (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id),
+  -- The session these belong to, as its first year ("2025" for the
+  -- 2025-26 session). Kept so next session's paste replaces this
+  -- session's rather than piling up beside them.
+  session_year INTEGER,
+  date       TEXT NOT NULL,          -- ISO, always: see the CAL-ACCESS note
+  label      TEXT NOT NULL,
+  kind       TEXT,                   -- one of deadlines.DEADLINE_KINDS
+  created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_legislative_deadlines_user ON legislative_deadlines(user_id, date);

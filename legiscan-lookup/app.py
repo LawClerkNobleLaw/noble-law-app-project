@@ -93,6 +93,7 @@ import build_bill_corpus
 import code_sections
 import config
 import db
+import deadlines
 import directory
 import disclosure_fields
 import letter_drafts
@@ -203,6 +204,22 @@ REFRESH_SECRET = config.REFRESH_SECRET
 # string, so nothing is streamed and the ceiling should be stated rather
 # than discovered.
 DIRECTORY_MAX_BYTES = 8 * 1024 * 1024
+
+# A session's published calendar is a page or two of text. Generous, and
+# stated rather than discovered, same as DIRECTORY_MAX_BYTES above.
+DEADLINE_MAX_BYTES = 256 * 1024
+
+
+def _deadline_year(value):
+    """The year a pasted calendar's month/day pairs belong to.
+
+    The published calendar prints no year, and a California session
+    spans two — so this comes from the user, and falls back to the
+    current one rather than guessing from the content.
+    """
+    if str(value or "").isdigit() and 2000 <= int(value) <= 2100:
+        return int(value)
+    return datetime.date.today().year
 
 _refresh_running = {"watchlist": False, "calaccess": False, "corpus": False}
 
@@ -2267,6 +2284,20 @@ class Handler(BaseHTTPRequestHandler):
             self._send_html(200, CALENDAR_PAGE)
             return
 
+        if parsed.path == "/api/deadlines":
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to view the deadline calendar.")
+                if not user_id:
+                    return
+                self._send_json(200, {
+                    "deadlines": db.list_deadlines(conn, user_id),
+                    "kinds": list(deadlines.DEADLINE_KINDS),
+                })
+            finally:
+                conn.close()
+            return
+
         if parsed.path == "/api/flagged/calendar":
             conn = db.get_connection()
             try:
@@ -3064,6 +3095,61 @@ class Handler(BaseHTTPRequestHandler):
                     return
 
                 db.update_staff(conn, user_id, body.get("staff_id"), body.get("fields"))
+                conn.commit()
+                self._send_json(200, {"status": "ok"})
+            finally:
+                conn.close()
+            return
+
+        if parsed.path in ("/api/deadlines/parse", "/api/deadlines/save",
+                           "/api/deadlines/delete"):
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage deadlines.")
+                if not user_id:
+                    return
+
+                if parsed.path == "/api/deadlines/parse":
+                    # Read-only. Nothing is stored until the user has
+                    # seen what was read and said go — same shape as the
+                    # directory import, and for the same reason: the
+                    # source is a human document.
+                    text = body.get("text") or ""
+                    if len(text) > DEADLINE_MAX_BYTES:
+                        self._send_json(413, {"error": "That calendar is too long to read."})
+                        return
+                    self._send_json(200, deadlines.parse_calendar(
+                        text, year=_deadline_year(body.get("year"))))
+                    return
+
+                if parsed.path == "/api/deadlines/save":
+                    rows = [
+                        row for row in (body.get("deadlines") or [])
+                        if row.get("date") and row.get("label")
+                    ]
+                    if not rows:
+                        self._send_json(400, {"error": "No deadlines to save."})
+                        return
+                    session_year = body.get("session_year")
+                    saved = db.replace_deadlines(
+                        conn, user_id,
+                        int(session_year) if str(session_year or "").isdigit() else None,
+                        rows,
+                    )
+                    conn.commit()
+                    self._send_json(200, {"saved": saved})
+                    return
+
+                deadline_id = body.get("id")
+                if not str(deadline_id or "").isdigit():
+                    self._send_json(400, {"error": "Missing or invalid id."})
+                    return
+                db.delete_deadline(conn, user_id, int(deadline_id))
                 conn.commit()
                 self._send_json(200, {"status": "ok"})
             finally:
