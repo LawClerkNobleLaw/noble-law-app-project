@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m pytest -q)",
+      "Bash(python3 -m pytest tests/ -q)",
+      "Bash(pytest -q)",
+      "Bash(pytest)",
+      "Bash(git fetch)",
+      "Bash(git fetch *)",
+      "Bash(launchctl list)",
+      "Bash(launchctl list *)",
+      "mcp__Claude_Browser__read_page",
+      "mcp__Claude_Browser__get_page_text",
+      "mcp__Claude_Browser__read_console_messages",
+      "mcp__Claude_Browser__read_network_requests",
+      "mcp__Claude_Browser__find",
+      "mcp__Claude_Browser__tabs_context",
+      "mcp__Claude_Browser__preview_logs"
+    ]
+  }
+}
