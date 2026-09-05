@@ -810,3 +810,90 @@ CREATE TABLE IF NOT EXISTS bill_code_sections (
 -- 65660" and "what's moving against 65660, whichever code that is".
 CREATE INDEX IF NOT EXISTS idx_bill_code_sections_cite ON bill_code_sections(code, section);
 CREATE INDEX IF NOT EXISTS idx_bill_code_sections_section ON bill_code_sections(section);
+
+-- ── The Capitol directory: legislators, their staff, and who owns
+-- which portfolio (see directory.py) ──────────────────────────────
+--
+-- The industry keeps this in a crowdsourced spreadsheet that maps each
+-- office's staff to the committees, caucuses and issue areas they
+-- handle. The point of holding it here instead is that a spreadsheet
+-- can't be asked "who handles water in Senate offices" and can't tell
+-- you it's eighteen months old.
+--
+-- ORG-SCOPED, and that is a boundary rather than a convenience. This
+-- data is a firm's own copy of a directory it maintains, holding direct
+-- phone numbers and emails for identifiable people. Importing it into
+-- the account of the firm that already has it is defensible; pooling it
+-- across firms, or shipping a seed copy in this repo, is somebody
+-- else's crowdsourced work and somebody else's personal data. So there
+-- is no global directory table, no cross-org read, and nothing checked
+-- in — every row here arrives from an import the firm did itself.
+--
+-- Scoped through user_id like every other org-owned table, so
+-- db.ORG_SCOPE applies unchanged; see its note in db.py.
+
+-- One import: a file, on a date, by a firm. Everything below points at
+-- one of these, which is what makes "this came from the March sheet"
+-- answerable and what makes an import undoable in one statement.
+CREATE TABLE IF NOT EXISTS directory_imports (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       INTEGER NOT NULL REFERENCES users(id),
+  source_name   TEXT,                  -- the file's own name, as uploaded
+  -- The date the SHEET is current as of, which is not the date it was
+  -- imported: a firm importing January's sheet in June has six-month-old
+  -- data and the app should say so rather than call it fresh today.
+  as_of         TEXT,
+  legislators   INTEGER NOT NULL DEFAULT 0,
+  staff         INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_directory_imports_user ON directory_imports(user_id);
+
+CREATE TABLE IF NOT EXISTS legislators (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL REFERENCES users(id),
+  import_id   INTEGER REFERENCES directory_imports(id),
+  full_name   TEXT NOT NULL,
+  chamber     TEXT,                    -- 'Assembly' | 'Senate'
+  district    TEXT,                    -- TEXT, not INTEGER: sheets write "AD-12", "12th"
+  party       TEXT,
+  office_room TEXT,
+  office_phone TEXT,
+  notes       TEXT,
+  updated_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_legislators_user ON legislators(user_id);
+
+CREATE TABLE IF NOT EXISTS capitol_staff (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       INTEGER NOT NULL REFERENCES users(id),
+  legislator_id INTEGER REFERENCES legislators(id),
+  import_id     INTEGER REFERENCES directory_imports(id),
+  full_name     TEXT NOT NULL,
+  title         TEXT,                  -- 'Chief of Staff', 'Legislative Director', ...
+  email         TEXT,
+  phone         TEXT,
+  -- Marked by a user who found it wrong, independently of how old the
+  -- import is. Age is a guess about staleness; this is a report of it,
+  -- and the two are worth keeping apart.
+  is_stale      INTEGER NOT NULL DEFAULT 0,
+  notes         TEXT,
+  updated_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_capitol_staff_user ON capitol_staff(user_id);
+CREATE INDEX IF NOT EXISTS idx_capitol_staff_legislator ON capitol_staff(legislator_id);
+
+-- What a staffer owns. One row per (staffer, kind, name) rather than a
+-- column per committee, which is exactly the shape the source
+-- spreadsheet has and the shape that makes "who handles water" a query
+-- instead of a scan across ninety columns.
+CREATE TABLE IF NOT EXISTS staff_assignments (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id  INTEGER NOT NULL REFERENCES users(id),
+  staff_id INTEGER NOT NULL REFERENCES capitol_staff(id),
+  kind     TEXT NOT NULL,              -- 'committee' | 'caucus' | 'issue'
+  name     TEXT NOT NULL,
+  UNIQUE(staff_id, kind, name)
+);
+CREATE INDEX IF NOT EXISTS idx_staff_assignments_name ON staff_assignments(name);
+CREATE INDEX IF NOT EXISTS idx_staff_assignments_user ON staff_assignments(user_id);

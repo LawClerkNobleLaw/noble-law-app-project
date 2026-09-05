@@ -91,6 +91,7 @@ import build_bill_corpus
 import code_sections
 import config
 import db
+import directory
 import disclosure_fields
 import letter_drafts
 import mailer
@@ -191,6 +192,15 @@ REFRESH_SECRET = config.REFRESH_SECRET
 # maps job name -> bool. Not persisted; a restart just clears it, which is
 # fine, since the worst case is one extra run, not a corrupted one (every
 # refresh is upsert-based already).
+# How much CSV one import may carry. A whole-Legislature staff sheet is
+# ~120 offices by ~90 columns and lands well under a megabyte; eight is
+# room for a much wider sheet and still small enough that the whole
+# thing can sit in memory in a request thread without anyone having to
+# think about it. The cap exists because the text arrives as a JSON
+# string, so nothing is streamed and the ceiling should be stated rather
+# than discovered.
+DIRECTORY_MAX_BYTES = 8 * 1024 * 1024
+
 _refresh_running = {"watchlist": False, "calaccess": False, "corpus": False}
 
 # What /internal/status reports back for "did the last refresh actually
@@ -723,6 +733,10 @@ SHELL_NAV_ITEMS = [
          ("/clients", "Clients",
           '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
           '<circle cx="5.5" cy="4.5" r="2.5"/><path d="M1 12c0-2.5 2-4.2 4.5-4.2S10 9.5 10 12" stroke-linecap="round"/></svg>'),
+         ("/directory", "Capitol directory",
+          '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+          '<rect x="2.5" y="1.5" width="9" height="11" rx="1"/><path d="M2.5 4.5h-1M2.5 7h-1M2.5 9.5h-1" stroke-linecap="round"/>'
+          '<circle cx="7" cy="6" r="1.4"/><path d="M4.8 10.2c0-1.2 1-2 2.2-2s2.2.8 2.2 2" stroke-linecap="round"/></svg>'),
      ]),
     ("Draft",
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
@@ -1273,6 +1287,18 @@ CLIENTS_BODY = _render_template(
 )
 
 CLIENTS_PAGE = page("Clients — Rotunda", "/clients", CLIENTS_BODY)
+
+
+# The Capitol directory (see directory.py). Sits beside Clients rather
+# than under Bills because it answers the same shape of question those
+# pages do — who are the people, and how do I reach them — where the
+# bill pages answer what is moving.
+DIRECTORY_BODY = _render_template(
+    "directory_body.html",
+    TOAST_SRC=TOAST_SRC,
+)
+
+DIRECTORY_PAGE = page("Capitol directory — Rotunda", "/directory", DIRECTORY_BODY)
 
 
 # One client's own page: org info, every bill assigned to them with its
@@ -2198,6 +2224,32 @@ class Handler(BaseHTTPRequestHandler):
             self._send_html(200, CLIENTS_PAGE)
             return
 
+        if parsed.path == "/directory":
+            if not self._require_user_for_page():
+                return
+            self._send_html(200, DIRECTORY_PAGE)
+            return
+
+        if parsed.path == "/api/directory":
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to view the directory.")
+                if not user_id:
+                    return
+                chamber = (qs.get("chamber") or [""])[0]
+                self._send_json(200, {
+                    "legislators": db.search_directory(
+                        conn, user_id,
+                        query=(qs.get("q") or [""])[0],
+                        chamber=chamber if chamber in ("Assembly", "Senate") else None,
+                    ),
+                    "stats": db.directory_stats(conn, user_id),
+                    "import": db.latest_directory_import(conn, user_id),
+                })
+            finally:
+                conn.close()
+            return
+
         if parsed.path == "/api/clients":
             conn = db.get_connection()
             try:
@@ -2771,6 +2823,67 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(202, {"status": f"{job} refresh started"})
             else:
                 self._send_json(409, {"status": f"{job} refresh already running"})
+            return
+
+        if parsed.path in ("/api/directory/inspect", "/api/directory/import",
+                           "/api/directory/stale", "/api/directory/staff"):
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to manage the directory.")
+                if not user_id:
+                    return
+
+                if parsed.path == "/api/directory/inspect":
+                    # Read-only: parses the header row and hands back a
+                    # proposed role per column. Nothing is written until
+                    # the user has seen the guess and said go.
+                    text = body.get("text") or ""
+                    if len(text) > DIRECTORY_MAX_BYTES:
+                        self._send_json(413, {"error": "That file is too large to import."})
+                        return
+                    self._send_json(200, directory.inspect(text))
+                    return
+
+                if parsed.path == "/api/directory/import":
+                    text = body.get("text") or ""
+                    if len(text) > DIRECTORY_MAX_BYTES:
+                        self._send_json(413, {"error": "That file is too large to import."})
+                        return
+                    records = directory.build_records(text, body.get("mapping"))
+                    if not records["legislators"]:
+                        self._send_json(400, {
+                            "error": " ".join(records["warnings"])
+                                     or "Nothing in that file could be imported.",
+                        })
+                        return
+                    saved = db.save_directory_import(
+                        conn, user_id,
+                        source_name=(body.get("source_name") or "")[:200],
+                        as_of=body.get("as_of"),
+                        legislators=records["legislators"],
+                    )
+                    conn.commit()
+                    saved["warnings"] = records["warnings"]
+                    self._send_json(200, saved)
+                    return
+
+                if parsed.path == "/api/directory/stale":
+                    db.set_staff_stale(conn, user_id, body.get("staff_id"),
+                                       bool(body.get("is_stale")))
+                    conn.commit()
+                    self._send_json(200, {"status": "ok"})
+                    return
+
+                db.update_staff(conn, user_id, body.get("staff_id"), body.get("fields"))
+                conn.commit()
+                self._send_json(200, {"status": "ok"})
+            finally:
+                conn.close()
             return
 
         if parsed.path == "/api/signup":

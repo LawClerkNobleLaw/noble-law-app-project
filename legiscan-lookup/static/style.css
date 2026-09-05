@@ -1516,6 +1516,58 @@
     padding: var(--space-2) 0.75rem; margin-bottom: 0.75rem; font-size: 0.8rem;
   }
 
+  /* ── Capitol directory (see directory.py) ────────────────────────
+     One card per office, a table of its staff inside. Cards rather than
+     one long table because the office is the unit people think in —
+     "who's in Wicks's office" is the question, not "row 340". */
+  .office { margin-bottom: 0.9rem; }
+  .office-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 1rem; margin-bottom: 0.6rem;
+  }
+  .office-name { font-weight: 600; font-size: 0.95rem; }
+  /* .sub carries a 2rem bottom margin for use as a page subtitle. In a
+     table cell that turns a two-line staffer into a 212px row, so it is
+     reset for the secondary lines inside this page's tables. */
+  .office td .sub, .office-head .sub { margin: 0; font-size: 0.75rem; }
+  /* A contact somebody has reported as wrong. Dimmed rather than
+     hidden: it is still the only number anyone has, and the person
+     dialling it should see both that it exists and that it's suspect. */
+  .stale-row td { opacity: 0.55; }
+  .stale-note { color: var(--warn); font-style: italic; }
+  /* Which staffer the search actually hit. The office is shown whole
+     for context, so without this a search for "water" lists four names
+     and says nothing about which one handles water. */
+  .matched-row { background: var(--accent-soft); }
+  .matched-note { color: var(--accent); font-style: italic; }
+  /* Assignment chips reuse .cite from the code-section results — same
+     job, a small labelled fact attached to a row. */
+  .cite-caucus { border-color: var(--accent); }
+  .cite-issue { border-style: dashed; }
+
+  .dir-search { width: min(28rem, 100%); }
+  .import-row { display: flex; align-items: flex-end; gap: 0.8rem; flex-wrap: wrap; }
+  .import-actions { display: flex; gap: 0.5rem; margin-top: 0.9rem; }
+  .file-drop {
+    display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer;
+    border: 1px dashed var(--rule-strong); border-radius: var(--radius-md);
+    padding: var(--space-2) 0.9rem; font-size: 0.8rem;
+  }
+  .file-drop:hover { border-color: var(--accent); color: var(--accent); }
+  /* The mapping table can be ninety rows long (one per column of the
+     sheet), so its own scroller is capped in height — .table-scroll
+     already handles the sideways case for every table here. */
+  #map-table { font-size: 0.78rem; }
+  #import-card .table-scroll { max-height: 26rem; overflow-y: auto; }
+
+  /* Labels that exist for screen readers only. Was repeated inline on
+     every field that needed one; named here since the directory's
+     mapping table generates them per column. */
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap;
+  }
+
   /* A button that has to read as a link because it sits mid-sentence.
      Kept a <button> so it is reachable and announced as the action it
      is, rather than an <a href="#"> that goes nowhere. */
