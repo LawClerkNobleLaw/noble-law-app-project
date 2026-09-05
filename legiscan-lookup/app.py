@@ -87,6 +87,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote
 
 import accounts
+import bill_diff
+import bill_text
 import build_bill_corpus
 import code_sections
 import config
@@ -1743,6 +1745,75 @@ def _with_disclosure_editor_meta(filing, conn, user_id):
     return filing
 
 
+def bill_diff_documents(bill_id):
+    """Every version of one bill, oldest first — one getBill call.
+
+    Ordered the way current_document picks a winner (date, then doc_id
+    within a date), because two documents genuinely can share a date and
+    "roughly chronological" is not something to build a version picker
+    on.
+    """
+    payload = legiscan_client.legiscan_call("getBill", id=bill_id)
+    if payload.get("status") != "OK":
+        raise RuntimeError(f"getBill failed: {payload.get('alert') or payload.get('status')}")
+    texts = (payload.get("bill") or {}).get("texts") or []
+    documents = sorted(
+        (
+            {
+                "doc_id": int(t.get("doc_id")),
+                "version_date": t.get("date"),
+                "version_type": t.get("type"),
+                "byte_size": t.get("text_size"),
+            }
+            for t in texts if t.get("doc_id")
+        ),
+        key=lambda d: ((d["version_date"] or ""), d["doc_id"]),
+    )
+    return documents
+
+
+def load_version(bill_id, doc_id, documents):
+    """One version's blocks, from cache or from LegiScan.
+
+    The cache is the whole reason a redline is affordable: reading the
+    same amendment twice costs one API call, not two, and comparing v3
+    to v4 after comparing v2 to v3 costs one rather than two.
+    """
+    conn = db.get_connection()
+    try:
+        cached = db.get_bill_text_version(conn, doc_id)
+        if cached:
+            return cached
+    finally:
+        conn.close()
+
+    document = next((d for d in documents if d["doc_id"] == doc_id), None)
+    if not document:
+        raise LookupError("That version doesn't belong to this bill.")
+
+    payload = legiscan_client.legiscan_call("getBillText", id=doc_id)
+    if payload.get("status") != "OK":
+        raise RuntimeError(f"getBillText failed: {payload.get('alert') or payload.get('status')}")
+    record = payload.get("text") or {}
+    raw = base64.b64decode(record.get("doc") or "")
+    blocks = bill_text.to_blocks(raw)
+
+    conn = db.get_connection()
+    try:
+        db.upsert_bill_text_version(
+            conn, bill_id,
+            {"doc_id": doc_id, "date": document["version_date"],
+             "type": document["version_type"]},
+            blocks, len(raw),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"doc_id": doc_id, "bill_id": bill_id, "blocks": blocks,
+            "version_date": document["version_date"],
+            "version_type": document["version_type"], "byte_size": len(raw)}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # keep the terminal quiet
@@ -2624,6 +2695,58 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, lobbying_detail(conn, entity_id, name))
             finally:
                 conn.close()
+            return
+
+        if parsed.path in ("/api/bill-versions", "/api/bill-diff"):
+            bill_id = (qs.get("bill_id") or [""])[0]
+            if not bill_id.isdigit():
+                self._send_json(400, {"error": "Missing or invalid bill_id."})
+                return
+            conn = db.get_connection()
+            try:
+                if not self._require_user_for_api(conn, "Sign in to compare bill versions."):
+                    return
+            finally:
+                conn.close()
+            try:
+                documents = bill_diff_documents(int(bill_id))
+            except Exception as err:
+                self._send_json(502, {"error": f"LegiScan did not answer: {err}"})
+                return
+
+            if parsed.path == "/api/bill-versions":
+                self._send_json(200, {"versions": documents})
+                return
+
+            # A redline needs two named documents. Defaulting them here
+            # rather than in the page: "the last two" is what a user
+            # opening this wants nine times out of ten, and the picker
+            # is for the tenth.
+            picked = [(qs.get("from") or [""])[0], (qs.get("to") or [""])[0]]
+            if not all(p.isdigit() for p in picked):
+                if len(documents) < 2:
+                    self._send_json(200, {
+                        "versions": documents, "entries": [], "summary": {},
+                        "identical": False, "single_version": True,
+                    })
+                    return
+                picked = [str(documents[-2]["doc_id"]), str(documents[-1]["doc_id"])]
+
+            try:
+                old = load_version(int(bill_id), int(picked[0]), documents)
+                new_version = load_version(int(bill_id), int(picked[1]), documents)
+            except LookupError as err:
+                self._send_json(400, {"error": str(err)})
+                return
+            except Exception as err:
+                self._send_json(502, {"error": f"LegiScan did not answer: {err}"})
+                return
+
+            result = bill_diff.redline(old["blocks"], new_version["blocks"])
+            result["versions"] = documents
+            result["from"] = {k: old[k] for k in ("doc_id", "version_date", "version_type")}
+            result["to"] = {k: new_version[k] for k in ("doc_id", "version_date", "version_type")}
+            self._send_json(200, result)
             return
 
         if parsed.path == "/api/bill":

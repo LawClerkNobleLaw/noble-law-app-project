@@ -897,3 +897,36 @@ CREATE TABLE IF NOT EXISTS staff_assignments (
 );
 CREATE INDEX IF NOT EXISTS idx_staff_assignments_name ON staff_assignments(name);
 CREATE INDEX IF NOT EXISTS idx_staff_assignments_user ON staff_assignments(user_id);
+
+-- ── Cached bill-version text, for redlines (see bill_diff.py) ──────
+--
+-- Separate from bill_texts, which holds exactly one row per bill: the
+-- CURRENT version, indexed for full-text search. bill_text.py's header
+-- records why it stops there — every version of every bill is ~24,600
+-- API calls and ~857MB, against a 30,000-query monthly tier.
+--
+-- A redline needs two versions of ONE bill, asked for by a person
+-- looking at that bill. So this table is a cache of documents fetched
+-- on demand rather than a corpus built in advance: it fills as people
+-- ask for redlines, and a firm that redlines all forty bills it tracks
+-- across every version spends ~190 calls doing it.
+--
+-- Keyed by doc_id, LegiScan's own per-document id, because that is what
+-- getBillText takes and what makes "do we already have this one"
+-- answerable without a second thought. Not org-scoped: this is public
+-- bill text, identical for everyone, and the same document fetched for
+-- one firm is the same document for the next.
+CREATE TABLE IF NOT EXISTS bill_text_versions (
+  doc_id       INTEGER PRIMARY KEY,   -- LegiScan's doc_id
+  bill_id      INTEGER NOT NULL,
+  version_date TEXT,
+  version_type TEXT,                  -- 'Introduced' | 'Amended' | 'Enrolled' | ...
+  -- The document's blocks, newline-separated (bill_text.to_blocks).
+  -- Stored with its structure intact, unlike bill_texts.body, which is
+  -- flattened because an FTS snippet reads as prose either way. A
+  -- redline collapsed to one line diffs as one enormous paragraph.
+  blocks       TEXT,
+  byte_size    INTEGER,
+  fetched_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_bill_text_versions_bill ON bill_text_versions(bill_id);

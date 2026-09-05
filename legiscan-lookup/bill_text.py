@@ -62,6 +62,14 @@ _DROP_ELEMENTS = re.compile(r"(?is)<(script|style|head)\b.*?</\1\s*>")
 _TAGS = re.compile(r"(?s)<[^>]+>")
 _WHITESPACE = re.compile(r"\s+")
 
+# Elements that end a block of text. Used only by to_blocks() below —
+# to_plain_text() deliberately flattens these to spaces, because an FTS
+# snippet reads as prose either way.
+_BLOCK_BOUNDARY = re.compile(
+    r"(?is)</?(p|div|br|tr|li|h[1-6]|table|blockquote|section)\b[^>]*>")
+# Runs of blank space that separate blocks once the tags are gone.
+_BLOCK_SPLIT = re.compile(r"\n\s*\n+")
+
 
 def to_plain_text(document):
     """HTML (or bytes of it) -> the words, whitespace-collapsed.
@@ -80,6 +88,37 @@ def to_plain_text(document):
     text = _TAGS.sub(" ", text)
     text = html.unescape(text)
     return _WHITESPACE.sub(" ", text).strip()
+
+
+def to_blocks(document):
+    """HTML -> its paragraphs, in order.
+
+    The structure-preserving sibling of to_plain_text(), and separate
+    from it on purpose. That one flattens everything to a single line
+    because its output feeds an FTS index and snippet(), where structure
+    is worth nothing. A redline is the opposite case: "what changed" is
+    unreadable without knowing WHERE, and a bill collapsed to one line
+    diffs as one enormous paragraph.
+
+    Not a general HTML parser either — block tags become newlines,
+    everything else becomes a space, and runs of blank lines separate
+    the blocks. Good enough for the Legislature's own markup, which is
+    the only markup this ever sees.
+    """
+    if isinstance(document, bytes):
+        document = document.decode("utf-8", "replace")
+    if not document:
+        return []
+    text = _DROP_ELEMENTS.sub(" ", document)
+    text = _BLOCK_BOUNDARY.sub("\n\n", text)
+    text = _TAGS.sub(" ", text)
+    text = html.unescape(text)
+    blocks = []
+    for chunk in _BLOCK_SPLIT.split(text):
+        cleaned = _WHITESPACE.sub(" ", chunk).strip()
+        if cleaned:
+            blocks.append(cleaned)
+    return blocks
 
 
 def current_document(texts):
