@@ -68,7 +68,7 @@
   </div>
 </div>
 
-<div id="loading" class="skeleton">
+<div id="loading" role="status" class="skeleton"><span class="sr-only">Loading…</span>
   <div class="panel">
     {{top_nav}}
   </div>
@@ -1026,7 +1026,8 @@ async function deleteSavedSearch(id) {
   const saved = savedSearches.find(s => s.id === id);
   const ok = await confirmDelete(
     'Delete saved search?',
-    `Delete \u201c${saved ? saved.name : 'this search'}\u201d? It stops running every morning. Bills you already flagged from it stay flagged.`
+    `Delete \u201c${saved ? saved.name : 'this search'}\u201d? It stops running every morning. Bills you already flagged from it stay flagged.`,
+    'Delete'
   );
   if (!ok) return;
   try {

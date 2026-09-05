@@ -869,7 +869,7 @@ def app_shell(current, body):
         <div class="app-topbar-sub" id="shell-date"></div>
       </div>
     </header>
-    <main class="app-main">{body}</main>
+    <main class="app-main" id="main-content" tabindex="-1">{body}</main>
   </div>
 </div>
 <script>
@@ -966,6 +966,7 @@ def page(title, path, body):
 {THEME_INIT_SCRIPT}
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to main content</a>
 <div id="page-progress"></div>
 <script src="{PAGE_PROGRESS_SRC}"></script>
 {app_shell(path, body)}

@@ -48,5 +48,9 @@ def test_dashboard_body_renders_four_skeleton_panels():
 def test_flagged_body_skeleton_matches_its_own_five_columns():
     # Bill / Next action / Status / Last change / Clients — same column
     # count FLAGGED_BODY's own TABLE_HEAD renders.
-    first_row = app.FLAGGED_BODY.split('id="loading" class="skeleton show">', 1)[1].split("</div></div>")[0]
+    # Split on the skeleton container's closing ">" rather than its whole
+    # open tag: the tag also carries role="status" and an sr-only
+    # "Loading…" span now, and this test is about the row shape.
+    after_open = app.FLAGGED_BODY.split('id="loading"', 1)[1].split(">", 1)[1]
+    first_row = after_open.split("</div></div>")[0]
     assert first_row.count('skeleton-bar') == 5

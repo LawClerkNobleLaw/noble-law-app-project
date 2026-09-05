@@ -1,7 +1,7 @@
 
 <div class="page-head"><div><a href="/disclosures" class="sub">← Disclosures</a></div></div>
 <div id="error" role="alert" aria-live="assertive"></div>
-<div id="loading" class="show"><span class="spinner"></span>Loading…</div>
+<div id="loading" role="status" class="show"><span class="spinner"></span>Loading…</div>
 <div id="content"></div>
 
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
@@ -289,7 +289,11 @@ function issuesBannerHtml() {
 function jumpToField(fieldKey) {
   const block = document.getElementById(fieldDomId(fieldKey));
   if (!block) return;
-  block.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // Opted out under reduce, same as calendar_body.html's — see there.
+  block.scrollIntoView({
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    block: 'center',
+  });
   const input = block.querySelector('input');
   // Focus after the scroll starts rather than instead of it: focusing
   // alone jumps the page with no sense of where it went.

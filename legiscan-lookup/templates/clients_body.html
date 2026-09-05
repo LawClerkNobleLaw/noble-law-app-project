@@ -22,15 +22,15 @@
       <p class="sub" id="name-autofill-note" style="margin:0.2rem 0 0;display:none">Prefilled from CAL-ACCESS — edit anything below if it looks wrong.</p>
     </div>
     <label for="bus_addr1" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Street address</label>
-    <input id="bus_addr1" placeholder="Street address" style="flex:1 1 100%">
+    <input id="bus_addr1" placeholder="Street address" autocomplete="section-client street-address" style="flex:1 1 100%">
     <label for="bus_city" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">City</label>
-    <input id="bus_city" placeholder="City" style="flex:2">
+    <input id="bus_city" placeholder="City" autocomplete="section-client address-level2" style="flex:2">
     <label for="bus_st" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">State</label>
-    <input id="bus_st" placeholder="State" maxlength="2" style="flex:1;text-transform:uppercase">
+    <input id="bus_st" placeholder="State" maxlength="2" autocomplete="section-client address-level1" style="flex:1;text-transform:uppercase">
     <label for="bus_zip4" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">ZIP code</label>
-    <input id="bus_zip4" placeholder="ZIP" style="flex:1">
+    <input id="bus_zip4" placeholder="ZIP" autocomplete="section-client postal-code" style="flex:1">
     <label for="bus_phone" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Phone</label>
-    <input id="bus_phone" placeholder="Phone — e.g. (916) 555-0100" style="flex:1 1 100%">
+    <input id="bus_phone" placeholder="Phone — e.g. (916) 555-0100" autocomplete="section-client tel" style="flex:1 1 100%">
 
     <label style="flex:1 1 100%">
       <div class="sub" style="margin:1.2rem 0 0.3rem">Description of the client's industry or interests</div>
@@ -86,7 +86,7 @@
   </form>
 </div>
 
-<div id="loading"><span class="spinner"></span>Saving…</div>
+<div id="loading" role="status"><span class="spinner"></span>Saving…</div>
 <div id="error" role="alert" aria-live="assertive"></div>
 
 <div class="panel">

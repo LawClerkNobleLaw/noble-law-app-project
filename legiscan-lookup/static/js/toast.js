@@ -73,8 +73,37 @@ function showToast(message, options) {
   toastEl.appendChild(close);
 
   document.body.appendChild(toastEl);
+
   // Nine seconds, not the usual three or four: the whole point is the
   // undo, and noticing you picked the wrong client's position takes
   // longer than noticing a file saved.
-  toastTimer = setTimeout(dismissToast, opts.timeout || TOAST_TIMEOUT_MS);
+  //
+  // Paused while the pointer is over the toast or focus is inside it,
+  // and restarted from full on the way out. Undo is the only recovery
+  // path for an accidental position flip, and on a fixed timer it can
+  // vanish mid-reach — a user tabbing toward the button, or a screen-
+  // reader user still locating it after the announcement, was racing a
+  // clock they couldn't see. Restarting from full rather than resuming
+  // the remainder: someone who just moved off the toast has spent that
+  // time reading it, not ignoring it.
+  const el = toastEl;
+  const timeout = opts.timeout || TOAST_TIMEOUT_MS;
+  const startTimer = () => {
+    if (toastEl !== el) return;   // a later toast replaced this one
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(dismissToast, timeout);
+  };
+  const pauseTimer = () => {
+    if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+  };
+  el.addEventListener('mouseenter', pauseTimer);
+  el.addEventListener('focusin', pauseTimer);
+  el.addEventListener('mouseleave', startTimer);
+  // focusout also fires moving between the toast's own two buttons, and
+  // relatedTarget is where focus is heading — still inside means the
+  // user hasn't left, so the clock stays stopped.
+  el.addEventListener('focusout', (e) => {
+    if (!el.contains(e.relatedTarget)) startTimer();
+  });
+  startTimer();
 }
