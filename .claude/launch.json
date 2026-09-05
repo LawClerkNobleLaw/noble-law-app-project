@@ -1,0 +1,22 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "rotunda",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "/Users/daezhongilbarg/Projects/noble law app project/legiscan-lookup/app.py"
+      ],
+      "port": 8420
+    },
+    {
+      "name": "rotunda-dev",
+      "runtimeExecutable": "/bin/zsh",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/daezhongilbarg/Projects/noble law app project/legiscan-lookup' && BILLWATCH_DATA_DIR='/private/tmp/claude-501/-Users-daezhongilbarg-Projects-noble-law-app-project/44f34a9d-0bf0-4f4c-889e-d2c7e28a6e01/scratchpad/devdata' PORT=8421 python3 app.py"
+      ],
+      "port": 8421
+    }
+  ]
+}

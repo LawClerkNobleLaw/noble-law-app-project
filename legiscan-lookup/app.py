@@ -2066,6 +2066,7 @@ class Handler(BaseHTTPRequestHandler):
     def _do_GET(self):
         parsed = urlparse(self.path)
 
+        # ── Static assets and the internal status probe ─────────────────────
         if parsed.path.startswith("/static/"):
             # Ahead of every other route and of any session check on
             # purpose: these are the app's own CSS/JS, identical bytes
@@ -2120,6 +2121,7 @@ class Handler(BaseHTTPRequestHandler):
 
         qs = parse_qs(parsed.query)
 
+        # ── Public pages — readable without signing in ──────────────────────
         if parsed.path == "/":
             # Unlike every other route, this one has no session check
             # at all by default — a signed-in visitor landing on "/"
@@ -2190,6 +2192,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_html(200, LOBBYING_DETAIL_PAGE)
             return
 
+        # ── Sign-up, sign-in, and the account profile ───────────────────────
         if parsed.path == "/signup":
             self._send_html(200, SIGNUP_PAGE)
             return
@@ -2222,6 +2225,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_html(200, PROFILE_VIEW_PAGE)
             return
 
+        # ── Dashboard — the signed-in landing page ──────────────────────────
         if parsed.path == "/dashboard":
             if not self._require_user_for_page():
                 return
@@ -2239,6 +2243,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── Flagged bills — the list, its archive, calendar and sponsors ────
         if parsed.path == "/flagged":
             if not self._require_user_for_page():
                 return
@@ -2326,6 +2331,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── Clients and the Capitol directory ───────────────────────────────
         if parsed.path == "/clients":
             if not self._require_user_for_page():
                 return
@@ -2463,6 +2469,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── Action report — one bill, everything known about it ─────────────
         if parsed.path == "/report":
             if not self._require_user_for_page():
                 return
@@ -2518,6 +2525,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── Position letters — drafting and addressee routing ───────────────
         if parsed.path == "/draft/letters":
             if not self._require_user_for_page():
                 return
@@ -2585,6 +2593,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── FPPC disclosure forms — prepared, never filed ───────────────────
         if parsed.path == "/disclosures":
             if not self._require_user_for_page():
                 return
@@ -2655,6 +2664,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_bytes(200, "application/pdf", pdf_bytes, filename=f"form_{filing['form_type']}.pdf")
             return
 
+        # ── The signed-in user's own settings ───────────────────────────────
         if parsed.path == "/api/me":
             conn = db.get_connection()
             try:
@@ -2698,6 +2708,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── CAL-ACCESS lobbying disclosures ─────────────────────────────────
         if parsed.path == "/api/lobbying/search":
             q = (qs.get("q") or [""])[0].strip()
             if not q:
@@ -2728,6 +2739,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── Bill text — the versions, and the redline between two ───────────
         if parsed.path in ("/api/bill-versions", "/api/bill-diff"):
             bill_id = (qs.get("bill_id") or [""])[0]
             if not bill_id.isdigit():
@@ -2780,6 +2792,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, result)
             return
 
+        # ── Bill lookup and search, saved searches and saved views ──────────
         if parsed.path == "/api/bill":
             # Superseded by /api/search below (the merged /lookup+
             # /discover page uses that one) — left in place in case
@@ -3015,6 +3028,7 @@ class Handler(BaseHTTPRequestHandler):
     def _do_POST(self):
         parsed = urlparse(self.path)
 
+        # ── Internal refresh triggers — secret-gated, see render.yaml ───────
         if parsed.path in ("/internal/refresh-watchlist", "/internal/refresh-calaccess",
                            "/internal/build-corpus"):
             if not self._authorized_for_refresh():
@@ -3040,6 +3054,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(409, {"status": f"{job} refresh already running"})
             return
 
+        # ── The Capitol directory — the guess-then-confirm import ───────────
         if parsed.path in ("/api/directory/inspect", "/api/directory/import",
                            "/api/directory/stale", "/api/directory/staff"):
             try:
@@ -3101,6 +3116,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── The deadline calendar — same guess-then-confirm shape ───────────
         if parsed.path in ("/api/deadlines/parse", "/api/deadlines/save",
                            "/api/deadlines/delete"):
             try:
@@ -3156,6 +3172,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── Sign-up, sign-in, and account settings ──────────────────────────
         if parsed.path == "/api/signup":
             try:
                 body = self._read_json_body()
@@ -3298,6 +3315,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── Flagging a bill, and restoring an archived one ──────────────────
         if parsed.path == "/api/flag":
             try:
                 body = self._read_json_body()
@@ -3359,6 +3377,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── The firm's own lobbyists — Form 601's Part I ────────────────────
         if parsed.path == "/api/org-lobbyists":
             # The firm's roster, which is what Form 601's Part I is a list
             # of. Kept on Profile rather than inside the disclosure flow:
@@ -3385,6 +3404,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── Position letters ────────────────────────────────────────────────
         if parsed.path == "/api/letters":
             # Start a letter. The seed is built server-side from the bill
             # report this user can already see (see letter_drafts) rather
@@ -3469,6 +3489,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── Saved searches and saved views ──────────────────────────────────
         if parsed.path == "/api/saved-searches":
             # Saving a query so the daily job re-runs it (see
             # saved_searches in schema.sql). The optional client is what a
@@ -3545,6 +3566,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── Bulk flagging ───────────────────────────────────────────────────
         if parsed.path == "/api/flag-bulk":
             # Triage of a new-bill sweep is a bulk activity: a session is
             # thirty bills skimmed and four flagged. Doing that one at a
@@ -3613,6 +3635,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── Clients, bills, and the links between them ──────────────────────
         if parsed.path == "/api/clients":
             try:
                 body = self._read_json_body()
@@ -3911,6 +3934,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # ── FPPC disclosure forms — prepared, never filed ───────────────────
         if parsed.path == "/api/prepared-filings":
             try:
                 body = self._read_json_body()
@@ -4176,6 +4200,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
 
+        # ── Deletes — one route per thing that can be removed ───────────────
         if parsed.path == "/api/org-lobbyists":
             lobbyist_id = (qs.get("id") or [""])[0]
             if not lobbyist_id.isdigit():
