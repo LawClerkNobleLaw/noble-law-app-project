@@ -1,7 +1,7 @@
 
 <div class="page-head"><div><a href="/lobbying" class="sub">← Organization Search</a></div></div>
 <div id="error" role="alert" aria-live="assertive"></div>
-<div id="loading" class="show"><span class="spinner"></span>Loading…</div>
+<div id="loading" role="status" class="show"><span class="spinner"></span>Loading…</div>
 <div id="detail"></div>
 
 <script>
@@ -69,9 +69,10 @@ function addClientUrl(d) {
 
 function renderDetail(d) {
   const e = d.entity;
+  document.title = `${d.name} — Rotunda`;
   detailEl.innerHTML = `
     <div class="card">
-      <div class="bill-title">${d.name}</div>
+      <h1 class="bill-title">${d.name}</h1>
       ${e ? `
         <div style="margin-top:0.3rem">
           <span class="tag">${e.entity_type || ''}</span>

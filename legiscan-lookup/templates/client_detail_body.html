@@ -1,7 +1,7 @@
 
 <div class="page-head"><div><a href="/clients" class="sub">← Clients</a></div></div>
 <div id="error" role="alert" aria-live="assertive"></div>
-<div id="loading" class="show"><span class="spinner"></span>Loading…</div>
+<div id="loading" role="status" class="show"><span class="spinner"></span>Loading…</div>
 <div id="client"></div>
 
 <div class="card" style="margin-top:1rem">
@@ -46,13 +46,13 @@
   <div style="padding:0.8rem 1.15rem">
     <form id="add-contact-f">
       <label for="contact-name" class="sr-only">Contact name</label>
-      <input id="contact-name" placeholder="Full name" required style="flex:1;min-width:9rem">
+      <input id="contact-name" placeholder="Full name" required autocomplete="section-contact name" style="flex:1;min-width:9rem">
       <label for="contact-title" class="sr-only">Title</label>
-      <input id="contact-title" placeholder="Title (optional)" style="flex:1;min-width:8rem">
+      <input id="contact-title" placeholder="Title (optional)" autocomplete="section-contact organization-title" style="flex:1;min-width:8rem">
       <label for="contact-email" class="sr-only">Email</label>
-      <input id="contact-email" type="email" placeholder="Email (optional)" style="flex:1;min-width:9rem">
+      <input id="contact-email" type="email" placeholder="Email (optional)" autocomplete="section-contact email" style="flex:1;min-width:9rem">
       <label for="contact-phone" class="sr-only">Phone</label>
-      <input id="contact-phone" placeholder="Phone (optional)" style="flex:1;min-width:7rem">
+      <input id="contact-phone" placeholder="Phone (optional)" autocomplete="section-contact tel" style="flex:1;min-width:7rem">
       <button type="submit">Add</button>
     </form>
   </div>
@@ -325,9 +325,10 @@ notesEl.addEventListener('blur', async () => {
 function renderClient(d) {
   const c = d.client;
   currentClientName = c.name;
+  document.title = `${titleCaseName(c.name)} — Rotunda`;
   clientEl.innerHTML = `
     <div class="card">
-      <div class="bill-title">${titleCaseName(c.name)}</div>
+      <h1 class="bill-title">${titleCaseName(c.name)}</h1>
       <div class="bill-desc" style="margin-top:0.4rem">
         ${[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), formatPhone(c.bus_phone)].filter(Boolean).join(' · ') || 'No address on file'}
       </div>

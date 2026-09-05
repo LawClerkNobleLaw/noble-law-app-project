@@ -1,7 +1,7 @@
 
 <div class="page-head"><div><a href="/flagged" class="sub" id="back-link">← Flagged bills</a></div></div>
 <div id="error" role="alert" aria-live="assertive"></div>
-<div id="loading" class="skeleton show">
+<div id="loading" role="status" class="skeleton show"><span class="sr-only">Loading…</span>
   <div class="card">
     <div class="skeleton-bar" style="width:18%;height:1.4rem;margin-bottom:0.6rem"></div>
     <div class="skeleton-bar" style="width:22%;height:0.9rem;margin-bottom:0.8rem"></div>
@@ -337,7 +337,7 @@ async function unflag() {
     cost.push(`${assigned.length === 1 ? 'its assigned client and saved position' : `its ${assigned.length} assigned clients and saved positions`}`);
   }
   if (r && r.notes) cost.push('your notes');
-  const ok = await confirmDelete('Unflag this bill?', `Unflag ${label}? It stops being checked daily and moves to Archived on your flagged list${cost.length ? ` — ${cost.join(' and ')} come along` : ''}. Restore it anytime from there.`);
+  const ok = await confirmDelete('Unflag this bill?', `Unflag ${label}? It stops being checked daily and moves to Archived on your flagged list${cost.length ? ` — ${cost.join(' and ')} come along` : ''}. Restore it anytime from there.`, 'Unflag');
   if (!ok) return;
   errorEl.className = '';
   try {
@@ -387,6 +387,11 @@ async function restore() {
 
 function render(r) {
   currentReport = r;
+  // The page's identity, in the two places a browser exposes one: the
+  // tab/history/bookmark title, and the heading outline. Six to ten
+  // bills open at once before a hearing is the normal working pattern,
+  // and every one of those tabs used to read "Bill report — Rotunda".
+  document.title = `${r.state} ${r.bill_number} — Rotunda`;
   const historyRows = historyRowsHtml(r.history);
   const amendmentRows = amendmentRowsHtml(r.amendments);
   // r.upcoming_hearings, not r.hearings — this page's own field name
@@ -403,7 +408,7 @@ function render(r) {
         ${statusBadgeHtml(r.status_label || 'In progress')}
         ${r.status_date ? `<span class="status-since">since ${fmtShortDate(r.status_date)}</span>` : ''}
       </div>
-      <div class="bill-title">${r.title || ''}</div>
+      <h1 class="bill-title">${r.title || ''}</h1>
       ${r.description ? `<div class="bill-desc">${r.description}</div>` : ''}
       ${r.url ? `<a class="bill-link" href="${r.url}" target="_blank" rel="noopener">View on LegiScan →</a>` : ''}
       <div class="card-actions">

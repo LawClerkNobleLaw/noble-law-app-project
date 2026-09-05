@@ -1,9 +1,9 @@
 <div class="page-head"><div><a href="/draft/letters" class="sub">← Letters</a></div></div>
 <div id="error" role="alert" aria-live="assertive"></div>
-<div id="loading" class="show"><span class="spinner"></span>Loading…</div>
+<div id="loading" role="status" class="show"><span class="spinner"></span>Loading…</div>
 <div id="letter" hidden>
   <div class="card">
-    <div class="bill-id" id="context"></div>
+    <h1 class="bill-id" id="context"></h1>
     <label for="letter-subject" class="sub" style="display:block;margin:0.6rem 0 0.2rem">Subject line</label>
     <input id="letter-subject" style="width:100%" onblur="save()">
     <div class="card-actions">
@@ -69,6 +69,7 @@ async function load() {
     // live link to something that may have moved since.
     const bits = [data.bill_label, data.client_name].filter(Boolean);
     document.getElementById('context').textContent = bits.join(' · ') || 'No bill attached';
+    document.title = `${bits.join(' · ') || 'Letter'} — Rotunda`;
     document.getElementById('letter').hidden = false;
     loadRouting();
   } catch (err) {

@@ -149,6 +149,31 @@
     --shadow-hover: 0 18px 40px rgba(0,0,0,0.35);
   }
   * { box-sizing: border-box; }
+
+  /* One blanket honouring of the OS "reduce motion" setting, for the
+     whole stylesheet. Before this, exactly two things respected it
+     (#page-progress's transition and the toast entrance) while the
+     spinner's infinite spin, .skeleton-bar's infinite opacity pulse on
+     every list page, the nav caret rotation and every transition ran
+     regardless — and an infinite opacity loop is the specific pattern
+     that triggers vestibular discomfort.
+
+     0.01ms rather than `none`: an animation that still runs, just
+     instantly, so anything that keys off animationend (or a
+     transitionend) still fires and no state machine hangs waiting.
+     iteration-count:1 is what actually stops the two infinite ones.
+     !important because these have to beat rules anywhere below,
+     including the media-query blocks. The JS half of this lives at
+     each smooth-scroll call site — see calendar_body.html,
+     directory_body.html and disclosure_review_body.html. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
   body {
     margin: 0; background: var(--content-bg); color: var(--ink);
     font: 16px/1.5 var(--font-sans);
@@ -164,9 +189,16 @@
   /* Matches the mockup's a:hover — every plain link warms to --gold on
      hover instead of the browser default underline-only treatment. */
   a:hover { color: var(--gold); }
+  /* No border-radius here. This rule outranks the base .primary/
+     .secondary/.filter-tab/button rules (a :focus-visible pseudo-class
+     beats a bare class), so setting a radius on the *element* snapped
+     every 999px pill into a 6px rectangle the instant it took keyboard
+     focus — the one state only keyboard users ever see, and the one
+     that looked broken. Browsers already clip `outline` to the
+     element's own radius, so the declaration bought nothing. */
   a:focus-visible, button:focus-visible, input:focus-visible,
   select:focus-visible, summary:focus-visible {
-    outline: 2px solid var(--gold); outline-offset: 2px; border-radius: var(--radius-sm);
+    outline: 2px solid var(--gold); outline-offset: 2px;
   }
   ::selection { background: var(--accent-solid); color: var(--accent-solid-text); }
   .wrap { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
@@ -1007,6 +1039,24 @@
     overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
   }
 
+  /* The first focusable thing in <body> on every app_shell() page (see
+     page() in app.py). Without it, keyboard and switch users tab the
+     whole fifteen-item sidebar, the account button and the hamburger
+     again on every single navigation — and this is a plain multi-page
+     app, so that's every click. WCAG 2.4.1, Level A.
+
+     Not .sr-only + :focus: a clip-rect element is 1x1 even while
+     focused, so the revealed link has to have its own box. Parked
+     off-screen instead of display:none, because a display:none link
+     isn't focusable at all and there'd be nothing to reveal. */
+  .skip-link {
+    position: absolute; top: 0; left: -9999px; z-index: 100;
+    background: var(--accent-solid); color: var(--accent-solid-text);
+    padding: var(--space-2) var(--space-4); border-bottom-right-radius: var(--radius-md);
+    font-size: 0.85rem; font-weight: 600;
+  }
+  .skip-link:focus { left: 0; color: var(--accent-solid-text); }
+
   /* ── Dashboard ──
      The signed-in landing page. Deliberately introduces almost nothing:
      its tiles are .stat-card, its four boxes are .panel, its badges are
@@ -1197,6 +1247,31 @@
     .icon-btn, .row-menu-btn { height: 2.75rem; width: 2.75rem; }
     .panel-link { height: 2.75rem; padding: 0 1rem; }
     .side-nav-item { height: 2.75rem; }
+    /* The four rules above name five specific classes and miss the two
+       controls a touch user actually reaches for all day: the filter
+       tabs on /flagged and /lookup (~24px, and shrunk further to
+       0.2rem padding inside .filter-group) and the position select in
+       a .client-chip (padding: 0.1rem). Both are covered here by their
+       element rather than their class, along with the plain form
+       button (~35px), .filter-chip and the toast's two buttons.
+
+       min-height, not height: nothing else in this file sets it on a
+       button or select, so this reaches every one of them no matter
+       where below this point their own rule is defined or how small a
+       padding that rule gives them. (Compare this block's own comment
+       above about source order — that problem only exists between
+       rules setting the *same* property.)
+
+       Not covered on purpose: a.tag. Its clickable form is a bill
+       number inside a sentence of CAL-ACCESS free text (see
+       billPills() in LOBBYING_DETAIL_BODY), and WCAG 2.5.8 exempts a
+       target inline in a block of text — a 44px pill mid-paragraph
+       would be a regression, not a fix. */
+    button, select { min-height: 2.75rem; }
+    /* Height alone leaves this one about 16px wide: its whole content
+       is a single "×". */
+    .toast-close { min-width: 2.75rem; }
+    .client-chip select.position-select { padding: 0.35rem 1.2rem 0.35rem 0.5rem; }
   }
   .row-menu-dropdown {
     position: absolute; right: 0; top: calc(100% + 0.25rem); background: var(--surface);
@@ -1747,7 +1822,8 @@
   /* Printing a letter should produce the letter, not the app around it
      — the sidebar, topbar and every control are furniture on paper. */
   @media print {
-    .app-sidebar, .app-topbar, .card-actions, .page-head, .panel-head .sub, #error { display: none !important; }
+    .app-sidebar, .app-topbar, .card-actions, .page-head, .panel-head .sub, #error,
+    .skip-link { display: none !important; }
     .app-main { padding: 0 !important; }
     textarea.letter-body {
       border: 0; max-width: none; font-size: 0.95rem;

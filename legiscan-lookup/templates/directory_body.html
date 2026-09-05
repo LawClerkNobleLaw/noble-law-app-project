@@ -85,7 +85,7 @@
   </div>
 </div>
 
-<div id="loading" class="skeleton">
+<div id="loading" role="status" class="skeleton"><span class="sr-only">Loading…</span>
   <div class="skeleton-row"></div><div class="skeleton-row"></div><div class="skeleton-row"></div>
 </div>
 <div id="error" role="alert" aria-live="assertive"></div>
@@ -284,7 +284,11 @@ async function toggleStale(staffId, isStale) {
 function openImport() {
   document.getElementById('import-card').hidden = false;
   backToFile();
-  document.getElementById('import-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  // Opted out under reduce, same as calendar_body.html's — see there.
+  document.getElementById('import-card').scrollIntoView({
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    block: 'nearest',
+  });
 }
 function closeImport() { document.getElementById('import-card').hidden = true; }
 function backToFile() {

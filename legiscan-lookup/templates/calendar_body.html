@@ -45,7 +45,7 @@
 <div id="deadline-strip"></div>
 
 <div id="error" role="alert" aria-live="assertive"></div>
-<div id="loading"><span class="spinner"></span>Loading…</div>
+<div id="loading" role="status"><span class="spinner"></span>Loading…</div>
 <div class="filter-tabs" id="tabs"></div>
 <div id="calendar"></div>
 
@@ -206,7 +206,13 @@ function openDeadlines() {
   // A California session starts in an odd year and runs two, so the
   // session's first year is this year or last, never next.
   document.getElementById('session-year').value = year % 2 === 1 ? year : year - 1;
-  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  // 'smooth' is an explicit option, so it overrides the stylesheet's
+  // reduce block (see STYLE's prefers-reduced-motion rule) — a
+  // scripted smooth scroll has to opt out in JS or not at all.
+  card.scrollIntoView({
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    block: 'nearest',
+  });
 }
 function closeDeadlines() { document.getElementById('deadlines-card').hidden = true; }
 document.getElementById('deadlines-btn').onclick = openDeadlines;

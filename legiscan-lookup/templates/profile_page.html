@@ -22,7 +22,7 @@
   <form id="f">
     <label style="flex:1 1 100%">
       <div class="sub" style="margin:0 0 0.3rem">Legal name of firm or individual</div>
-      <input id="legal_name" required style="width:100%">
+      <input id="legal_name" required autocomplete="organization" style="width:100%">
     </label>
 
     <div style="flex:1 1 100%">
@@ -39,13 +39,13 @@
       <h2 class="section" style="margin-top:1.2rem">Business address</h2>
     </div>
     <label for="bus_addr1" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Street address</label>
-    <input id="bus_addr1" placeholder="Street address" style="flex:1 1 100%">
+    <input id="bus_addr1" placeholder="Street address" autocomplete="section-business street-address" style="flex:1 1 100%">
     <label for="bus_city" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">City</label>
-    <input id="bus_city" placeholder="City" style="flex:2">
+    <input id="bus_city" placeholder="City" autocomplete="section-business address-level2" style="flex:2">
     <label for="bus_st" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">State</label>
-    <input id="bus_st" placeholder="State" maxlength="2" style="flex:1;text-transform:uppercase">
+    <input id="bus_st" placeholder="State" maxlength="2" autocomplete="section-business address-level1" style="flex:1;text-transform:uppercase">
     <label for="bus_zip4" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">ZIP code</label>
-    <input id="bus_zip4" placeholder="ZIP" style="flex:1">
+    <input id="bus_zip4" placeholder="ZIP" autocomplete="section-business postal-code" style="flex:1">
 
     <div style="flex:1 1 100%">
       <h2 class="section" style="margin-top:1.2rem">Mailing address</h2>
@@ -55,30 +55,30 @@
     </div>
     <div id="mail_fields" style="display:none;flex:1 1 100%;gap:0.6rem;flex-wrap:wrap">
       <label for="mail_addr1" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing street address</label>
-      <input id="mail_addr1" placeholder="Street address" style="flex:1 1 100%">
+      <input id="mail_addr1" placeholder="Street address" autocomplete="section-mailing street-address" style="flex:1 1 100%">
       <label for="mail_city" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing city</label>
-      <input id="mail_city" placeholder="City" style="flex:2">
+      <input id="mail_city" placeholder="City" autocomplete="section-mailing address-level2" style="flex:2">
       <label for="mail_st" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing state</label>
-      <input id="mail_st" placeholder="State" maxlength="2" style="flex:1;text-transform:uppercase">
+      <input id="mail_st" placeholder="State" maxlength="2" autocomplete="section-mailing address-level1" style="flex:1;text-transform:uppercase">
       <label for="mail_zip4" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing ZIP code</label>
-      <input id="mail_zip4" placeholder="ZIP" style="flex:1">
+      <input id="mail_zip4" placeholder="ZIP" autocomplete="section-mailing postal-code" style="flex:1">
     </div>
 
     <div style="flex:1 1 100%">
       <h2 class="section" style="margin-top:1.2rem">Phone number</h2>
     </div>
-    <input id="bus_phone" placeholder="(916) 555-0100" style="flex:1 1 100%">
+    <input id="bus_phone" placeholder="(916) 555-0100" autocomplete="tel" style="flex:1 1 100%">
 
     <div style="flex:1 1 100%">
       <h2 class="section" style="margin-top:1.2rem">California Secretary of State filer ID <span style="text-transform:none;font-weight:400;color:var(--slate)">(optional — if you already have one)</span></h2>
     </div>
-    <input id="existing_filer_id" placeholder="e.g. 1486088" style="flex:1 1 100%">
+    <input id="existing_filer_id" placeholder="e.g. 1486088" autocomplete="off" style="flex:1 1 100%">
 
     <button type="submit" style="margin-top:1rem">Save and finish →</button>
   </form>
   </div>
 
-  <div id="loading"><span class="spinner"></span>Saving…</div>
+  <div id="loading" role="status"><span class="spinner"></span>Saving…</div>
   <div id="error" role="alert" aria-live="assertive"></div>
 </div>
 </main>

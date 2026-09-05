@@ -24,7 +24,7 @@
 
 <div class="panel" style="margin-top:1rem">
   <div class="panel-head"><div class="title">Your letters</div></div>
-  <div id="loading" class="show" style="padding:1rem 1.15rem"><span class="spinner"></span>Loading…</div>
+  <div id="loading" role="status" class="show" style="padding:1rem 1.15rem"><span class="spinner"></span>Loading…</div>
   <div id="list"></div>
 </div>
 
@@ -144,7 +144,7 @@ document.getElementById('new-letter-f').addEventListener('submit', async (e) => 
 });
 
 async function removeLetter(letterId) {
-  const ok = await confirmDelete('Delete letter?', 'Delete this letter? This can’t be undone.');
+  const ok = await confirmDelete('Delete letter?', 'Delete this letter? This can’t be undone.', 'Delete');
   if (!ok) return;
   errorEl.className = '';
   try {
