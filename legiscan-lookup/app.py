@@ -88,6 +88,7 @@ from urllib.parse import urlparse, parse_qs, quote
 
 import accounts
 import build_bill_corpus
+import code_sections
 import config
 import db
 import disclosure_fields
@@ -2654,7 +2655,31 @@ class Handler(BaseHTTPRequestHandler):
             # local control" — and the second one has no answer at
             # LegiScan, at any parameter.
             mode = (qs.get("mode") or ["summary"])[0]
-            if mode == "text":
+            if mode == "section":
+                # A citation, not a phrase. "17053.5" as words also
+                # matches every bill that merely cross-references it and
+                # every 17053.55 besides; as a citation it matches the
+                # bills that actually edit that section.
+                code, section = code_sections.parse_query(q)
+                conn = db.get_connection()
+                try:
+                    results = db.search_code_sections(conn, code=code, section=section)
+                    stats = db.corpus_stats(conn)
+                    stats.update(db.code_section_stats(conn))
+                finally:
+                    conn.close()
+                data = {
+                    "results": results,
+                    "count": len(results),
+                    "complete": True,
+                    "corpus": stats,
+                    # What the query was understood to mean. Echoed back
+                    # because "rev and tax 17053.5" is interpreted, and a
+                    # search that quietly reads a query differently than
+                    # the user meant should say so on screen.
+                    "citation": {"code": code, "section": section},
+                }
+            elif mode == "text":
                 conn = db.get_connection()
                 try:
                     results = db.search_bill_text(conn, q)

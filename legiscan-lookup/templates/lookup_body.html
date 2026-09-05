@@ -365,6 +365,7 @@ function setSessionScope(scope) {
 function setSearchMode(mode) {
   if (mode === searchMode) return;
   searchMode = mode;
+  document.getElementById('q').placeholder = placeholderForMode();
   if (currentQuery) runSearch(currentQuery, true);
 }
 
@@ -422,7 +423,20 @@ function snippetHtml(raw) {
     .replace(/\u0003/g, '</mark>');
 }
 
+// Which citations put this bill in the results — this mode's answer to
+// "why is this here", the way the snippet is full-text search's. The
+// action matters as much as the number: a client watching a section
+// cares a great deal whether a bill amends it or repeals it.
+function citationsHtml(sections) {
+  return `<div class="match-note match-citations">${sections.map(s =>
+    `<span class="cite cite-${s.action}">${escapeText(s.action)}
+       <strong>${escapeText(s.code.replace(/ Code$/, ''))} §${escapeText(s.section)}</strong>${
+       s.is_range ? `<span class="cite-range" title="Cited as a range: ${escapeText(s.citation)} — only its endpoints are indexed">range</span>` : ''}</span>`
+  ).join('')}</div>`;
+}
+
 function matchNoteHtml(row, terms) {
+  if (row.sections && row.sections.length) return citationsHtml(row.sections);
   if (row.snippet) {
     return `<div class="match-note match-snippet">${snippetHtml(row.snippet)}</div>`;
   }
@@ -547,15 +561,12 @@ function filterRailHtml() {
        aria-pressed="${sessionScope === value}" onclick="setSessionScope('${value}')">${label}</button>`
   ).join('');
 
-  const modeTabs = [['summary', 'Title & summary'], ['text', 'Full bill text']].map(([value, label]) =>
-    `<button type="button" class="filter-tab${searchMode === value ? ' active' : ''}"
-       aria-pressed="${searchMode === value}" onclick="setSearchMode('${value}')">${label}</button>`
-  ).join('');
+  const modeTabs = modeTabsHtml();
 
   // The session tabs are LegiScan's, and the corpus only holds the
   // current one — offering "All sessions" beside a text search would
   // be a control that silently does nothing.
-  const scopeGroup = searchMode === 'text'
+  const scopeGroup = searchMode !== 'summary'
     ? ''
     : `<div class="filter-group"><span class="filter-group-label">Session</span>${sessionTabs}</div>`;
 
@@ -608,7 +619,17 @@ function sessionLabel(year) {
 function renderRows() {
   const all = currentResults;
   if (!all.length) {
-    resultsEl.innerHTML = '<p class="empty">No bills match that search. Try a broader term, check the spelling, or a different bill number.</p>';
+    // The mode tabs stay, and the notices with them. A zero-result
+    // search is the moment the user most needs to change WHERE they
+    // searched, and dropping the tabs here left them with a message
+    // about spelling and no way back to another index. The two
+    // notices are what say which kind of empty this is — an
+    // unreadable citation, or a corpus that hasn't reached this bill.
+    resultsEl.innerHTML = `
+      ${citationNoticeHtml()}
+      ${corpusNoticeHtml()}
+      ${searchMode === 'summary' ? '' : modeFiltersHtml()}
+      <p class="empty">${emptyMessageForMode()}</p>`;
     return;
   }
   const rows = visibleRows();
@@ -657,6 +678,7 @@ function renderRows() {
     : `${all.length.toLocaleString()} bill${all.length === 1 ? '' : 's'} match`;
 
   resultsEl.innerHTML = `
+    ${citationNoticeHtml()}
     ${corpusNoticeHtml()}
     ${truncationHtml()}
     ${filterRailHtml()}
@@ -710,7 +732,74 @@ function emptyFilterHtml() {
 // identical on an empty results page and mean opposite things.
 const SESSION_BILL_ESTIMATE = 4243;
 
+const SEARCH_MODES = [['summary', 'Title & summary'], ['text', 'Full bill text'],
+                      ['section', 'Code section']];
+
+function modeTabsHtml() {
+  return SEARCH_MODES.map(([value, label]) =>
+    `<button type="button" class="filter-tab${searchMode === value ? ' active' : ''}"
+       aria-pressed="${searchMode === value}" onclick="setSearchMode('${value}')">${label}</button>`
+  ).join('');
+}
+
+// Just the "Search in" group, for the zero-result state where the rest
+// of the filter bar has nothing to filter.
+function modeFiltersHtml() {
+  return `<div class="search-filters">
+    <div class="filter-group"><span class="filter-group-label">Search in</span>${modeTabsHtml()}</div>
+  </div>`;
+}
+
+// A zero-result search means something different per mode, and the
+// generic advice ("check the spelling") is actively wrong in two of
+// them: a citation search doesn't have spelling, and a text search
+// that found nothing may simply not hold the bill yet.
+function emptyMessageForMode() {
+  if (searchMode === 'section') {
+    const cite = searchMeta.citation || {};
+    if (!cite.code && !cite.section) return 'Enter a code section to search for.';
+    return 'No indexed bill adds, amends or repeals that section.';
+  }
+  if (searchMode === 'text') {
+    return 'No indexed bill uses those words. Try fewer of them, or search titles and summaries.';
+  }
+  return 'No bills match that search. Try a broader term, check the spelling, or a different bill number.';
+}
+
+// What the search box should say it wants, which is different per mode.
+function placeholderForMode() {
+  if (searchMode === 'section') return 'e.g. 17053.5, or Health and Safety 39617.2';
+  if (searchMode === 'text') return 'e.g. local control, "state-mandated local program"';
+  return 'e.g. SB122, or housing element, cannabis licensing…';
+}
+
+// A citation search is interpreted — "rev and tax 17053.5" is read as a
+// code plus a section — so it says what it understood. A query it could
+// make nothing of says that instead of returning a confusing zero.
+function citationNoticeHtml() {
+  if (searchMode !== 'section' || !searchMeta.citation) return '';
+  const { code, section } = searchMeta.citation;
+  if (!code && !section) {
+    return `<div class="result-truncated">That doesn't look like a code citation.
+      Try a section number (<code>17053.5</code>), a code name
+      (<code>Health and Safety Code</code>), or both.</div>`;
+  }
+  const read = [code, section ? '\u00a7' + section : ''].filter(Boolean).join(' ');
+  return `<div class="result-note">Bills that add, amend or repeal
+    <strong>${escapeText(read)}</strong>${code && !section ? ' — every section of it' : ''}${
+    !code && section ? ', in any code' : ''}.</div>`;
+}
+
 function corpusNoticeHtml() {
+  if (searchMode === 'section') {
+    if (!searchMeta.corpus || !searchMeta.corpus.parsed) return '';
+    const parsed = searchMeta.corpus.parsed;
+    if (parsed >= SESSION_BILL_ESTIMATE) return '';
+    return `<div class="result-truncated">Citations are indexed for
+      ${parsed.toLocaleString()} bills — about
+      ${Math.round((parsed / SESSION_BILL_ESTIMATE) * 100)}% of the session.
+      The rest aren't indexed yet, so this isn't the whole answer.</div>`;
+  }
   if (searchMode !== 'text' || !searchMeta.corpus) return '';
   const held = searchMeta.corpus.bills || 0;
   if (!held) {

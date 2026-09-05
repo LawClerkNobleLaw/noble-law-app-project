@@ -1487,6 +1487,35 @@
     overflow: hidden;
   }
 
+  /* The citations that put a bill in a code-section search. Set as
+     chips rather than prose because they are read by scanning — "does
+     this one amend or repeal my section" is the question, and the verb
+     is what the eye needs to land on first. */
+  .match-citations { font-style: normal; display: flex; flex-wrap: wrap; gap: 0.3rem; }
+  .cite {
+    display: inline-flex; align-items: baseline; gap: 0.3rem;
+    border: 1px solid var(--rule); border-radius: var(--radius-sm);
+    padding: 0.05rem 0.35rem; font-size: 0.7rem; color: var(--slate);
+  }
+  .cite strong { color: var(--ink); font-weight: 600; }
+  /* Repeal reads as the consequential one, so it carries the warn tone;
+     add and amend stay quiet. Colour is not the only signal — the verb
+     is written out in each chip — so this stays readable to anyone who
+     can't tell the three apart. */
+  .cite-repeal { border-color: var(--warn); background: var(--warn-soft); }
+  .cite-range {
+    font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.03em;
+    border: 1px solid var(--rule); border-radius: var(--radius-sm);
+    padding: 0 0.2rem; cursor: help;
+  }
+
+  /* Quieter than .result-truncated: that one is a warning about
+     incomplete results, this one just restates how a query was read. */
+  .result-note {
+    background: var(--accent-soft); color: var(--ink); border-radius: var(--radius-md);
+    padding: var(--space-2) 0.75rem; margin-bottom: 0.75rem; font-size: 0.8rem;
+  }
+
   /* A button that has to read as a link because it sits mid-sentence.
      Kept a <button> so it is reachable and announced as the action it
      is, rather than an <a href="#"> that goes nowhere. */

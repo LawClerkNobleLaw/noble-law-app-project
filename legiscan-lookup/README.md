@@ -135,8 +135,8 @@ this folder and in `calaccess-pipeline/`) — independent scripts that open
 the database file directly, which only works because everything's on one
 Mac sharing one local file. There are three: the watch-list refresh
 (3x/day), the CAL-ACCESS pipeline (daily), and the bill-corpus top-up
-(`build_bill_corpus.py`, nightly at 3am) that keeps full-text search
-current.
+(`build_bill_corpus.py`, nightly at 3am) that keeps full-text and
+code-section search current.
 
 **Hosted (see below)**, that local mechanism doesn't apply — Render's Cron
 Job service type can't attach a persistent disk at all, so a cron job
