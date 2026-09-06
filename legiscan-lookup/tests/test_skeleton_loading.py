@@ -54,3 +54,64 @@ def test_flagged_body_skeleton_matches_its_own_five_columns():
     after_open = app.FLAGGED_BODY.split('id="loading"', 1)[1].split(">", 1)[1]
     first_row = after_open.split("</div></div>")[0]
     assert first_row.count('skeleton-bar') == 5
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Tier 3, row 25 of the UX audit (P2): the rollout finished. Six pages
+# had a skeleton; the other eleven showed a centred spinner and then
+# swapped in a whole table or form, which is the layout shift the
+# skeleton work existed to remove — still in place on the frequent-visit
+# pages (client detail, the letter editor, the disclosure review).
+# ══════════════════════════════════════════════════════════════════════
+
+import glob
+import os
+
+import pytest
+
+TEMPLATES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
+
+
+def _template_paths():
+    return sorted(glob.glob(os.path.join(TEMPLATES, "*.html")))
+
+
+def test_a_spinner_means_an_action_never_a_page_arriving():
+    """The rule the rollout leaves behind, and the reason it is worth a
+    test: a spinner is right for "Saving…", "Generating…", "Logging
+    in…" — an action the user started, of unknown length, with the page
+    already on screen. It is wrong as a page's first content, where it
+    says only "something is coming" about a layout the server already
+    knows the shape of."""
+    for path in _template_paths():
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        assert '<span class="spinner"></span>Loading…' not in text, os.path.basename(path)
+
+
+# The pages the audit named, plus the disclosure review, by the constant
+# each one is rendered into. Named rather than globbed: the point is
+# that each of these specific pages got one, and a glob would pass while
+# any of them silently lost it.
+SKELETON_BODIES = [
+    "ARCHIVED_BODY", "CALENDAR_BODY", "LETTERS_BODY", "SPONSOR_ROLLUP_BODY",
+    "CLIENTS_BODY", "DISCLOSURES_BODY", "CLIENT_DETAIL_BODY", "LETTER_EDIT_BODY",
+    "LOBBYING_DETAIL_BODY", "PROFILE_BODY", "DISCLOSURE_REVIEW_BODY",
+]
+
+
+@pytest.mark.parametrize("name", SKELETON_BODIES)
+def test_every_page_arrives_in_the_shape_of_its_own_content(name):
+    body = getattr(app, name)
+    assert 'class="skeleton-bar"' in body, name
+
+
+@pytest.mark.parametrize("name", ["CLIENTS_BODY", "DISCLOSURES_BODY"])
+def test_the_two_lists_that_had_no_loading_state_start_as_one(name):
+    """These two are the odd pair: their #loading was a SAVE indicator
+    ("Saving…" / "Generating…"), so the list itself simply appeared with
+    nothing before it. The placeholder is the list's own starting
+    content instead, which render() overwrites like any other render."""
+    body = getattr(app, name)
+    after_list = body.split('<div id="list">', 1)[1]
+    assert 'class="skeleton-row"' in after_list.split("</div>\n  </div>", 1)[0], name

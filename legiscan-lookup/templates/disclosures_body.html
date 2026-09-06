@@ -33,7 +33,12 @@
 
 <div class="panel" style="margin-top:1rem">
   <div class="panel-head"><h2 class="title">Your prepared filings</h2></div>
-  <div id="list"></div>
+  <!-- Same as CLIENTS_BODY: #loading above says "Generating…" for a
+       form submit, and the filings list itself had no loading state
+       at all. render() overwrites this on arrival. -->
+  <div id="list">
+    <div role="status"><span class="sr-only">Loading…</span>{{skeleton_rows}}</div>
+  </div>
 </div>
 
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
@@ -137,6 +142,9 @@ async function load() {
     renderStats(rows);
     render(rows);
   } catch (err) {
+    // See CLIENTS_BODY's load(): the list starts as a skeleton, so an
+    // error has to take it down.
+    listEl.innerHTML = '';
     errorEl.textContent = err.message;
     errorEl.className = 'show';
   }
