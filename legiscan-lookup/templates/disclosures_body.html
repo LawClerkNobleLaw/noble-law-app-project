@@ -11,14 +11,14 @@
 <div class="card">
   <form id="f">
     <label style="flex:1 1 100%">
-      <div class="sub" style="margin:0 0 0.3rem">Which form do you need?</div>
+      <div class="field-label">Which form do you need?</div>
       <select id="form_type" style="width:100%">
         <option value="601">Form 601 — Lobbying Firm Registration Statement</option>
         <option value="" disabled>More forms coming later</option>
       </select>
     </label>
     <label id="period_row" style="flex:1 1 100%;display:none">
-      <div class="sub" style="margin:1rem 0 0.3rem">Reporting period</div>
+      <div class="field-label" style="margin-top:1rem">Reporting period</div>
       <input id="period_label" style="width:100%">
     </label>
     <div id="period_note" class="sub" style="flex:1 1 100%;margin:0.6rem 0 0">
@@ -32,7 +32,7 @@
 <div id="error" role="alert" aria-live="assertive"></div>
 
 <div class="panel" style="margin-top:1rem">
-  <div class="panel-head"><div class="title">Your prepared filings</div></div>
+  <div class="panel-head"><h2 class="title">Your prepared filings</h2></div>
   <div id="list"></div>
 </div>
 
@@ -183,7 +183,7 @@ function render(rows) {
   listEl.innerHTML = `
     <div style="overflow-x:auto">
     <table>
-      <thead><tr><th>Form</th><th>Due</th><th>Status</th><th>Created</th><th></th></tr></thead>
+      <thead><tr><th scope="col">Form</th><th scope="col">Due</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col"></th></tr></thead>
       <tbody>
       ${rows.map(r => {
         const meta = FORM_META[r.form_type];

@@ -17,14 +17,14 @@
   <div class="card">
     <form id="f" style="margin:0">
       <label style="flex:1 1 100%">
-        <div class="sub" style="margin:0 0 0.3rem">Email</div>
+        <div class="field-label">Email</div>
         <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required style="width:100%">
       </label>
       <label style="flex:1 1 100%">
-        <div class="sub" style="margin:0 0 0.3rem">Password</div>
+        <div class="field-label">Password</div>
         <div style="display:flex;gap:0.5rem">
           <input id="password" type="password" autocomplete="current-password" required style="width:100%">
-          <button type="button" id="toggle-password" class="secondary" aria-pressed="false" style="flex:none">Show</button>
+          <button type="button" id="toggle-password" class="secondary" aria-pressed="false" aria-label="Show password" style="flex:none">Show</button>
         </div>
       </label>
       <button type="submit">Log in</button>
@@ -43,6 +43,10 @@ togglePasswordBtn.addEventListener('click', () => {
   const show = passwordInput.type === 'password';
   passwordInput.type = show ? 'text' : 'password';
   togglePasswordBtn.textContent = show ? 'Hide' : 'Show';
+  // The visible word stays one word; the accessible name says what it
+  // is a word about. Out of context "Show, toggle button" is a button
+  // that shows something unspecified.
+  togglePasswordBtn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
   togglePasswordBtn.setAttribute('aria-pressed', show ? 'true' : 'false');
 });
 const form = document.getElementById('f');

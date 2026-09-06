@@ -809,10 +809,12 @@ def app_shell(current, body):
     # that re-targeting lands on one of its children).
     def render_group(label, icon, children):
         has_current = any(href == current for href, _, _ in children)
-        child_html = "".join(
-            f'<li><a href="{href}" data-nav="{href}" class="side-nav-item child{" active" if href == current else ""}">{c_icon}{c_label}</a></li>'
-            for href, c_label, c_icon in children
-        )
+        def child_li(href, c_label, c_icon):
+            active = " active" if href == current else ""
+            aria = ' aria-current="page"' if href == current else ""
+            return (f'<li><a href="{href}" data-nav="{href}" class="side-nav-item child{active}"{aria}>'
+                    f'{c_icon}{c_label}</a></li>')
+        child_html = "".join(child_li(*c) for c in children)
         caret = ('<span class="nav-caret"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" '
                  'stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 5l8 7-8 7"/></svg></span>')
         return (
@@ -828,12 +830,17 @@ def app_shell(current, body):
         row shape .side-nav-parent borrows, minus the caret."""
         if isinstance(target, str):
             active = " active" if target == current else ""
-            return (f'<li><a href="{target}" data-nav="{target}" class="side-nav-item{active}">'
+            aria = ' aria-current="page"' if target == current else ""
+            return (f'<li><a href="{target}" data-nav="{target}" class="side-nav-item{active}"{aria}>'
                     f'{icon}<span>{label}</span></a></li>')
         return render_group(label, icon, target)
 
     nav_html = "".join(render_item(label, icon, target) for label, icon, target in SHELL_NAV_ITEMS)
     profile_active = " active" if current == "/profile" else ""
+    # .active is a background colour; aria-current is the same fact for
+    # anyone who can't see it. Both are set together everywhere they're
+    # set at all — including REPORT_BODY's client-side re-targeting.
+    profile_current = ' aria-current="page"' if current == "/profile" else ""
     return f"""
 <div class="app-shell">
   <div class="app-sidebar-backdrop" id="shell-sidebar-backdrop"></div>
@@ -848,7 +855,7 @@ def app_shell(current, body):
       <ul>{nav_html}</ul>
       <div class="side-nav-label">Account</div>
       <ul>
-        <li><a href="/profile" class="side-nav-item{profile_active}">
+        <li><a href="/profile" class="side-nav-item{profile_active}"{profile_current}>
           <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
             <circle cx="7" cy="4.5" r="2.2"/><path d="M2.5 12c0-2.2 2-4 4.5-4s4.5 1.8 4.5 4" stroke-linecap="round"/>
           </svg>
@@ -905,13 +912,22 @@ def app_shell(current, body):
   const sidebar = document.getElementById('shell-sidebar');
   const backdrop = document.getElementById('shell-sidebar-backdrop');
   const menuBtn = document.getElementById('shell-menu-btn');
+  // Links inside a collapsed .nav-subitems and buttons inside the closed
+  // .app-account-menu are in the sidebar's DOM but display:none, and
+  // .focus() on a display:none element silently no-ops — so collecting
+  // them made first and last unreachable and broke the wrap-around in
+  // the one place this app does trap focus. offsetParent is null for
+  // anything display:none'd, itself or by an ancestor.
+  const focusablesIn = (el) =>
+    Array.from(el.querySelectorAll('a, button')).filter(
+      (n) => n.offsetParent !== null && !n.disabled);
   const setSidebarOpen = (open) => {{
     sidebar.classList.toggle('show', open);
     backdrop.classList.toggle('show', open);
     menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
     document.body.style.overflow = open ? 'hidden' : '';
     if (open) {{
-      const firstFocusable = sidebar.querySelector('a, button');
+      const firstFocusable = focusablesIn(sidebar)[0];
       if (firstFocusable) firstFocusable.focus();
     }}
   }};
@@ -925,7 +941,10 @@ def app_shell(current, body):
       return;
     }}
     if (e.key === 'Tab') {{
-      const focusable = sidebar.querySelectorAll('a, button');
+      // Recomputed per keystroke, not cached on open: expanding a nav
+      // group while the drawer is open changes what's actually
+      // focusable inside it.
+      const focusable = focusablesIn(sidebar);
       if (!focusable.length) return;
       const first = focusable[0], last = focusable[focusable.length - 1];
       if (e.shiftKey && document.activeElement === first) {{ e.preventDefault(); last.focus(); }}

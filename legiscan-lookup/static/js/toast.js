@@ -22,18 +22,57 @@ const TOAST_TIMEOUT_MS = 9000;
 let toastEl = null;
 let toastTimer = null;
 
+/* The announcement and the picture of the announcement are two
+ * different elements now.
+ *
+ * showToast() used to build one div, put role="status" on it, fill it
+ * in and then append it — a live region created in the same tick as
+ * its own content, which NVDA and JAWS routinely miss. That made the
+ * undo confirmation unreliable for exactly the users who most need it
+ * stated out loud. This container is empty, off-screen and in the DOM
+ * from the moment the script runs, so by the time anything is written
+ * into it the screen reader has already been watching it. The visible
+ * .toast stays what it was, minus the role.
+ */
+let toastLiveRegion = null;
+
+function liveRegion() {
+  if (toastLiveRegion) return toastLiveRegion;
+  toastLiveRegion = document.createElement('div');
+  toastLiveRegion.id = 'toast-live-region';
+  toastLiveRegion.className = 'sr-only';
+  toastLiveRegion.setAttribute('role', 'status');
+  toastLiveRegion.setAttribute('aria-live', 'polite');
+  document.body.appendChild(toastLiveRegion);
+  return toastLiveRegion;
+}
+
+// document.body exists by the time this runs — every page loads its
+// scripts at the end of the body, not in <head>. The readyState guard
+// is for the one caller that ever changes that.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', liveRegion);
+} else {
+  liveRegion();
+}
+
 function dismissToast() {
   if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
   if (toastEl) { toastEl.remove(); toastEl = null; }
+  // Cleared so the next identical message is a change to the region's
+  // text and gets announced again — two Undos in a row otherwise write
+  // the same string and the second one is silent.
+  liveRegion().textContent = '';
 }
 
 /* showToast('Anthropic PBC set to Oppose on CA SB1159', {
  *   actionLabel: 'Undo', onAction: () => ...,
  * })
  *
- * role="status" rather than an alert: this is confirmation of something
- * the user just did on purpose, and it should be announced without
- * interrupting whatever they're doing next.
+ * Announced through the persistent role="status" region above rather
+ * than an alert: this is confirmation of something the user just did on
+ * purpose, and it should be announced without interrupting whatever
+ * they're doing next.
  */
 function showToast(message, options) {
   const opts = options || {};
@@ -41,8 +80,6 @@ function showToast(message, options) {
 
   toastEl = document.createElement('div');
   toastEl.className = 'toast';
-  toastEl.setAttribute('role', 'status');
-  toastEl.setAttribute('aria-live', 'polite');
 
   const text = document.createElement('span');
   text.className = 'toast-text';
@@ -73,6 +110,12 @@ function showToast(message, options) {
   toastEl.appendChild(close);
 
   document.body.appendChild(toastEl);
+
+  // After the toast is on screen, so the button the announcement talks
+  // about exists by the time anyone goes looking for it.
+  liveRegion().textContent = opts.actionLabel
+    ? `${message} ${opts.actionLabel} available.`
+    : message;
 
   // Nine seconds, not the usual three or four: the whole point is the
   // undo, and noticing you picked the wrong client's position takes

@@ -10,9 +10,12 @@
 <div class="stat-grid" id="stats"></div>
 
 <div class="card" id="form-card" style="display:none">
+  <!-- Which of these fourteen fields are mandatory used to be
+       discoverable only by submitting. One is. -->
+  <p class="sub req-legend"><span class="req" aria-hidden="true">*</span> Required. Everything else can wait.</p>
   <form id="f">
     <label style="flex:1 1 100%;position:relative">
-      <div class="sub" style="margin:0 0 0.3rem">Client / employer name</div>
+      <div class="field-label">Client / employer name <span class="req" aria-hidden="true">*</span></div>
       <input id="name" required style="width:100%" autocomplete="off">
       <div id="name-autofill-dropdown" class="autofill-dropdown" style="top:100%;left:0;right:0;width:auto"></div>
     </label>
@@ -21,24 +24,40 @@
       <h2 class="section" style="margin-top:1.2rem">Business address</h2>
       <p class="sub" id="name-autofill-note" style="margin:0.2rem 0 0;display:none">Prefilled from CAL-ACCESS — edit anything below if it looks wrong.</p>
     </div>
-    <label for="bus_addr1" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Street address</label>
-    <input id="bus_addr1" placeholder="Street address" autocomplete="section-client street-address" style="flex:1 1 100%">
-    <label for="bus_city" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">City</label>
-    <input id="bus_city" placeholder="City" autocomplete="section-client address-level2" style="flex:2">
-    <label for="bus_st" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">State</label>
-    <input id="bus_st" placeholder="State" maxlength="2" autocomplete="section-client address-level1" style="flex:1;text-transform:uppercase">
-    <label for="bus_zip4" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">ZIP code</label>
-    <input id="bus_zip4" placeholder="ZIP" autocomplete="section-client postal-code" style="flex:1">
-    <label for="bus_phone" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Phone</label>
-    <input id="bus_phone" placeholder="Phone — e.g. (916) 555-0100" autocomplete="section-client tel" style="flex:1 1 100%">
+    <!-- Wrapping <label> with a visible .field-label, the same shape as
+         "Client / employer name" above, rather than the clipped labels
+         these used to carry: the placeholder was the only visible cue
+         and it disappears on the first keystroke, so a half-filled
+         client record read as a column of values with nothing saying
+         which was which. -->
+    <label style="flex:1 1 100%">
+      <div class="field-label">Street address</div>
+      <input id="bus_addr1" autocomplete="section-client street-address" style="width:100%">
+    </label>
+    <label style="flex:2">
+      <div class="field-label">City</div>
+      <input id="bus_city" autocomplete="section-client address-level2" style="width:100%">
+    </label>
+    <label style="flex:1">
+      <div class="field-label">State</div>
+      <input id="bus_st" maxlength="2" autocomplete="section-client address-level1" style="width:100%;text-transform:uppercase">
+    </label>
+    <label style="flex:1">
+      <div class="field-label">ZIP code</div>
+      <input id="bus_zip4" autocomplete="section-client postal-code" style="width:100%">
+    </label>
+    <label style="flex:1 1 100%">
+      <div class="field-label">Phone</div>
+      <input id="bus_phone" placeholder="e.g. (916) 555-0100" autocomplete="section-client tel" style="width:100%">
+    </label>
 
     <label style="flex:1 1 100%">
-      <div class="sub" style="margin:1.2rem 0 0.3rem">Description of the client's industry or interests</div>
+      <div class="field-label" style="margin-top:1.2rem">Description of the client's industry or interests</div>
       <textarea id="interests" rows="2" style="width:100%"></textarea>
     </label>
 
     <label style="flex:1 1 100%">
-      <div class="sub" style="margin:1.2rem 0 0.3rem">California Secretary of State filer ID <span style="font-weight:400">(optional — if you know it)</span></div>
+      <div class="field-label" style="margin-top:1.2rem">California Secretary of State filer ID <span style="font-weight:400">(optional — if you know it)</span></div>
       <input id="existing_filer_id" placeholder="e.g. 1486088" style="width:100%">
     </label>
 
@@ -46,15 +65,15 @@
       <h2 class="section" style="margin-top:1.2rem">For disclosure forms <span style="font-weight:400;text-transform:none">(optional — used to pre-fill Form 601, see /disclosures)</span></h2>
     </div>
     <label style="flex:1">
-      <div class="sub" style="margin:0 0 0.3rem">Effective date</div>
+      <div class="field-label">Effective date</div>
       <input id="effective_date" type="date" style="width:100%">
     </label>
     <label style="flex:1">
-      <div class="sub" style="margin:0 0 0.3rem">Period of contract</div>
+      <div class="field-label">Period of contract</div>
       <input id="contract_period" placeholder="e.g. Ongoing, or a date range" style="width:100%">
     </label>
     <label style="flex:1 1 100%">
-      <div class="sub" style="margin:1.2rem 0 0.3rem">Agencies to be lobbied on this client's behalf</div>
+      <div class="field-label" style="margin-top:1.2rem">Agencies to be lobbied on this client's behalf</div>
       <textarea id="agencies_lobbied" rows="2" style="width:100%"></textarea>
     </label>
     <!-- Two inputs rather than one "$5,000/month" box: the quarterly
@@ -62,11 +81,11 @@
          glued to it can't be added up. See the clients table in
          schema.sql. -->
     <label style="flex:1">
-      <div class="sub" style="margin:1.2rem 0 0.3rem">Compensation</div>
+      <div class="field-label" style="margin-top:1.2rem">Compensation</div>
       <input id="compensation_amount" inputmode="decimal" placeholder="e.g. 5000" style="width:100%">
     </label>
     <label style="flex:1">
-      <div class="sub" style="margin:1.2rem 0 0.3rem">Per</div>
+      <div class="field-label" style="margin-top:1.2rem">Per</div>
       <select id="compensation_period" style="width:100%">
         <option value="monthly">Month</option>
         <option value="quarterly">Quarter</option>
@@ -90,7 +109,7 @@
 <div id="error" role="alert" aria-live="assertive"></div>
 
 <div class="panel">
-  <div class="panel-head"><div class="title">Your clients</div></div>
+  <div class="panel-head"><h2 class="title">Your clients</h2></div>
   <div id="list"></div>
 </div>
 
@@ -408,7 +427,7 @@ function render(rows) {
   listEl.innerHTML = `
     <div style="overflow-x:auto">
     <table>
-      <thead><tr><th>Name</th><th>Business address</th><th>Industry / interests</th><th>Filer ID</th><th></th></tr></thead>
+      <thead><tr><th scope="col">Name</th><th scope="col">Business address</th><th scope="col">Industry / interests</th><th scope="col">Filer ID</th><th scope="col"></th></tr></thead>
       <tbody>
       ${rows.map(c => `
         <tr>

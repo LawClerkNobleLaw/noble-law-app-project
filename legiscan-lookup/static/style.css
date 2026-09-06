@@ -197,7 +197,8 @@
      that looked broken. Browsers already clip `outline` to the
      element's own radius, so the declaration bought nothing. */
   a:focus-visible, button:focus-visible, input:focus-visible,
-  select:focus-visible, summary:focus-visible {
+  select:focus-visible, summary:focus-visible, textarea:focus-visible,
+  details:focus-visible, [tabindex]:focus-visible {
     outline: 2px solid var(--gold); outline-offset: 2px;
   }
   ::selection { background: var(--accent-solid); color: var(--accent-solid-text); }
@@ -277,6 +278,17 @@
   }
   h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
   .sub { color: var(--slate); margin: 0 0 2rem; font-size: 0.92rem; }
+  /* Every form label in the app used to be a .sub — the same treatment
+     as page subtitles, help text and metadata — so on the client and
+     profile forms the label and its own help text rendered identically
+     and the eye couldn't separate "what this field is" from "what to
+     type in it". --ink at 600 gives the label the weight; .sub stays
+     what it always was, for the sentence underneath. Modelled on the
+     .pref-check-text / .pref-check-sub pair further down. */
+  .field-label {
+    color: var(--ink); font-weight: 600; font-size: 0.82rem;
+    margin: 0 0 0.3rem; letter-spacing: -0.005em;
+  }
   /* Signup's own 2-step progress — two dots rather than a full wizard
      bar, since it's only ever these two steps (account, then profile
      details). Sits inline with the existing "Step 1 of 2" copy rather
@@ -521,7 +533,7 @@
     border-radius: 18px; padding: var(--space-5); width: 100%; max-width: 26rem; max-height: 90vh; overflow-y: auto;
   }
   .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-4); }
-  .modal-head .title { font-size: 1.05rem; font-weight: 700; }
+  .modal-head .title { font-size: 1.05rem; font-weight: 700; margin: 0; }
   .modal-head .sub { font-size: 0.82rem; color: var(--slate); margin-top: 0.2rem; }
   .modal-panel form { margin: 0; flex-direction: column; gap: var(--space-3); }
   .modal-panel label { display: block; }
@@ -898,8 +910,20 @@
     display: flex; align-items: center; justify-content: space-between; gap: 1rem;
     padding: 1rem var(--space-4); border-bottom: 1px solid var(--rule);
   }
-  .panel-head .title { font-size: 0.95rem; font-weight: 600; letter-spacing: -0.005em; }
+  /* An <h2> since the UX audit's A2 — every panel heading in the app
+     was a styled div, which left the product with essentially no
+     heading outline for anyone navigating by heading. margin:0 and the
+     font-size here are what keep an h2 rendering exactly as the div
+     did; without them the browser's own h2 defaults reshape every
+     panel head in the app. */
+  .panel-head .title { font-size: 0.95rem; font-weight: 600; letter-spacing: -0.005em; margin: 0; }
   .panel-head .sub { font-size: 0.75rem; color: var(--slate); margin-top: 0.15rem; }
+  /* Wraps to its own line under the controls it explains rather than
+     competing with them for the row. */
+  .panel-head .control-hint {
+    flex: 1 1 100%; margin: 0; font-size: 0.72rem; text-align: right; max-width: 34rem;
+    margin-left: auto;
+  }
   .panel-link {
     height: 1.75rem; display: flex; align-items: center; gap: var(--space-1); border-radius: var(--radius-md);
     border: 1px solid var(--rule); background: var(--accent-soft); color: var(--slate);
@@ -1738,7 +1762,16 @@
   /* The asterisk carries a title, because a red glyph on its own means
      "required" only to someone who already knows that convention — and
      it is the one cue on this screen that is otherwise colour alone. */
-  .req { color: var(--error); font-weight: 700; cursor: help; }
+  /* No cursor:help any more — the asterisk carried its own explanation
+     in a title= that never appeared on a phone. Every form that uses it
+     now states what it means once, in a .req-legend above the fields. */
+  .req { color: var(--error); font-weight: 700; }
+  .req-legend { font-size: 0.78rem; margin: 0 0 0.9rem; }
+  /* The signup password hint, once it knows whether it's been met.
+     --good/--error rather than colour alone: the ✓ and the reworded
+     sentence carry the state on their own. */
+  .hint-met { color: var(--good); }
+  .hint-unmet { color: var(--error); }
   .field-block.has-issue input { border-color: var(--error); }
   .field-issue { font-size: 0.76rem; color: var(--error); margin-top: 0.25rem; }
 

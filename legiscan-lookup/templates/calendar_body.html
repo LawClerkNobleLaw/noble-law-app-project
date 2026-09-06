@@ -22,16 +22,16 @@
   </p>
   <div class="import-row">
     <label>
-      <div class="sub" style="margin:0 0 0.3rem">These dates fall in</div>
+      <div class="field-label">These dates fall in</div>
       <input type="number" id="deadline-year" min="2000" max="2100" step="1" style="width:7rem">
     </label>
     <label>
-      <div class="sub" style="margin:0 0 0.3rem">Session starts</div>
+      <div class="field-label">Session starts</div>
       <input type="number" id="session-year" min="2000" max="2100" step="1" style="width:7rem">
     </label>
   </div>
   <label>
-    <div class="sub" style="margin:0.6rem 0 0.3rem">The calendar</div>
+    <div class="field-label" style="margin-top:0.6rem">The calendar</div>
     <textarea id="deadline-paste" rows="7" style="width:100%"
       placeholder="Jan. 31 Last day for each house to pass bills introduced in that house in the odd-numbered year.&#10;May 29 Last day for each house to pass bills introduced in that house.&#10;Aug. 31 Last day for each house to pass bills."></textarea>
   </label>
@@ -137,7 +137,7 @@ function render() {
   calendarEl.innerHTML = groups.map(g => `
     <div class="panel" style="margin-bottom:1rem">
       <div class="panel-head">
-        <div class="title">${fmtDay(g.key)}</div>
+        <h2 class="title">${fmtDay(g.key)}</h2>
         ${activeView === 'upcoming' ? dayBadge(g.key) : ''}
       </div>
       <div>
@@ -234,7 +234,7 @@ document.getElementById('deadline-read').onclick = async () => {
         ? `<div class="result-truncated">${escDl(data.warnings.join(' '))}</div>` : ''}
       ${parsedDeadlines.length ? `
         <div class="table-scroll" style="max-height:20rem">
-          <table><thead><tr><th>Date</th><th>Category</th><th>Deadline</th></tr></thead>
+          <table><thead><tr><th scope="col">Date</th><th scope="col">Category</th><th scope="col">Deadline</th></tr></thead>
           <tbody>${parsedDeadlines.map(d => `
             <tr><td>${escDl(d.date)}</td>
                 <td><span class="cite">${escDl(KIND_LABELS[d.kind] || d.kind)}</span></td>
@@ -299,7 +299,7 @@ async function loadDeadlines() {
       <div class="panel deadline-panel" style="margin-bottom:1rem">
         <div class="panel-head">
           <div>
-            <div class="title">Legislative deadlines</div>
+            <h2 class="title">Legislative deadlines</h2>
             <div class="sub">${upcoming.length
               ? `${upcoming.length} still ahead this session`
               : 'All of this session\u2019s deadlines have passed'}</div>

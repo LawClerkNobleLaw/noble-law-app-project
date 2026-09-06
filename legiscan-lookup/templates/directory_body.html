@@ -33,7 +33,7 @@
       <span class="sub">or paste below</span>
     </div>
     <label>
-      <div class="sub" style="margin:0.6rem 0 0.3rem">Paste rows (including the header row)</div>
+      <div class="field-label" style="margin-top:0.6rem">Paste rows (including the header row)</div>
       <textarea id="csv-paste" rows="5" style="width:100%"
         placeholder="Legislator,District,Party,Chief of Staff,Appropriations,Health&#10;Buffy Wicks,AD-14,D,K. Alvarez,J. Ramirez,J. Ramirez"></textarea>
     </label>
@@ -48,14 +48,14 @@
     <div class="table-scroll">
       <table id="map-table">
         <thead>
-          <tr><th>Column</th><th>What it is</th><th>First rows</th></tr>
+          <tr><th scope="col">Column</th><th scope="col">What it is</th><th scope="col">First rows</th></tr>
         </thead>
         <tbody id="map-body"></tbody>
       </table>
     </div>
     <div class="import-row" style="margin-top:0.9rem">
       <label>
-        <div class="sub" style="margin:0 0 0.3rem">This sheet is current as of</div>
+        <div class="field-label">This sheet is current as of</div>
         <input type="date" id="as-of">
       </label>
     </div>
@@ -233,7 +233,7 @@ function officeHtml(l) {
         <div class="sub">${l.staff.length} staff</div>
       </div>
       ${l.staff.length ? `<div class="table-scroll"><table>
-        <thead><tr><th>Staffer</th><th>Handles</th><th>Contact</th><th></th></tr></thead>
+        <thead><tr><th scope="col">Staffer</th><th scope="col">Handles</th><th scope="col">Contact</th><th scope="col"></th></tr></thead>
         <tbody>${l.staff.map(staffRowHtml).join('')}</tbody>
       </table></div>` : '<p class="sub" style="margin:0.5rem 0 0">No staff listed.</p>'}
     </div>`;

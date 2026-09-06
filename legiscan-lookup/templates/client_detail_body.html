@@ -7,28 +7,32 @@
 <div class="card" style="margin-top:1rem">
   <div class="bill-title" style="margin-bottom:0.8rem">Add a bill</div>
   <form id="add-bill-f">
-    <label for="bill_number" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Bill number</label>
-    <input id="bill_number" placeholder="e.g. SB122" autocomplete="off" required style="flex:1;min-width:8rem">
-    <label for="add-bill-position" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Position</label>
-    <select id="add-bill-position">
+    <label style="flex:1;min-width:8rem">
+      <div class="field-label">Bill number <span class="req" aria-hidden="true">*</span></div>
+      <input id="bill_number" placeholder="e.g. SB122" autocomplete="off" required style="width:100%">
+    </label>
+    <label>
+      <div class="field-label">Position</div>
+      <select id="add-bill-position" style="width:100%">
       <option value="watch">Watch</option>
       <option value="support">Support</option>
       <option value="oppose">Oppose</option>
-    </select>
-    <button type="submit">Add →</button>
+      </select>
+    </label>
+    <button type="submit" style="align-self:flex-end">Add →</button>
   </form>
   <div id="add-bill-loading" class="empty" style="display:none;margin-top:0.6rem">Looking up bill…</div>
 </div>
 
 <div class="panel" style="margin-top:1rem">
-  <div class="panel-head"><div class="title">Bills</div></div>
+  <div class="panel-head"><h2 class="title">Bills</h2></div>
   <div id="bills"></div>
 </div>
 
 <div class="panel" style="margin-top:1rem" id="hearings-panel" hidden>
   <div class="panel-head">
     <div>
-      <div class="title">Upcoming hearings</div>
+      <h2 class="title">Upcoming hearings</h2>
       <div class="sub">Across every bill assigned to this client, soonest first.</div>
     </div>
   </div>
@@ -38,22 +42,34 @@
 <div class="panel" style="margin-top:1rem" id="contacts-panel">
   <div class="panel-head">
     <div>
-      <div class="title">Contacts</div>
+      <h2 class="title">Contacts</h2>
       <div class="sub">Who to ask when a bill needs a decision.</div>
     </div>
   </div>
   <div id="contacts"></div>
   <div style="padding:0.8rem 1.15rem">
     <form id="add-contact-f">
-      <label for="contact-name" class="sr-only">Contact name</label>
-      <input id="contact-name" placeholder="Full name" required autocomplete="section-contact name" style="flex:1;min-width:9rem">
-      <label for="contact-title" class="sr-only">Title</label>
-      <input id="contact-title" placeholder="Title (optional)" autocomplete="section-contact organization-title" style="flex:1;min-width:8rem">
-      <label for="contact-email" class="sr-only">Email</label>
-      <input id="contact-email" type="email" placeholder="Email (optional)" autocomplete="section-contact email" style="flex:1;min-width:9rem">
-      <label for="contact-phone" class="sr-only">Phone</label>
-      <input id="contact-phone" placeholder="Phone (optional)" autocomplete="section-contact tel" style="flex:1;min-width:7rem">
-      <button type="submit">Add</button>
+      <!-- Labels above the fields rather than clipped out of sight:
+           "Title (optional)" as a placeholder is gone the moment
+           anyone types, and a row of four filled boxes says nothing
+           about which is which. -->
+      <label style="flex:1;min-width:9rem">
+        <div class="field-label">Full name <span class="req" aria-hidden="true">*</span></div>
+        <input id="contact-name" required autocomplete="section-contact name" style="width:100%">
+      </label>
+      <label style="flex:1;min-width:8rem">
+        <div class="field-label">Title <span style="font-weight:400;color:var(--slate)">(optional)</span></div>
+        <input id="contact-title" autocomplete="section-contact organization-title" style="width:100%">
+      </label>
+      <label style="flex:1;min-width:9rem">
+        <div class="field-label">Email <span style="font-weight:400;color:var(--slate)">(optional)</span></div>
+        <input id="contact-email" type="email" autocomplete="section-contact email" style="width:100%">
+      </label>
+      <label style="flex:1;min-width:7rem">
+        <div class="field-label">Phone <span style="font-weight:400;color:var(--slate)">(optional)</span></div>
+        <input id="contact-phone" autocomplete="section-contact tel" style="width:100%">
+      </label>
+      <button type="submit" style="align-self:flex-end">Add</button>
     </form>
   </div>
 </div>
@@ -61,7 +77,7 @@
 <div class="panel" style="margin-top:1rem">
   <div class="panel-head">
     <div>
-      <div class="title">Notes</div>
+      <h2 class="title">Notes</h2>
       <div class="sub">Shared with your firm. Saves when you click away.</div>
     </div>
   </div>
@@ -74,14 +90,14 @@
 </div>
 
 <div class="panel" style="margin-top:1rem" id="letters-panel" hidden>
-  <div class="panel-head"><div class="title">Letters</div></div>
+  <div class="panel-head"><h2 class="title">Letters</h2></div>
   <div style="padding:0.4rem 1.15rem 1rem" id="letters"></div>
 </div>
 
 <div class="panel" style="margin-top:1rem" id="history-panel" hidden>
   <div class="panel-head">
     <div>
-      <div class="title">Position history</div>
+      <h2 class="title">Position history</h2>
       <div class="sub">Every change to this client's stance, on any bill, newest first.</div>
     </div>
   </div>
@@ -398,7 +414,7 @@ function renderBills(bills) {
   billsEl.innerHTML = `
     <div class="table-scroll">
     <table class="bill-cards">
-      <thead><tr><th class="col-bill">Bill</th><th class="col-title">Title</th><th class="col-status">Status</th><th class="col-position">Position</th><th class="col-rowmenu"></th></tr></thead>
+      <thead><tr><th scope="col" class="col-bill">Bill</th><th scope="col" class="col-title">Title</th><th scope="col" class="col-status">Status</th><th scope="col" class="col-position">Position</th><th scope="col" class="col-rowmenu"></th></tr></thead>
       <tbody>
       ${bills.map(b => `
         <tr>

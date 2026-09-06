@@ -140,7 +140,7 @@ function renderResults(rows, truncated) {
     <div class="panel">
       <div style="overflow-x:auto">
       <table>
-        <thead><tr><th>Name</th><th>Type</th><th>Location</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Location</th><th scope="col">Status</th><th scope="col"></th></tr></thead>
         <tbody>
         ${rows.map(r => r.kind === 'entity_group' ? `
           <tr>
