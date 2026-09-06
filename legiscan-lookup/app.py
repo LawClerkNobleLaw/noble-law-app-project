@@ -585,6 +585,7 @@ PAGE_PROGRESS_JS = _read_static_text("js/page_progress.js")
 POPPINS_WEIGHTS = (400, 500, 600, 700)
 POPPINS_FILES = {w: _read_static_bytes(f"fonts/poppins-{w}.woff2") for w in POPPINS_WEIGHTS}
 FOCUS_JS = _read_static_text("js/focus.js")
+SEARCH_SHORTCUT_JS = _read_static_text("js/search_shortcut.js")
 ESCAPE_TEXT_JS = _read_static_text("js/escape_text.js")
 
 
@@ -608,6 +609,7 @@ STATIC_ASSETS = {
     **{f"fonts/poppins-{w}.woff2": (POPPINS_FILES[w], "font/woff2") for w in POPPINS_WEIGHTS},
     "js/focus.js": (FOCUS_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/escape_text.js": (ESCAPE_TEXT_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/search_shortcut.js": (SEARCH_SHORTCUT_JS.encode("utf-8"), JS_CONTENT_TYPE),
 }
 
 STYLE_HREF = _asset_url("style.css")
@@ -685,6 +687,7 @@ FONT_LINKS = "\n".join(
     + ["<style>", FONT_FACES, "</style>"]
 )
 FOCUS_SRC = _asset_url("js/focus.js")
+SEARCH_SHORTCUT_SRC = _asset_url("js/search_shortcut.js")
 ESCAPE_TEXT_SRC = _asset_url("js/escape_text.js")
 
 TOP_BRAND = """<a href="/" class="top-brand">
@@ -918,6 +921,24 @@ def app_shell(current, body):
     # anyone who can't see it. Both are set together everywhere they're
     # set at all — including REPORT_BODY's client-side re-targeting.
     profile_current = ' aria-current="page"' if current == "/profile" else ""
+    # A way into search that doesn't cost a trip to the mouse. There was
+    # a global search INPUT here once and it was removed as redundant —
+    # /lookup is one sidebar click away and does the same job better, so
+    # a second always-visible box competing with it was furniture. That
+    # reasoning still holds, which is why this is a link shaped like a
+    # search field rather than a field: it navigates, it can be
+    # middle-clicked, and it works with JS blocked. The keystroke is the
+    # real feature (see search_shortcut.js); this is what tells anyone
+    # the keystroke exists.
+    #
+    # Omitted on the pages that already have their own search box in the
+    # body, where it would point at what the visitor is looking at.
+    search_link = "" if current in ("/lookup", "/lobbying", "/directory") else (
+        '<a class="topbar-search" href="/lookup">'
+        '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">'
+        '<circle cx="5" cy="5" r="3.5"/><path d="M8 8l2 2" stroke-linecap="round"/></svg>'
+        '<span>Search bills</span><kbd>\u2318K</kbd></a>'
+    )
     return f"""
 <div class="app-shell">
   <div class="app-sidebar-backdrop" id="shell-sidebar-backdrop"></div>
@@ -952,6 +973,7 @@ def app_shell(current, body):
         </button>
         <div class="app-topbar-sub" id="shell-date"></div>
       </div>
+      {search_link}
     </header>
     <main class="app-main" id="main-content" tabindex="-1">{body}</main>
   </div>
@@ -1054,6 +1076,7 @@ def page(title, path, body):
 <script src="{PAGE_PROGRESS_SRC}"></script>
 <script src="{ESCAPE_TEXT_SRC}"></script>
 <script src="{FOCUS_SRC}"></script>
+<script src="{SEARCH_SHORTCUT_SRC}"></script>
 {app_shell(path, body)}
 </body>
 </html>
