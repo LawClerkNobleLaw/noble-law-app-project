@@ -425,7 +425,18 @@ function clearFilters() {
 
 /* ── The rail ──────────────────────────────────────────────────────── */
 
+// keepFocus (see focus.js) is what makes the rail usable without a
+// mouse: every render below replaces railEl wholesale, so the tab the
+// user just activated is a different DOM node afterwards and focus
+// fell back to <body>. Applying three filters meant re-tabbing from the
+// top of the document three times. Each control carries a
+// data-focus-key so the replacement can be found by identity — the
+// counts, and the order, both change under it.
 function renderRail() {
+  keepFocus(railEl, renderRailNow);
+}
+
+function renderRailNow() {
   if (!currentRows.length) { railEl.innerHTML = ''; return; }
 
   const groups = DIMENSIONS.map(dimension => {
@@ -437,6 +448,7 @@ function renderRail() {
       const on = filters[dimension.key].has(value);
       return `<button type="button" class="filter-tab${on ? ' active' : ''}"
         aria-pressed="${on}" ${n || on ? '' : 'disabled'}
+        ${focusKeyAttr('tab', dimension.key, value)}
         onclick="toggleFilter('${dimension.key}', ${JSON.stringify(value).replace(/"/g, '&quot;')})"
         >${escapeText(valueLabel(dimension.key, value))}<span class="n">${n}</span></button>`;
     }).join('');
@@ -457,13 +469,17 @@ function activeChipsHtml() {
   if (!activeFilterCount()) return '';
   const chips = DIMENSIONS.flatMap(d =>
     Array.from(filters[d.key]).map(value =>
+      // Removing a chip removes the chip, so this key is also the one
+      // keepFocus falls back from: chip:x → tab:x, the same filter in
+      // the form that survives.
       `<button type="button" class="filter-chip"
+         ${focusKeyAttr('chip', d.key, value)}
          onclick="toggleFilter('${d.key}', ${JSON.stringify(value).replace(/"/g, '&quot;')})"
          aria-label="Remove filter ${escapeText(valueLabel(d.key, value))}"
          >${escapeText(valueLabel(d.key, value))}<span class="x">×</span></button>`)
   ).join('');
   return `<div class="active-filters">${chips}
-    <button type="button" class="secondary filter-clear" onclick="clearFilters()">Clear all</button></div>`;
+    <button type="button" class="secondary filter-clear" ${focusKeyAttr('clear-all')} onclick="clearFilters()">Clear all</button></div>`;
 }
 
 /* ── The URL is the view ───────────────────────────────────────────────
@@ -521,12 +537,15 @@ async function loadSavedViews() {
 function savedViewsHtml() {
   const views = savedViews.map(v =>
     `<span class="saved-view">
-       <button type="button" class="filter-tab" onclick="openSavedView(${v.id})">${escapeText(v.name)}</button>
-       <button type="button" class="icon-btn" onclick="removeSavedView(${v.id})"
+       <button type="button" class="filter-tab" ${focusKeyAttr('view', v.id)}
+               onclick="openSavedView(${v.id})">${escapeText(v.name)}</button>
+       <button type="button" class="icon-btn" ${focusKeyAttr('view-delete', v.id)}
+               onclick="removeSavedView(${v.id})"
                aria-label="Delete the view ${escapeText(v.name)}" title="Delete this view">×</button>
      </span>`).join('');
   const save = activeFilterCount() || searchQuery() || groupByClient
-    ? `<button type="button" class="secondary filter-clear" onclick="saveCurrentView()">Save this view</button>`
+    ? `<button type="button" class="secondary filter-clear" ${focusKeyAttr('save-view')}
+               onclick="saveCurrentView()">Save this view</button>`
     : '';
   if (!views && !save) return '';
   return `<div class="active-filters saved-views">
