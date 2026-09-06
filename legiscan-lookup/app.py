@@ -342,18 +342,28 @@ THEME_INIT_SCRIPT = f"""
 </script>
 """
 
-# Two Google Fonts (free, no licensing decision needed): Poppins is the
-# body/UI typeface (--font-sans in STYLE); Instrument Serif is the one
-# deliberate display exception the mockup uses for an editorial-style
-# headline (--font-serif). Garet, the mockup's actual primary typeface,
-# is a paid font whose web-embedding license isn't confirmed — omitted
-# here on purpose (see STYLE's own comment on --font-sans); the stack
-# already falls through to Poppins without it. Included in every page's
-# <head> alongside THEME_INIT_SCRIPT so both are one edit, not five.
+# One Google Font (free, no licensing decision needed): Poppins is the
+# body/UI typeface (--font-sans in STYLE). Garet, the mockup's actual
+# primary typeface, is a paid font whose web-embedding license isn't
+# confirmed — omitted on purpose (see STYLE's own comment on
+# --font-sans); the stack already falls through to Poppins without it.
+# Included in every page's <head> alongside THEME_INIT_SCRIPT so both
+# are one edit, not five.
+#
+# This is a render-blocking third-party request paid on EVERY
+# navigation, because this is a multi-page app: no client-side router,
+# so every click is a full document load. That makes the list of what
+# it asks for worth keeping honest, and it wasn't. Instrument Serif
+# came down in two styles for a --font-serif token nothing consumes,
+# and Poppins weight 300 for a weight the stylesheet never sets — four
+# font files fetched, parsed and cached per visitor for text that does
+# not exist. Both are gone; every weight below is one the stylesheet
+# actually asks for (400 body, 500/600/700 in ~65 rules), and a test
+# says so rather than trusting the next edit to remember.
 FONT_LINKS = """
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 """
 
 

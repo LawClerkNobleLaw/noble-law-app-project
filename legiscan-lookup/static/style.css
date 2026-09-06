@@ -124,12 +124,16 @@
        omitted here and the stack falls through to Poppins, which reads
        close to Garet (both rounded/geometric) and needs no licensing
        decision since it's a free Google Font. --font-serif is the
-       mockup's one deliberate exception (Instrument Serif, for an
-       editorial-style headline) — also not consumed by anything in
-       this pass, defined for the page-level work that uses it. --mono
-       is unchanged; bill IDs/dates keep using it for now. */
+       mockup's one deliberate exception — an editorial-style headline
+       in Instrument Serif — and still isn't consumed by anything, so
+       the webfont it named is no longer downloaded on every page load
+       for nobody (see FONT_LINKS). The token stays, pointed at a
+       serif every machine already has; the day a headline actually
+       wants Instrument Serif it comes back as one family in FONT_LINKS
+       and one word here. --mono is unchanged; bill IDs/dates keep
+       using it for now. */
     --font-sans: Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    --font-serif: "Instrument Serif", Georgia, serif;
+    --font-serif: Georgia, "Times New Roman", serif;
     --mono: ui-monospace, monospace;
     /* One definition covers both themes — .brand-mark masks this
        shape and fills it with --ink, which already flips per theme on

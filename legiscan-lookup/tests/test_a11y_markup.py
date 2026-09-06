@@ -417,6 +417,34 @@ def test_the_longest_onboarding_form_shows_its_own_submit_working():
 # mouse and ends the interaction for everyone who isn't.
 # ══════════════════════════════════════════════════════════════════════
 
+# ── What every page load pays for (P1) ────────────────────────────────
+def test_no_weight_is_fetched_that_nothing_sets():
+    """Poppins came down in five weights on every navigation, one of
+    which (300) the stylesheet never sets. In a multi-page app that is
+    paid per click, not once, so the request is worth keeping honest —
+    and a list of numbers in a URL is exactly the thing that stops
+    matching reality silently."""
+    requested = set(re.search(r"wght@([\d;]+)", app.FONT_LINKS).group(1).split(";"))
+    used = set()
+    for path in [STYLE_PATH] + _templates():
+        used.update(re.findall(r"font-weight: ?(\d{3})", _read(path)))
+    # 400 and 700 stay regardless: they are what unstyled body text and
+    # every <strong>/<b>/<th> resolve to.
+    assert requested == used | {"400", "700"}, sorted(requested ^ (used | {"400", "700"}))
+
+
+def test_no_family_is_fetched_that_nothing_asks_for():
+    # --font-serif named Instrument Serif and no rule in the app has
+    # ever consumed the token, so two more files came down per visitor
+    # for text that doesn't exist.
+    style = _read(STYLE_PATH)
+    for family in re.findall(r"family=([A-Za-z+]+)", app.FONT_LINKS):
+        name = family.replace("+", " ")
+        assert name in style, name
+    assert "Instrument" not in app.FONT_LINKS
+    assert "Instrument" not in style.split("--font-serif:", 1)[1].split(";", 1)[0]
+
+
 FOCUS_JS_PATH = os.path.join(ROOT, "static", "js", "focus.js")
 
 
