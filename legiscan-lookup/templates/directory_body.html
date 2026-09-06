@@ -445,5 +445,11 @@ document.getElementById('q').addEventListener('input', () => {
 });
 
 renderChamberTabs();
+// A link can hand this page its search: /lookup's "elsewhere in
+// Rotunda" strip points here by name, and landing on an unfiltered
+// directory after clicking one staffer would be the link losing the
+// thing it was about.
+const linkedQuery = new URLSearchParams(window.location.search).get('q');
+if (linkedQuery) document.getElementById('q').value = linkedQuery;
 load();
 </script>

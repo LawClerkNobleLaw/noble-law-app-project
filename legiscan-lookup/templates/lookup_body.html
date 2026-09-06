@@ -26,6 +26,16 @@
   </form>
 </div>
 
+<!-- ── Everything in Rotunda that isn't a bill ─────────────────────────
+     Search here has only ever searched the Legislature, which left the
+     firm's own records unreachable from the one search box on the
+     product: a client, a letter, a Capitol staffer and a CAL-ACCESS
+     registration all live in the same database file, and typing a
+     lobbyist's name here returned nothing at all. This strip runs
+     beside every search — four local LIKE scans, no API call — and
+     lives outside #results so a filter or a sort doesn't repaint it. -->
+<div id="elsewhere"></div>
+
 <div class="panel" id="saved-panel" hidden style="margin-bottom:1rem">
   <div class="panel-head">
     <div>
@@ -458,6 +468,7 @@ function applyUrlState(fromHistory) {
   currentResults = [];
   searchMeta = {};
   resultsEl.innerHTML = '';
+  loadElsewhere('');
   errorEl.className = '';
   setStartStateVisible(true);
 }
@@ -480,6 +491,12 @@ async function runSearch(q, keepFilters, fromHistory) {
     sortMode = 'relevance';
     selectedBillIds = new Set();
   }
+
+  // Keyed on the query, not on how the search was reached: a mode or
+  // scope change asks the same question of a different index, so the
+  // answer here hasn't moved — but a Back into an earlier search has to
+  // repaint it, and that arrives with keepFilters set.
+  if (q !== elsewhereQuery) loadElsewhere(q);
 
   const cacheKey = `${searchMode}|${sessionScope}|${q}`;
   if (fromHistory && resultCache.has(cacheKey)) {
@@ -512,6 +529,61 @@ async function runSearch(q, keepFilters, fromHistory) {
     form.querySelector('button').disabled = false;
     restoreFocus();
   }
+}
+
+/* ── The other half of the answer ──────────────────────────────────────
+ *
+ * Asked for in parallel with the bill search rather than after it, and
+ * from its own endpoint, so four local scans aren't waiting on a
+ * LegiScan round trip. A signed-out visitor gets an empty object —
+ * bill search is open to anyone, the firm's own records are not.
+ *
+ * Deliberately a strip, not a section: bills are what this page is for,
+ * and four headings of five rows each above 200 results would bury
+ * them. Five per group is enough to say "yes, look here"; each group's
+ * own page is one click away.
+ */
+const ELSEWHERE_GROUPS = [
+  ['clients', 'Clients'],
+  ['letters', 'Letters'],
+  ['directory', 'Directory'],
+  ['lobbying', 'Lobbying register'],
+];
+
+let elsewhereQuery = '';
+
+async function loadElsewhere(q) {
+  const el = document.getElementById('elsewhere');
+  if (!el) return;
+  elsewhereQuery = q;
+  el.innerHTML = '';
+  if (!q) return;
+  try {
+    const res = await fetch(`/api/search/elsewhere?q=${encodeURIComponent(q)}`);
+    if (!res.ok) return;
+    const found = await res.json();
+    // Only repaint if this is still the search on screen — a fast
+    // second search would otherwise be described by the first one's
+    // answer.
+    if (q !== currentQuery) return;
+    el.innerHTML = elsewhereHtml(found);
+  } catch (err) { /* The page works without it. */ }
+}
+
+function elsewhereHtml(found) {
+  const groups = ELSEWHERE_GROUPS
+    .filter(([key]) => (found[key] || []).length)
+    .map(([key, label]) => `
+      <div class="elsewhere-group">
+        <span class="filter-group-label">${label}</span>
+        ${found[key].map(row => `
+          <a class="elsewhere-hit" href="${escapeText(row.href)}"${
+            row.note ? ` title="${escapeText(row.note)}"` : ''}>${escapeText(row.label)}</a>`).join('')}
+      </div>`);
+  if (!groups.length) return '';
+  return `<div class="search-filters elsewhere" role="region" aria-label="Matches outside the Legislature">
+    ${groups.join('')}
+  </div>`;
 }
 
 function setSessionScope(scope) {

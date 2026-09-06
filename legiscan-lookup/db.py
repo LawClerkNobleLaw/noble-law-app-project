@@ -2075,6 +2075,29 @@ def list_clients(conn, user_id):
     return [dict(r) for r in rows]
 
 
+def search_clients(conn, user_id, query, limit=5):
+    """The firm's own clients, by name or by the interests written on
+    the record for Form 602.
+
+    One box over both fields, the same rule search_directory follows: a
+    lobbyist typing "cannabis" means "do we act for a cannabis client"
+    and "which of our clients cares about this" at once, and asking them
+    to pick the field first is asking for the answer.
+
+    Small limit on purpose — this feeds a strip beside a bill search,
+    not a list page. Five is enough to say "yes, look here"; the client
+    list itself is one click away.
+    """
+    like = f"%{(query or '').strip()}%"
+    rows = conn.execute(
+        f"""SELECT id, name, interests FROM clients
+             WHERE {ORG_SCOPE} AND (name LIKE ? OR interests LIKE ?)
+             ORDER BY name LIMIT ?""",
+        (user_id, like, like, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_client(conn, user_id, client_id):
     """Scoped to user_id, same reasoning as delete_client — one account
     can't view another's client just by guessing/incrementing an id."""
@@ -2808,6 +2831,24 @@ def list_letters(conn, user_id, bill_id=None, client_id=None):
             FROM letters WHERE {' AND '.join(where)}
             ORDER BY updated_at DESC, id DESC""",
         tuple(params),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def search_letters(conn, user_id, query, limit=5):
+    """Drafts by their subject, by the bill they argue about, or by the
+    client they are for — the three things anyone would have in mind
+    when trying to find one again. Newest-edited first, like
+    list_letters, and capped small for the same reason search_clients
+    is: it feeds a strip, not a page."""
+    like = f"%{(query or '').strip()}%"
+    rows = conn.execute(
+        f"""SELECT id, bill_id, bill_label, client_name, position, subject, updated_at
+             FROM letters
+            WHERE {ORG_SCOPE}
+              AND (subject LIKE ? OR bill_label LIKE ? OR client_name LIKE ?)
+            ORDER BY updated_at DESC, id DESC LIMIT ?""",
+        (user_id, like, like, like, limit),
     ).fetchall()
     return [dict(r) for r in rows]
 
