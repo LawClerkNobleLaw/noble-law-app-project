@@ -1961,6 +1961,47 @@ def load_version(bill_id, doc_id, documents):
             "version_type": document["version_type"], "byte_size": len(raw)}
 
 
+def _search_alternatives(conn, query):
+    """What the OTHER two indexes would have found for a query that the
+    title/summary search answered with nothing.
+
+    A zero-result search is the one moment the user most needs to know
+    that "Search in" has two more settings — and telling them costs
+    nothing here, because both alternatives are local SQLite. The
+    LegiScan direction is deliberately NOT offered the same way: a
+    count for it is an API call, so the empty text/section states offer
+    a button to run one rather than spending quota to pre-answer a
+    question nobody asked.
+
+    Returns a list of {mode, count, label} the page renders as offers,
+    newest-costing-nothing first, or [] when neither index has an
+    answer either — in which case the plain empty message is the honest
+    one.
+    """
+    offers = []
+    text_hits = len(db.search_bill_text(conn, query, limit=200))
+    if text_hits:
+        offers.append({"mode": "text", "count": text_hits,
+                       "label": "say those words somewhere in the bill text",
+                       "label_one": "says those words somewhere in the bill text"})
+    # Only when a section number was actually recognised. A code name
+    # alone matches loosely enough ("health", "business") that offering
+    # a citation search for plain English prose would be a guess dressed
+    # as a suggestion.
+    code, section = code_sections.parse_query(query)
+    if section:
+        cite_hits = len(db.search_code_sections(conn, code=code, section=section))
+        if cite_hits:
+            read = " ".join(part for part in [code, "\u00a7" + section] if part)
+            # Both forms of the verb, because the count is the subject
+            # of the sentence the page builds out of this: "1 bill adds"
+            # and "9 bills add" are the same offer.
+            offers.append({"mode": "section", "count": cite_hits,
+                           "label": f"add, amend or repeal {read}",
+                           "label_one": f"adds, amends or repeals {read}"})
+    return offers
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # keep the terminal quiet
@@ -3063,6 +3104,22 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        if parsed.path == "/api/corpus":
+            # What the two local indexes hold, on its own rather than
+            # only as a footnote on a text search's results. The mode
+            # tabs on /lookup label themselves with it at page load —
+            # "Full bill text · 40 bills" is the difference between
+            # picking that mode knowingly and picking it and wondering
+            # why the Legislature has so little to say.
+            conn = db.get_connection()
+            try:
+                stats = db.corpus_stats(conn)
+                stats.update(db.code_section_stats(conn))
+            finally:
+                conn.close()
+            self._send_json(200, stats)
+            return
+
         if parsed.path == "/api/search":
             # The merged /lookup page's one search endpoint — routes to
             # a bill-number search or a free-text one depending on the
@@ -3174,6 +3231,10 @@ class Handler(BaseHTTPRequestHandler):
                     data["signed_in"] = True
                 else:
                     data["signed_in"] = False
+                # Nothing in the titles. Both other indexes are local, so
+                # asking them costs no quota — see _search_alternatives.
+                if mode == "summary" and not data.get("results"):
+                    data["alternatives"] = _search_alternatives(conn, q)
             finally:
                 conn.close()
             self._send_json(200, data)
