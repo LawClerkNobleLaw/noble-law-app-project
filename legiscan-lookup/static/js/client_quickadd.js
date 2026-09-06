@@ -49,6 +49,10 @@ function clientOptionsHtml(available) {
 // one just created: whichever id wasn't already in existingClients.
 let quickAddClientState = null;
 
+// trapFocus()'s release for the open panel — see closeQuickAddClientModal,
+// which every way out of the modal already goes through.
+let releaseQuickAddFocus = null;
+
 function ensureQuickAddClientModal() {
   if (document.getElementById('quick-add-client-backdrop')) return;
   const backdrop = document.createElement('div');
@@ -188,13 +192,23 @@ function openQuickAddClient(existingClients, onCreated, onCancel) {
   document.getElementById('qac-error').className = '';
   document.getElementById('qac-name-autofill-note').style.display = 'none';
   document.getElementById('qac-name-autofill-dropdown').classList.remove('show');
-  document.getElementById('quick-add-client-backdrop').classList.add('show');
-  document.getElementById('qac-name').focus();
+  const backdrop = document.getElementById('quick-add-client-backdrop');
+  backdrop.classList.add('show');
+  // The name field, not the first focusable thing, because the panel
+  // head's × close button comes first in the DOM. Focusing a field was
+  // already right here; what was missing is the other two thirds of it
+  // — Tab staying inside the panel, and focus going back to the client
+  // <select> that opened this (see trapFocus in focus.js).
+  releaseQuickAddFocus = trapFocus(backdrop, document.getElementById('qac-name'));
 }
 
 function closeQuickAddClientModal() {
   const backdrop = document.getElementById('quick-add-client-backdrop');
   if (backdrop) backdrop.classList.remove('show');
+  if (releaseQuickAddFocus) {
+    releaseQuickAddFocus();
+    releaseQuickAddFocus = null;
+  }
 }
 
 function cancelQuickAddClient() {

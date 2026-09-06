@@ -50,20 +50,35 @@ function confirmDelete(title, message, confirmLabel) {
     const confirmBtn = backdrop.querySelector('#cd-confirm');
     const cancelBtn = backdrop.querySelector('#cd-cancel');
     confirmBtn.textContent = confirmLabel || 'Remove';
+    let release = null;
     const finish = (result) => {
       backdrop.classList.remove('show');
       confirmBtn.removeEventListener('click', onConfirm);
       cancelBtn.removeEventListener('click', onCancel);
       backdrop.removeEventListener('click', onBackdropClick);
+      document.removeEventListener('keydown', onEscape);
+      if (release) release();
       resolve(result);
     };
     const onConfirm = () => finish(true);
     const onCancel = () => finish(false);
     const onBackdropClick = (e) => { if (e.target === backdrop) finish(false); };
+    // Escape cancels, like the backdrop and the Cancel button: this
+    // dialog guards a destructive action, so every cheap way out of it
+    // has to be the safe one. It had no Escape at all before — the
+    // other two modals both did.
+    const onEscape = (e) => { if (e.key === 'Escape') finish(false); };
     confirmBtn.addEventListener('click', onConfirm);
     cancelBtn.addEventListener('click', onCancel);
     backdrop.addEventListener('click', onBackdropClick);
+    document.addEventListener('keydown', onEscape);
     backdrop.classList.add('show');
-    cancelBtn.focus();
+    // Cancel is named rather than left to DOM order: it happens to be
+    // first in the panel (see .modal-actions above), but which button
+    // the keyboard lands on is the whole point of this dialog and
+    // shouldn't quietly change if the markup is ever reordered.
+    // Releasing returns focus to whatever opened it — the row's ⋮ menu
+    // item, usually — instead of dropping it on <body>.
+    release = trapFocus(backdrop, cancelBtn);
   });
 }

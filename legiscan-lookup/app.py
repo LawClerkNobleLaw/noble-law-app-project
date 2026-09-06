@@ -575,6 +575,7 @@ CONFIRM_DELETE_JS = _read_static_text("js/confirm_delete.js")
 TITLE_CASE_JS = _read_static_text("js/title_case.js")
 ROW_MENU_JS = _read_static_text("js/row_menu.js")
 PAGE_PROGRESS_JS = _read_static_text("js/page_progress.js")
+FOCUS_JS = _read_static_text("js/focus.js")
 
 
 # Every file the /static/ route will serve, name -> (bytes, content type),
@@ -594,6 +595,7 @@ STATIC_ASSETS = {
     "js/title_case.js": (TITLE_CASE_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/row_menu.js": (ROW_MENU_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/page_progress.js": (PAGE_PROGRESS_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/focus.js": (FOCUS_JS.encode("utf-8"), JS_CONTENT_TYPE),
 }
 
 STYLE_HREF = _asset_url("style.css")
@@ -608,6 +610,7 @@ CONFIRM_DELETE_SRC = _asset_url("js/confirm_delete.js")
 TITLE_CASE_SRC = _asset_url("js/title_case.js")
 ROW_MENU_SRC = _asset_url("js/row_menu.js")
 PAGE_PROGRESS_SRC = _asset_url("js/page_progress.js")
+FOCUS_SRC = _asset_url("js/focus.js")
 
 TOP_BRAND = """<a href="/" class="top-brand">
   <span class="brand-mark" style="width:17px;height:17px"></span>
@@ -912,44 +915,31 @@ def app_shell(current, body):
   const sidebar = document.getElementById('shell-sidebar');
   const backdrop = document.getElementById('shell-sidebar-backdrop');
   const menuBtn = document.getElementById('shell-menu-btn');
-  // Links inside a collapsed .nav-subitems and buttons inside the closed
-  // .app-account-menu are in the sidebar's DOM but display:none, and
-  // .focus() on a display:none element silently no-ops — so collecting
-  // them made first and last unreachable and broke the wrap-around in
-  // the one place this app does trap focus. offsetParent is null for
-  // anything display:none'd, itself or by an ancestor.
-  const focusablesIn = (el) =>
-    Array.from(el.querySelectorAll('a, button')).filter(
-      (n) => n.offsetParent !== null && !n.disabled);
+  // Focus handling is trapFocus() from focus.js, which this drawer's
+  // own implementation was extracted into so the three modals could
+  // stop going without one — including the filter that skips links in
+  // a collapsed .nav-subitems and buttons in the closed
+  // .app-account-menu, which are in the sidebar's DOM but display:none
+  // and silently swallow .focus(). Releasing it is what returns focus
+  // to the hamburger, so Escape no longer does that by hand.
+  let releaseSidebarFocus = null;
   const setSidebarOpen = (open) => {{
     sidebar.classList.toggle('show', open);
     backdrop.classList.toggle('show', open);
     menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
     document.body.style.overflow = open ? 'hidden' : '';
     if (open) {{
-      const firstFocusable = focusablesIn(sidebar)[0];
-      if (firstFocusable) firstFocusable.focus();
+      releaseSidebarFocus = trapFocus(sidebar);
+    }} else if (releaseSidebarFocus) {{
+      releaseSidebarFocus();
+      releaseSidebarFocus = null;
     }}
   }};
   menuBtn.addEventListener('click', () => setSidebarOpen(!sidebar.classList.contains('show')));
   backdrop.addEventListener('click', () => setSidebarOpen(false));
   document.addEventListener('keydown', (e) => {{
     if (!sidebar.classList.contains('show')) return;
-    if (e.key === 'Escape') {{
-      setSidebarOpen(false);
-      menuBtn.focus();
-      return;
-    }}
-    if (e.key === 'Tab') {{
-      // Recomputed per keystroke, not cached on open: expanding a nav
-      // group while the drawer is open changes what's actually
-      // focusable inside it.
-      const focusable = focusablesIn(sidebar);
-      if (!focusable.length) return;
-      const first = focusable[0], last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) {{ e.preventDefault(); last.focus(); }}
-      else if (!e.shiftKey && document.activeElement === last) {{ e.preventDefault(); first.focus(); }}
-    }}
+    if (e.key === 'Escape') setSidebarOpen(false);
   }});
 }})();
 </script>
@@ -988,6 +978,7 @@ def page(title, path, body):
 <a class="skip-link" href="#main-content">Skip to main content</a>
 <div id="page-progress"></div>
 <script src="{PAGE_PROGRESS_SRC}"></script>
+<script src="{FOCUS_SRC}"></script>
 {app_shell(path, body)}
 </body>
 </html>

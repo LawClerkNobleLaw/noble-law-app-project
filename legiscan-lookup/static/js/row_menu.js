@@ -27,9 +27,16 @@
 
 function closeRowMenus() {
   document.querySelectorAll('.row-menu-dropdown.show').forEach(m => {
+    // Whether focus was inside the menu decides whether closing it owes
+    // the user a place to stand. Closing because they clicked something
+    // else on the page must not yank focus off whatever they clicked;
+    // closing a menu they were standing in must not drop them on <body>.
+    const heldFocus = m.contains(document.activeElement);
     m.classList.remove('show', 'open-up');
     const openBtn = document.querySelector(`[aria-controls="${m.id}"]`);
-    if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
+    if (!openBtn) return;
+    openBtn.setAttribute('aria-expanded', 'false');
+    if (heldFocus) openBtn.focus();
   });
 }
 function toggleRowMenu(e, key) {
@@ -47,16 +54,21 @@ function toggleRowMenu(e, key) {
     if (table && menu.getBoundingClientRect().bottom > table.getBoundingClientRect().bottom) {
       menu.classList.add('open-up');
     }
+    // Focus moves into the menu, so Tab walks its items rather than the
+    // rest of the row. On /flagged the ⋮ sits inside the Bill cell (a
+    // deliberate placement — see FLAGGED_BODY), which put "Bill report"
+    // and "LegiScan ↗" between the trigger and the menu it just opened.
+    // closeRowMenus() above is the other half: it hands focus back.
+    const firstItem = menu.querySelector('a, button');
+    if (firstItem) firstItem.focus();
   }
 }
 document.addEventListener('click', closeRowMenus);
-// Escape closes whichever row menu is open and returns focus to its
-// trigger, matching the standard disclosure-menu keyboard pattern.
+// Escape closes whichever row menu is open; closeRowMenus() returns
+// focus to its trigger, matching the standard disclosure-menu keyboard
+// pattern.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  const openMenu = document.querySelector('.row-menu-dropdown.show');
-  if (!openMenu) return;
-  const openBtn = document.querySelector(`[aria-controls="${openMenu.id}"]`);
+  if (!document.querySelector('.row-menu-dropdown.show')) return;
   closeRowMenus();
-  if (openBtn) openBtn.focus();
 });

@@ -152,7 +152,9 @@ def test_the_confirm_dialog_takes_its_label_from_the_caller():
 def test_cancel_is_the_first_and_focused_button():
     js = _read(os.path.join(ROOT, "static", "js", "confirm_delete.js"))
     assert js.index('id="cd-cancel"') < js.index('id="cd-confirm"')
-    assert "cancelBtn.focus();" in js
+    # Focused by name through the shared trap (Tier 3's A5), not by
+    # being whatever happened to be first in the panel.
+    assert "trapFocus(backdrop, cancelBtn)" in js
 
 
 def test_unflagging_does_not_offer_a_button_labelled_remove():
@@ -276,8 +278,11 @@ def test_the_drawer_trap_skips_elements_nobody_can_focus():
     # collapsed nav group and the closed account menu. .focus() on a
     # display:none element no-ops, so first and last were unreachable
     # and the wrap-around broke.
+    # Tier 3 extracted this trap into static/js/focus.js for the three
+    # modals to share, so the filter now lives there — see
+    # test_the_trap_still_skips_what_cannot_take_focus.
+    assert "offsetParent !== null" in _read(os.path.join(ROOT, "static", "js", "focus.js"))
     shell = app.app_shell("/flagged", "<p>x</p>")
-    assert "offsetParent !== null" in shell
     assert "sidebar.querySelectorAll('a, button')" not in shell
 
 
@@ -402,3 +407,102 @@ def test_the_longest_onboarding_form_shows_its_own_submit_working():
     text = _read(os.path.join(TEMPLATES, "profile_page.html"))
     assert "submitBtn.textContent = 'Saving…'" in text
     assert "submitBtn.textContent = submitLabel" in text
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Tier 3 of the same audit: focus, which is the half of keyboard access
+# the first two tiers left. Every check here is about where focus is
+# after something happens — a modal opens, a menu opens, a region
+# redraws itself — since a lost focus is invisible to everyone using a
+# mouse and ends the interaction for everyone who isn't.
+# ══════════════════════════════════════════════════════════════════════
+
+FOCUS_JS_PATH = os.path.join(ROOT, "static", "js", "focus.js")
+
+
+# ── The shared helper (A5) ────────────────────────────────────────────
+def test_every_shell_page_has_the_focus_helpers_before_its_own_script():
+    # In <body> above app_shell()'s output, so it is defined before any
+    # page's inline script and before the shell's own drawer wiring.
+    body = app.page("T — Rotunda", "/flagged", "<p>x</p>")
+    assert "js/focus.js" in body
+    assert body.index("js/focus.js") < body.index("app-shell")
+    assert "js/focus.js" in app.STATIC_ASSETS
+
+
+def test_the_trap_is_defined_once_and_not_recopied():
+    # A5's point was that the drawer already had this and nothing else
+    # did. A second definition anywhere means it drifted again.
+    defined_in = [
+        os.path.basename(path)
+        for path in _templates() + _shared_js() + [os.path.join(ROOT, "app.py")]
+        if "function focusablesIn" in _read(path) or "const focusablesIn" in _read(path)
+    ]
+    assert defined_in == ["focus.js"], defined_in
+
+
+def test_the_trap_still_skips_what_cannot_take_focus():
+    # Moved out of app_shell() by A5, so the guarantee moved with it:
+    # .focus() on a display:none element no-ops, which is what broke
+    # the drawer's wrap-around before Tier 2.
+    assert "offsetParent !== null" in _read(FOCUS_JS_PATH)
+
+
+def test_the_drawer_uses_the_helper_it_donated():
+    shell = app.app_shell("/flagged", "<p>x</p>")
+    assert "trapFocus(sidebar)" in shell
+    assert "sidebar.querySelectorAll" not in shell
+
+
+def test_all_three_modals_take_focus_and_give_it_back():
+    # aria-modal="true" was already on all three and does none of this:
+    # it tells a screen reader the page behind is inert while leaving
+    # the tab order exactly as it was.
+    for path in ("static/js/confirm_delete.js",
+                 "static/js/client_quickadd.js",
+                 "templates/report_body.html"):
+        text = _read(os.path.join(ROOT, path))
+        assert "trapFocus(" in text, path
+        # The release is what returns focus to the trigger; a trap
+        # without one is a page the user can't get out of.
+        assert "release" in text.lower(), path
+
+
+def test_the_destructive_confirm_can_be_escaped():
+    js = _read(os.path.join(ROOT, "static", "js", "confirm_delete.js"))
+    assert "e.key === 'Escape'" in js
+    # Escape must resolve false — the cheap way out of a destructive
+    # dialog is the safe one, same reasoning as Cancel going first.
+    assert "onEscape = (e) => { if (e.key === 'Escape') finish(false); }" in js
+
+
+# ── Row menus (I6) ────────────────────────────────────────────────────
+def test_opening_a_row_menu_moves_focus_into_it():
+    js = _read(os.path.join(ROOT, "static", "js", "row_menu.js"))
+    assert "firstItem.focus()" in js
+
+
+def test_closing_a_row_menu_only_takes_focus_back_if_it_had_it():
+    # Closing because the user clicked elsewhere must not pull focus off
+    # whatever they clicked.
+    js = _read(os.path.join(ROOT, "static", "js", "row_menu.js"))
+    assert "m.contains(document.activeElement)" in js
+    assert "if (heldFocus) openBtn.focus();" in js
+
+
+# ── Filter rails (A7) ─────────────────────────────────────────────────
+def test_the_filtering_pages_redraw_without_dropping_focus():
+    assert "keepFocus(railEl" in _read(os.path.join(TEMPLATES, "flagged_body.html"))
+    assert "keepFocus(resultsEl" in _read(os.path.join(TEMPLATES, "lookup_body.html"))
+    # /lookup empties its results before the fetch and refills them
+    # after, so there is nothing left to match by the time it renders.
+    assert "rememberFocus(resultsEl)" in _read(os.path.join(TEMPLATES, "lookup_body.html"))
+
+
+def test_every_filter_control_can_be_found_again_after_a_redraw():
+    # Matched by identity, not position: the counts change and options
+    # drop out from under the user between one render and the next.
+    for name in ("flagged_body.html", "lookup_body.html"):
+        text = _read(os.path.join(TEMPLATES, name))
+        for tag in re.findall(r"<button[^>]*filter-tab[^>]*>", text):
+            assert "focusKeyAttr(" in tag, "%s: %s" % (name, tag)

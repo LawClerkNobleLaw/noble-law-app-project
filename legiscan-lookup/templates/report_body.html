@@ -544,6 +544,12 @@ let flagModalClients = [];
 // itself needs redoing too.
 let flagAlreadySaved = false;
 
+// trapFocus()'s release for the open flag modal (see focus.js). Held
+// here rather than passed around because every way out of the modal —
+// ×, Cancel, Escape, backdrop, a successful flag — ends in
+// closeFlagModal().
+let releaseFlagModalFocus = null;
+
 function ensureFlagModal() {
   if (document.getElementById('flag-modal-backdrop')) return;
   const backdrop = document.createElement('div');
@@ -619,6 +625,11 @@ async function openFlagModal() {
   submitBtn.textContent = 'Confirm Flagged Bill';
   renderFlagClientSelect('');
   document.getElementById('flag-modal-backdrop').classList.add('show');
+  releaseFlagModalFocus = trapFocus(document.getElementById('flag-modal-backdrop'));
+  // Where the trap put focus (the head's × — first control in the
+  // panel), kept so the client picker can claim it below once it is
+  // loaded, but only if the user hasn't already moved somewhere else.
+  const openedOn = document.activeElement;
 
   // /report doesn't otherwise need the client list, so it's fetched
   // lazily here rather than on every page load like /flagged does.
@@ -637,12 +648,20 @@ async function openFlagModal() {
     document.getElementById('flag-modal-error').className = 'show';
   } finally {
     sel.disabled = false;
+    // The picker is the field this modal exists to fill in, so it wants
+    // focus — but it is disabled while /api/clients answers, and
+    // focusing a control and then disabling it drops focus on <body>.
+    if (document.activeElement === openedOn) sel.focus();
   }
 }
 
 function closeFlagModal() {
   const backdrop = document.getElementById('flag-modal-backdrop');
   if (backdrop) backdrop.classList.remove('show');
+  if (releaseFlagModalFocus) {
+    releaseFlagModalFocus();
+    releaseFlagModalFocus = null;
+  }
 }
 
 async function confirmFlagBill(e) {
