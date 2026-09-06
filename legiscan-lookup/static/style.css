@@ -833,7 +833,14 @@
      account needed to look up a bill" promise), so the sidebar footer
      needs an honest logged-out state rather than a blank avatar next to
      a "Sign out" button that wouldn't do anything. */
+  /* Which of these two the footer shows is decided by the server now
+     (see app.py's _fill_account_state), through data-account on both
+     halves, rather than by JS unhiding one after /api/me answered. An
+     unfilled page shows neither — the same empty footer it used to
+     show for the length of that fetch, rather than a raw token. */
   .app-account-guest { display: none; gap: 0.5rem; }
+  .app-account-guest[data-account="guest"] { display: flex; }
+  .app-account[data-account="guest"] { display: none; }
   /* white-space: nowrap matters once this renders inside top_nav()'s
      own width-capped wrapper (see .app-account-menu.top-anchored's own
      comment) — without it, "Sign up" wrapped onto its own line inside
