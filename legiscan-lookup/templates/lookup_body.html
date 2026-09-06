@@ -369,30 +369,124 @@ form.addEventListener('submit', (e) => {
   if (q) runSearch(q);
 });
 
-// Two different things prefill this page: the global header search
-// box + any old /discover?q=... bookmark send ?q=..., while a link
-// that already knows an exact bill number (billPills() elsewhere in
-// this app, and the ?next=... round trip _redirect_to_login() builds)
-// sends ?bill=... — both just seed the same one search box now that
-// lookup and discovery are a single page.
-const urlParams = new URLSearchParams(window.location.search);
-const prefillQuery = urlParams.get('q') || urlParams.get('bill');
-if (prefillQuery) {
-  document.getElementById('q').value = prefillQuery;
-  runSearch(prefillQuery);
+/* ── The search as a URL ───────────────────────────────────────────────
+ *
+ * Five pieces of state decide what is on this page — the query, which
+ * index, which sessions, the sort, and three filter groups — and until
+ * now only the query was ever in the URL, and only on the way IN. So a
+ * search could not be sent to a colleague, could not be bookmarked, and
+ * Back out of a bill landed on a page that had forgotten everything
+ * except the words typed into the box.
+ *
+ * Which entry each change gets is the whole design here. Asking a new
+ * question pushes: Back should walk through the questions someone asked
+ * this morning. Refining the answer to the same question — a filter, a
+ * sort, a different index — replaces, because twelve history entries
+ * for one triage pass makes Back useless as a way out of the page.
+ *
+ * ?bill=... is still read: billPills() elsewhere in this app and the
+ * ?next=... round trip _redirect_to_login() builds both use it, and
+ * they predate this.
+ */
+const URL_FILTER_PARAMS = { chamber: 'chamber', measure_type: 'type', status: 'status' };
+const URL_SORTS = ['relevance', 'action', 'number'];
+
+// Answers already paid for, keyed by the three things that decide what
+// was asked. Read only when Back or Forward walks into a search that
+// has already run (see runSearch's fromHistory) — a re-submitted search
+// still goes to the network, because asking again is how someone asks
+// for fresher news.
+const resultCache = new Map();
+
+function searchStateUrl() {
+  const p = new URLSearchParams();
+  if (currentQuery) p.set('q', currentQuery);
+  // Every default is left out, so the ordinary case is a clean
+  // /lookup?q=housing element rather than six parameters of noise.
+  if (searchMode !== 'summary') p.set('mode', searchMode);
+  if (sessionScope !== 'current') p.set('session', sessionScope);
+  if (sortMode !== 'relevance') p.set('sort', sortMode);
+  for (const [key, param] of Object.entries(URL_FILTER_PARAMS)) {
+    const picked = Array.from(filters[key]);
+    if (picked.length) p.set(param, picked.join('|'));
+  }
+  if (hideTracked) p.set('tracked', 'hide');
+  const query = p.toString();
+  return query ? '/lookup?' + query : '/lookup';
 }
+
+function syncUrl(push) {
+  const url = searchStateUrl();
+  if (url === window.location.pathname + window.location.search) return;
+  history[push ? 'pushState' : 'replaceState']({ rotundaSearch: true }, '', url);
+}
+
+// Reads the state back, and returns the query so the caller can decide
+// whether there is a search to run. Every value is checked against what
+// the controls themselves offer: a hand-edited or truncated URL should
+// land the page in a state its own buttons can reach, not in one where
+// a filter is set to something no tab can clear.
+function readUrlState() {
+  const p = new URLSearchParams(window.location.search);
+  const mode = p.get('mode');
+  searchMode = SEARCH_MODES.some(([value]) => value === mode) ? mode : 'summary';
+  sessionScope = p.get('session') === 'all' ? 'all' : 'current';
+  sortMode = URL_SORTS.includes(p.get('sort')) ? p.get('sort') : 'relevance';
+  filters = { chamber: new Set(), measure_type: new Set(), status: new Set() };
+  for (const [key, param] of Object.entries(URL_FILTER_PARAMS)) {
+    const raw = p.get(param);
+    if (!raw) continue;
+    const offered = FILTER_GROUPS.find(group => group.key === key).order;
+    for (const value of raw.split('|')) if (offered.includes(value)) filters[key].add(value);
+  }
+  hideTracked = p.get('tracked') === 'hide';
+  selectedBillIds = new Set();
+  return (p.get('q') || p.get('bill') || '').trim();
+}
+
+// Put the page into whatever state the current URL describes. One
+// function for both entry points — first load and a Back/Forward — so
+// a shared link and a history step can't drift apart.
+function applyUrlState(fromHistory) {
+  const q = readUrlState();
+  const box = document.getElementById('q');
+  box.value = q;
+  box.placeholder = placeholderForMode();
+  renderModeTabs();
+  if (q) { runSearch(q, true, fromHistory); return; }
+  currentQuery = '';
+  currentResults = [];
+  searchMeta = {};
+  resultsEl.innerHTML = '';
+  errorEl.className = '';
+  setStartStateVisible(true);
+}
+
+window.addEventListener('popstate', () => applyUrlState(true));
 
 // A new search clears the filters; changing the session scope keeps
 // them, since that is the same search asked over a wider range.
-async function runSearch(q, keepFilters) {
+//
+// fromHistory means Back or Forward brought us here rather than the
+// user asking. It reads from resultCache, so walking back through a
+// morning's searches costs no LegiScan calls — the answers are already
+// in the tab.
+async function runSearch(q, keepFilters, fromHistory) {
   currentQuery = q;
+  rememberSearch(q);
+  setStartStateVisible(false);
   if (!keepFilters) {
-    rememberSearch(q);
-    setStartStateVisible(false);
     filters = { chamber: new Set(), measure_type: new Set(), status: new Set() };
     sortMode = 'relevance';
     selectedBillIds = new Set();
   }
+
+  const cacheKey = `${searchMode}|${sessionScope}|${q}`;
+  if (fromHistory && resultCache.has(cacheKey)) {
+    renderResults(resultCache.get(cacheKey));
+    return;
+  }
+
   // Switching search mode or session scope re-runs the search from a
   // tab that lives inside resultsEl — which the next line empties, so
   // by the time results arrive the button that was focused is gone.
@@ -405,7 +499,11 @@ async function runSearch(q, keepFilters) {
     const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&session=${sessionScope}&mode=${searchMode}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Search failed');
+    resultCache.set(cacheKey, data);
     renderResults(data);
+    // A new question gets its own history entry; the same question
+    // asked of a different index only rewrites the current one.
+    syncUrl(!keepFilters);
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';
@@ -420,6 +518,7 @@ function setSessionScope(scope) {
   if (scope === sessionScope) return;
   sessionScope = scope;
   if (currentQuery) runSearch(currentQuery, true);
+  else syncUrl(false);
 }
 
 // Same search, different index — so filters are kept, exactly as
@@ -429,10 +528,13 @@ function setSearchMode(mode) {
   searchMode = mode;
   document.getElementById('q').placeholder = placeholderForMode();
   renderModeTabs();
-  if (currentQuery) runSearch(currentQuery, true);
+  if (currentQuery) { runSearch(currentQuery, true); return; }
   // Nothing searched yet: switching index is the whole interaction, so
-  // put the cursor where the next thing has to be typed.
-  else document.getElementById('q').focus();
+  // put the cursor where the next thing has to be typed — and record
+  // the choice, so a link can hand someone the right index with an
+  // empty box.
+  syncUrl(false);
+  document.getElementById('q').focus();
 }
 
 // LegiScan's search doesn't return a coded status the way getBill does
@@ -582,22 +684,26 @@ function toggleFilter(groupKey, value) {
   const picked = filters[groupKey];
   if (picked.has(value)) picked.delete(value); else picked.add(value);
   renderRows();
+  syncUrl(false);
 }
 
 function setActiveOnly() {
   const present = new Set(currentResults.map(r => billStatusFromAction(r.last_action).label));
   filters.status = new Set(ACTIVE_STATUSES.filter(s => present.has(s)));
   renderRows();
+  syncUrl(false);
 }
 
 function clearFilters() {
   for (const group of FILTER_GROUPS) filters[group.key].clear();
   renderRows();
+  syncUrl(false);
 }
 
 function setSort(mode) {
   sortMode = mode;
   renderRows();
+  syncUrl(false);
 }
 
 function activeFilterCount() {
@@ -612,8 +718,11 @@ function filterRailHtml() {
     const tabs = values.map(value => {
       const n = counts.get(value) || 0;
       const on = filters[group.key].has(value);
+      // Disabled only when it is OFF and empty. A shared URL can carry a
+      // filter that now counts zero, and a selected tab that can't be
+      // clicked again is a filter with no way out of it.
       return `<button type="button" class="filter-tab${on ? ' active' : ''}"
-        aria-pressed="${on}" ${n ? '' : 'disabled'} ${focusKeyAttr('tab', group.key, value)}
+        aria-pressed="${on}" ${n || on ? '' : 'disabled'} ${focusKeyAttr('tab', group.key, value)}
         onclick="toggleFilter('${group.key}', '${value}')">${escapeText(value)}<span class="n">${n}</span></button>`;
     }).join('');
     const preset = group.key === 'status'
@@ -735,10 +844,11 @@ function renderRowsNow() {
   // from_label/from_href tell /report where this click came from, so its
   // back link and sidebar highlight can point back to Lookup instead of
   // always assuming Flagged Bills (see REPORT_BODY's own script for the
-  // read side of this). from_href carries the query itself now — the
-  // back link used to land on an empty search box, so returning from a
-  // bill meant retyping the search that found it.
-  const backHref = encodeURIComponent('/lookup?q=' + encodeURIComponent(currentQuery));
+  // read side of this). It used to carry the query alone, which meant
+  // coming back from a bill landed on the same words with the filters
+  // gone — the narrowing that found the bill was the work. Now it
+  // carries the whole state, the same string a shared link would.
+  const backHref = encodeURIComponent(searchStateUrl());
   const reportHref = (billId) => `/report?bill_id=${billId}&from_label=Search&from_href=${backHref}`;
 
   const rowsHtml = rows.map(r => `
@@ -999,6 +1109,7 @@ function toggleSelected(billId, checked) {
 function setHideTracked(checked) {
   hideTracked = checked;
   renderRows();
+  syncUrl(false);
 }
 
 // The bar only exists while something is selected — an empty "0 selected"
@@ -1190,11 +1301,11 @@ async function saveCurrentSearch() {
   }
 }
 
-// Last, not up with the other kick-offs: modeTabsHtml() reads
-// SEARCH_MODES and SESSION_BILL_ESTIMATE, which are `const`s declared
+// Last, not up with the other kick-offs: this path reads SEARCH_MODES,
+// FILTER_GROUPS and SESSION_BILL_ESTIMATE, which are `const`s declared
 // further down this script and so are in the temporal dead zone until
 // it has run through. The async fetches above are safe up there because
 // nothing they touch resolves before then.
-renderModeTabs();
+applyUrlState(false);
 
 </script>
