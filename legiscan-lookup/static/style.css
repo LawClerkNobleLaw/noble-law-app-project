@@ -1564,6 +1564,28 @@
   .filter-sort { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
   .filter-sort select { font-size: 0.78rem; padding: 0.25rem 0.4rem; }
 
+  /* ── Everything in Rotunda that isn't a bill ──
+     Reuses .search-filters' box so it reads as another rail rather than
+     a second kind of result, and each hit is a link the size of a
+     filter chip: this is a signpost, not a result set. Bills are what
+     the page is for — four headings of five rows above 200 results
+     would bury them. */
+  .elsewhere {
+    /* Deliberately lighter than the filter rail below it: same layout,
+       no card. Boxed, the two read as two rails of equal weight above
+       the results, and this one is a signpost while that one changes
+       what you are looking at. */
+    background: none; border: none; padding: 0.1rem 0 0.6rem;
+    margin-bottom: 0.4rem; gap: var(--space-2);
+  }
+  .elsewhere-group { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  .elsewhere-hit {
+    font-size: 0.78rem; font-weight: 600; text-decoration: none;
+    border: 1px solid var(--rule-strong); border-radius: var(--radius-pill);
+    padding: 0.2rem 0.6rem; color: var(--ink); background: var(--paper);
+  }
+  .elsewhere-hit:hover { border-color: var(--ink); }
+
   /* Active filters restated as removable chips. The tabs above already
      show their own state, but once three groups are set the only way to
      see everything that is narrowing the list — without reading four

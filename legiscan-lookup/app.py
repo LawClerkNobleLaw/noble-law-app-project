@@ -2002,6 +2002,98 @@ def _search_alternatives(conn, query):
     return offers
 
 
+def _directory_rows(conn, user_id, query, limit):
+    """search_directory returns offices with their staff nested, which
+    is how /directory renders and how someone thinks about a phone call.
+    Here the answer is a flat list of names, so the nesting is unwound —
+    and the staffer is listed under their own name rather than their
+    member's, because "who is Wicks's water person" and "who is Elena"
+    are the same lookup from opposite ends."""
+    rows = []
+    for office in db.search_directory(conn, user_id, query=query, limit=limit):
+        where = " · ".join(part for part in [office.get("chamber"), office.get("district")] if part)
+        rows.append({"label": office["full_name"], "note": where,
+                     "href": "/directory?q=" + quote(office["full_name"])})
+        for staffer in office.get("staff", []):
+            if len(rows) >= limit:
+                return rows[:limit]
+            # Only the staff who are themselves the match. A search for a
+            # member would otherwise return their whole office as
+            # separate rows and bury everything else.
+            haystack = " ".join(str(staffer.get(field) or "")
+                                for field in ("full_name", "title", "email"))
+            if query.lower() not in haystack.lower():
+                continue
+            rows.append({
+                "label": staffer["full_name"],
+                "note": " · ".join(part for part in
+                                   [staffer.get("title"), office["full_name"]] if part),
+                "href": "/directory?q=" + quote(staffer["full_name"]),
+            })
+    return rows[:limit]
+
+
+def search_elsewhere(conn, user_id, query, limit=5):
+    """Everything in Rotunda that is not a bill, for the same query.
+
+    Search on this app has only ever searched the Legislature, which
+    leaves a real gap: a firm's clients, its letters, the Capitol
+    directory and the CAL-ACCESS register are all in the same database
+    file, and typing a lobbyist's or a staffer's name into the one
+    search box on the product returned nothing at all. Nothing here
+    costs an API call — it is four LIKE scans over local tables — so it
+    runs beside every search rather than behind a second box.
+
+    Everything is org-scoped through db.py, and a signed-out visitor
+    gets nothing: the directory holds real contact details for
+    identifiable people and the client list is the firm's book of
+    business. Bill search stays open to anyone; this half does not.
+
+    One shape per row — label, note, href — because the page renders
+    them as one component with four headings, and a row that needed to
+    know which group it was in would grow four renderers.
+    """
+    q = (query or "").strip()
+    if not q or not user_id:
+        return {}
+
+    found = {}
+    clients = db.search_clients(conn, user_id, q, limit=limit)
+    if clients:
+        found["clients"] = [{
+            "label": row["name"],
+            "note": (row["interests"] or "").strip(),
+            "href": f"/clients/detail?id={row['id']}",
+        } for row in clients]
+
+    letters = db.search_letters(conn, user_id, q, limit=limit)
+    if letters:
+        found["letters"] = [{
+            "label": row["subject"],
+            "note": " · ".join(part for part in
+                               [row.get("bill_label"), row.get("client_name")] if part),
+            "href": f"/draft/letters/edit?id={row['id']}",
+        } for row in letters]
+
+    staff = _directory_rows(conn, user_id, q, limit)
+    if staff:
+        found["directory"] = staff
+
+    # Reuses the /lobbying page's own search wholesale, clustering and
+    # all — one definition of "what matches a name in CAL-ACCESS",
+    # rather than a second, subtly different one behind this strip.
+    entities = search_lobbying(conn, q)[:limit]
+    if entities:
+        found["lobbying"] = [{
+            "label": row["name"],
+            "note": " · ".join(part for part in
+                               [row.get("entity_type"), row.get("city")] if part),
+            "href": "/lobbying/detail?" + (f"id={quote(str(row['id']))}" if row.get("id")
+                                           else f"name={quote(row['name'] or '')}"),
+        } for row in entities]
+    return found
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # keep the terminal quiet
@@ -3100,6 +3192,25 @@ class Handler(BaseHTTPRequestHandler):
                 if not user_id:
                     return
                 self._send_json(200, db.list_saved_views(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/search/elsewhere":
+            # Its own endpoint rather than a field on /api/search, so a
+            # slow LegiScan call can't hold up an answer that is four
+            # local LIKE scans away — the page asks for both at once.
+            q = (qs.get("q") or [""])[0]
+            if not q:
+                self._send_json(400, {"error": "Missing q parameter."})
+                return
+            conn = db.get_connection()
+            try:
+                # No 401: this rides along with a bill search, which
+                # signed-out visitors are welcome to run. They just get
+                # nothing from the half that is the firm's own records.
+                user_id = self._current_user_id(conn)
+                self._send_json(200, search_elsewhere(conn, user_id, q))
             finally:
                 conn.close()
             return
