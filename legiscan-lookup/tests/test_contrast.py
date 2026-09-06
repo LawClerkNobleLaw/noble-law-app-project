@@ -167,6 +167,42 @@ def test_a_control_outline_can_actually_be_seen(css, dark_block, light_block):
         assert ratio >= NON_TEXT, f"--rule-strong on the page ({name}) is {ratio:.2f}:1"
 
 
+def test_the_edge_of_a_card_sits_between_the_two(css, dark_block, light_block):
+    """--rule-card (V4). A card is not a control, so 1.4.11's 3:1
+    doesn't govern it — but --rule at 1.35:1 was the whole outline of
+    every card, panel and stat tile, and on mobile the only thing
+    between one bill and the next. The floor says it reads as an edge in
+    bright light; the ceiling says it doesn't read as something that
+    takes input."""
+    alpha = _alpha_token(css, "rule-card", css)
+    for name, theme in _themes(css, dark_block, light_block).items():
+        for ground_name in ("bg", "surface"):
+            ground = theme[ground_name]
+            ratio = contrast(_composite(theme["ink"], alpha, ground), ground)
+            assert ratio >= 1.8, f"--rule-card on --{ground_name} ({name}) is {ratio:.2f}:1"
+            assert ratio < NON_TEXT, f"--rule-card on --{ground_name} ({name}) is {ratio:.2f}:1"
+
+
+CARD_EDGES = [".card", ".panel", ".stat-card", ".modal-panel"]
+
+
+@pytest.mark.parametrize("selector", CARD_EDGES)
+def test_cards_do_not_draw_their_edge_with_the_hairline(css, selector):
+    start = css.index("\n  " + selector + " {")
+    body = css[start:css.index("}", start)]
+    assert "1px solid var(--rule);" not in body, f"{selector} still draws its edge with --rule"
+    assert "--rule-card" in body, selector
+
+
+def test_the_only_thing_between_two_bill_cards_is_visible(css):
+    """The mobile bill card's border isn't decoration around content
+    with other boundaries — it IS the boundary, so it takes the 3:1
+    token rather than the card one."""
+    start = css.index("\n    .bill-cards tr {")
+    body = css[start:css.index("}", start)]
+    assert "var(--rule-strong)" in body
+
+
 # Every author-drawn control outline in the app, by the rule that draws
 # it. A boundary meeting 3:1 is no use if the controls don't wear it —
 # and the first pass at this missed a.secondary, .icon-btn and

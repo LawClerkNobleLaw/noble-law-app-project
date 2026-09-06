@@ -49,6 +49,22 @@
        would suggest. Measured, not guessed, and re-measured on every
        test run — see tests/test_contrast.py. */
     --rule-strong: color-mix(in srgb, var(--ink) 48%, transparent);
+    /* And a third weight, between the two, for the border that is the
+       whole outline of a card rather than a divider inside one. A card
+       is not a control, so 1.4.11's 3:1 doesn't govern it and
+       --rule-strong reads far too heavy at card size — but --rule's
+       1.35:1 is close to invisible in bright outdoor light, which is
+       the reading condition for someone checking a hearing between
+       committee rooms. 30% measures ~2:1 on the cream ground and
+       ~2.5:1 on black: clearly above the hairline it replaces, clearly
+       below the outline that means "this takes input". Measured on
+       every test run — see tests/test_contrast.py.
+
+       The exception is the mobile bill card, which uses --rule-strong:
+       there the border isn't decoration around content that has other
+       boundaries, it is the ONLY thing separating one bill from the
+       next. */
+    --rule-card: color-mix(in srgb, var(--ink) 30%, transparent);
     --accent: var(--slate);
     /* --accent-solid/--accent-solid-text are the button-fill pair — in
        dark mode the fill inverts (light pill, dark text) while --accent
@@ -78,10 +94,13 @@
     --shadow-hover: 0 8px 24px rgba(0,0,0,0.10);
     /* The handful of border-radius values actually used below (4-8px)
        collapse into these two tokens; 999px pills get their own, and
-       --radius-lg (new) is the mockup's card/panel/search-bar radius —
-       not consumed anywhere yet in this pass (existing .card/.panel/
-       .stat-card keep their own hardcoded 18px for now), just defined
-       early for the per-page redesign work that follows this one. Left
+       --radius-lg is the mockup's card/panel/search-bar radius, now
+       consumed by every card in the app: .card, .panel, .stat-card,
+       .modal-panel, .current-status-card and the mobile bill card all
+       used to hardcode their own radius, and all but the bill card
+       hardcoded 18px, so a bill card and the panel holding it didn't
+       match. One value, in one place — if 12px is the wrong call, this
+       line is the whole change. Left
        alone on purpose: 50% and the two circular dots (.step-dot,
        .status-badge::before) that use a fixed pixel radius instead of
        50% only because their box is sized in rem, not px — those are
@@ -353,8 +372,8 @@
   #result { display: none; }
   #result.show { display: block; }
   .card {
-    background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-rest);
-    border-radius: 18px; padding: 1.25rem var(--space-5); margin-bottom: 1rem;
+    background: var(--surface); border: 1px solid var(--rule-card); box-shadow: var(--shadow-rest);
+    border-radius: var(--radius-lg); padding: 1.25rem var(--space-5); margin-bottom: 1rem;
   }
   .bill-id { font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--accent); margin-bottom: 0.4rem; }
   .bill-title { font-size: 1.15rem; font-weight: 700; margin: 0 0 0.3rem; }
@@ -402,7 +421,7 @@
      this card's accent means the same thing the table already
      established, not a new color vocabulary. */
   .current-status-card {
-    border: 2px solid var(--ink); border-radius: 18px; padding: 1.25rem var(--space-5);
+    border: 2px solid var(--ink); border-radius: var(--radius-lg); padding: 1.25rem var(--space-5);
     margin-top: 1rem; background: var(--accent-soft);
   }
   .current-status-card.milestone-intro { border-left: 4px solid var(--slate); }
@@ -529,8 +548,8 @@
   }
   .modal-backdrop.show { display: flex; }
   .modal-panel {
-    background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-hover);
-    border-radius: 18px; padding: var(--space-5); width: 100%; max-width: 26rem; max-height: 90vh; overflow-y: auto;
+    background: var(--surface); border: 1px solid var(--rule-card); box-shadow: var(--shadow-hover);
+    border-radius: var(--radius-lg); padding: var(--space-5); width: 100%; max-width: 26rem; max-height: 90vh; overflow-y: auto;
   }
   .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-4); }
   .modal-head .title { font-size: 1.05rem; font-weight: 700; margin: 0; }
@@ -888,8 +907,8 @@
   .page-head .filter-tabs { margin-bottom: 0; }
   .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: var(--space-3); margin-bottom: 1rem; }
   .stat-card {
-    background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-rest);
-    border-radius: 18px; padding: var(--space-4); transition: box-shadow .15s ease;
+    background: var(--surface); border: 1px solid var(--rule-card); box-shadow: var(--shadow-rest);
+    border-radius: var(--radius-lg); padding: var(--space-4); transition: box-shadow .15s ease;
   }
   .stat-card:hover { box-shadow: var(--shadow-hover); }
   .stat-icon {
@@ -903,8 +922,8 @@
   /* A card meant to hold a whole list/table, with its own header row —
      same visual family as .card, just with a title/subtitle slot. */
   .panel {
-    background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-rest);
-    border-radius: 18px; overflow: hidden;
+    background: var(--surface); border: 1px solid var(--rule-card); box-shadow: var(--shadow-rest);
+    border-radius: var(--radius-lg); overflow: hidden;
   }
   .panel-head {
     display: flex; align-items: center; justify-content: space-between; gap: 1rem;
@@ -1160,8 +1179,11 @@
     .table-scroll { overflow: visible; }
     .bill-cards, .bill-cards tbody, .bill-cards tr, .bill-cards td { display: block; width: auto; }
     .bill-cards thead { display: none; }
+    /* --rule-strong, not --rule-card: stacked bill cards are all this
+       view has, and this border is the only thing between one bill and
+       the next. See the token's own comment. */
     .bill-cards tr {
-      background: var(--surface); border: 1px solid var(--rule);
+      background: var(--surface); border: 1px solid var(--rule-strong);
       border-radius: var(--radius-lg); padding: 0.85rem 0.95rem;
       margin: 0 1.15rem var(--space-3);
     }
