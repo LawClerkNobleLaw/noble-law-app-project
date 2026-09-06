@@ -244,3 +244,43 @@ def test_a_mode_states_how_much_it_can_answer_for():
 def test_an_empty_title_search_points_at_whatever_index_can_answer():
     assert "function alternativesHtml" in _lookup()
     assert "searchMeta.alternatives" in _lookup()
+
+
+# ── The search as a URL ────────────────────────────────────────────────
+#
+# Five things decide what is on the search page — the query, the index,
+# the sessions, the sort and three filter groups — and only the query
+# was ever in the URL, only on the way in. So a search couldn't be sent
+# to a colleague, couldn't be bookmarked, and Back out of a bill landed
+# on a page that had forgotten the narrowing that found it.
+
+def test_the_page_reads_its_whole_state_out_of_the_url():
+    body = _lookup()
+    assert "function readUrlState" in body
+    assert "function searchStateUrl" in body
+    for param in ("'mode'", "'session'", "'sort'", "'tracked'"):
+        assert param in body
+
+
+def test_back_and_forward_are_handled():
+    body = _lookup()
+    assert "'popstate'" in body
+    assert "applyUrlState(true)" in body
+
+
+def test_a_refinement_rewrites_the_entry_and_a_new_question_adds_one():
+    """Twelve history entries for one triage pass makes Back useless as
+    a way out of the page; one per question asked is the point of it."""
+    body = _lookup()
+    assert "history[push ? 'pushState' : 'replaceState']" in body
+    assert "syncUrl(!keepFilters)" in body
+
+
+def test_the_back_link_a_bill_carries_is_the_whole_search():
+    assert "const backHref = encodeURIComponent(searchStateUrl());" in _lookup()
+
+
+def test_walking_back_through_searches_spends_no_api_calls():
+    body = _lookup()
+    assert "const resultCache = new Map()" in body
+    assert "fromHistory && resultCache.has(cacheKey)" in body
