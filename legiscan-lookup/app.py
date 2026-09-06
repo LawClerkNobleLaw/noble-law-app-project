@@ -990,12 +990,24 @@ def page(title, path, body):
 # the wordmark, brand mark, tagline, and a "get started" link, in place
 # of the previous full hero/feature-grid/workflow/trust/footer page —
 # a deliberate content cut the user confirmed, not an oversight.
-# Unlike every other page in this file, LANDING_STYLE hardcodes its own
-# colors rather than reading STYLE's --bg/--ink tokens: the mockup
-# itself has no light-mode variant for this screen (compare Rotunda
-# Dashboard.dc.html, which explicitly supports both) — it's always
-# this one dark look, regardless of the visitor's system/toggle
-# preference. Reuses the masked brand-mark shape (--brand-mark, see
+# LANDING_STYLE keeps its own colors rather than reading STYLE's
+# --bg/--ink tokens (the mockup has no light-mode variant for this
+# screen, unlike Rotunda Dashboard.dc.html), but it is no longer blind
+# to the visitor's choice. Black stays the default, including for
+# someone whose OS is light: a signed-out visitor defaults to dark
+# everywhere in this app on purpose (see THEME_INIT_SCRIPT), and the
+# splash is the most marketing-shaped surface of the lot.
+#
+# What was wrong was narrower than "no light variant". A visitor who
+# has actually USED the theme toggle gets light everywhere — /signup,
+# /login, the whole app — except here, so the one page that ignored
+# their explicit choice was the first one they saw, and clicking "get
+# started" flipped them from full-bleed black to cream. The splash now
+# answers data-theme="light" (the toggle's own attribute, which needs
+# THEME_INIT_SCRIPT in the template below to be set before first paint,
+# same as every other page) and leaves everyone else exactly as they
+# were. Three variables carry it, so the decorative layers below don't
+# each need a second copy. Reuses the masked brand-mark shape (--brand-mark, see
 # BRAND_MARK_SVG above) instead of the mockup's own raster PNG logo —
 # same reasoning as the sidebar's app-brand-mark: recolors for free, no
 # static-asset route needed for a redesign this size. "get started"
@@ -1003,13 +1015,23 @@ def page(title, path, body):
 # its own (see SIGNUP_PAGE) — this splash doesn't need its own chrome
 # to keep those reachable.
 LANDING_STYLE = """
+  /* --splash-ink as three comma-separated channels, not a colour, so
+     the rgba() veils below can be written once: every faint line, dot,
+     ring and glow on this screen is the ink at some low alpha. */
   .splash {
-    position: relative; overflow: hidden; min-height: 100svh; background: #000; color: #fff;
+    --splash-bg: #000; --splash-ink: 255, 255, 255; --splash-warm: #F4EFE4;
+    position: relative; overflow: hidden; min-height: 100svh;
+    background: var(--splash-bg); color: rgb(var(--splash-ink));
     display: flex; flex-direction: column;
   }
-  .splash a { color: #fff; }
-  .splash a:hover { color: #F4EFE4; }
-  .splash ::selection { background: #F4EFE4; color: #000; }
+  /* Only an explicit choice, never prefers-color-scheme: a signed-out
+     visitor is dark everywhere in this app by design. */
+  :root[data-theme="light"] .splash {
+    --splash-bg: #FAF8F3; --splash-ink: 17, 17, 17; --splash-warm: #4A3F2A;
+  }
+  .splash a { color: rgb(var(--splash-ink)); }
+  .splash a:hover { color: var(--splash-warm); }
+  .splash ::selection { background: rgb(var(--splash-ink)); color: var(--splash-bg); }
   /* Four faint decorative layers, all pointer-events:none and purely
      cosmetic — a dotted-grid swatch in two corners, three concentric
      ring outlines bleeding off the top-left/bottom-right, and one soft
@@ -1019,21 +1041,21 @@ LANDING_STYLE = """
      else that would benefit from rem's user-font-size scaling. */
   .splash-dots {
     position: absolute; pointer-events: none;
-    background-image: radial-gradient(rgba(255,255,255,0.2) 2px, transparent 2.2px);
+    background-image: radial-gradient(rgba(var(--splash-ink), 0.2) 2px, transparent 2.2px);
     background-size: 33px 33px;
   }
   .splash-dots.tl { top: -8px; left: 0; width: 264px; height: 194px; background-position: 22px 22px; }
   .splash-dots.br { bottom: -10px; right: -10px; width: 372px; height: 190px; }
   .splash-ring { position: absolute; border-radius: 50%; pointer-events: none; }
-  .splash-ring.r1 { top: -17vmax; left: -15vmax; width: 40vmax; height: 40vmax; max-width: 560px; max-height: 560px; border: 1px solid rgba(255,255,255,0.28); }
-  .splash-ring.r2 { top: -10vmax; left: -26vmax; width: 32vmax; height: 32vmax; max-width: 450px; max-height: 450px; border: 1px solid rgba(255,255,255,0.22); }
-  .splash-ring.r3 { bottom: -22vmax; right: -10vmax; width: 47vmax; height: 47vmax; max-width: 660px; max-height: 660px; border: 1px solid rgba(255,255,255,0.26); }
+  .splash-ring.r1 { top: -17vmax; left: -15vmax; width: 40vmax; height: 40vmax; max-width: 560px; max-height: 560px; border: 1px solid rgba(var(--splash-ink), 0.28); }
+  .splash-ring.r2 { top: -10vmax; left: -26vmax; width: 32vmax; height: 32vmax; max-width: 450px; max-height: 450px; border: 1px solid rgba(var(--splash-ink), 0.22); }
+  .splash-ring.r3 { bottom: -22vmax; right: -10vmax; width: 47vmax; height: 47vmax; max-width: 660px; max-height: 660px; border: 1px solid rgba(var(--splash-ink), 0.26); }
   .splash-glow {
     position: absolute; bottom: -190px; left: 50%; transform: translateX(-50%); width: 460px; height: 330px;
-    border-radius: 50%; background: radial-gradient(closest-side, rgba(255,255,255,0.2), rgba(255,255,255,0)); pointer-events: none;
+    border-radius: 50%; background: radial-gradient(closest-side, rgba(var(--splash-ink), 0.2), rgba(var(--splash-ink), 0)); pointer-events: none;
   }
   .splash-topline { position: relative; padding: clamp(28px, 5vh, 56px) clamp(28px, 4vw, 56px) 0; flex: none; }
-  .splash-topline div { height: 1px; background: rgba(255,255,255,0.6); }
+  .splash-topline div { height: 1px; background: rgba(var(--splash-ink), 0.6); }
   .splash-main {
     position: relative; flex: 1; display: flex; flex-direction: column; align-items: center;
     justify-content: center; padding: clamp(16px, 4vh, 40px) 24px 0; text-align: center;
@@ -1044,7 +1066,7 @@ LANDING_STYLE = """
   }
   .splash-mark {
     display: inline-block; width: clamp(140px, 18vw, 250px); height: clamp(140px, 18vw, 250px);
-    margin: clamp(14px, 2.6vh, 24px) 0 0; background-color: #fff;
+    margin: clamp(14px, 2.6vh, 24px) 0 0; background-color: rgb(var(--splash-ink));
     -webkit-mask-image: var(--brand-mark); mask-image: var(--brand-mark);
     -webkit-mask-size: contain; mask-size: contain;
     -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
@@ -1052,7 +1074,7 @@ LANDING_STYLE = """
   }
   .splash-tagline {
     margin: clamp(12px, 2.2vh, 20px) 0 0; font-size: clamp(11px, 1.05vw, 14px); font-weight: 400;
-    letter-spacing: 0.22em; text-transform: uppercase; color: rgba(255,255,255,0.9);
+    letter-spacing: 0.22em; text-transform: uppercase; color: rgba(var(--splash-ink), 0.9);
   }
   .splash-cta {
     position: relative; flex: none; display: flex; flex-direction: column; align-items: center; gap: 10px;
@@ -1069,6 +1091,7 @@ LANDING_PAGE = _render_template(
     "landing_page.html",
     STYLE_HREF=STYLE_HREF,
     LANDING_STYLE=LANDING_STYLE,
+    THEME_INIT_SCRIPT=THEME_INIT_SCRIPT,
     FONT_LINKS=FONT_LINKS,
 )
 
