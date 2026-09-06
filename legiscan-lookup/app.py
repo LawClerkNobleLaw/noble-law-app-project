@@ -82,6 +82,7 @@ import re
 import sys
 import threading
 import traceback
+from html import escape as html_escape
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote
@@ -328,9 +329,9 @@ SIGNED_IN_HINT_COOKIE = "signed_in_hint"
 # One edge case worth naming: a session created before this change
 # shipped won't have SIGNED_IN_HINT_COOKIE yet, so that visitor reads
 # as "signed out" for this initial-paint guess only, until their next
-# login/logout resets it — account_widget()'s own /api/me check still
-# correctly shows them as signed in regardless; this only affects which
-# theme they see before that check resolves.
+# login/logout resets it — the sidebar footer, which the server fills
+# in from the real session (see _fill_account_state), still shows them
+# as signed in regardless; this only affects which theme they see.
 THEME_INIT_SCRIPT = f"""
 <script>
 (function() {{
@@ -375,12 +376,30 @@ def nav_links(current):
 
 # The account menu's login state is per-request (whoever's browser this
 # is), but every page constant below is a plain string built ONCE at
-# import time — so unlike nav_links() above, this can't be baked into
-# the static HTML. account_widget() below ships both the guest state
-# and the signed-in state up front (each hidden via style="display:none"
-# until /api/me's own client-side fetch reveals whichever applies) —
-# the same "server ships a shell, JS fetches JSON and renders" pattern
-# already used everywhere else in this app, just applied to login state.
+# import time — so unlike nav_links() above, it can't be baked in here.
+# It is substituted on the way out instead, in _send_html, rather than
+# fetched by the browser afterwards: this is the one piece of
+# per-request state the server always already knows, and it sits in the
+# page chrome, where the "server ships a shell, JS fetches JSON" pattern
+# the rest of the app uses costs a visibly empty footer for the length
+# of the round trip.
+# The sidebar footer used to be empty on every page load until
+# /api/me answered, then filled in — a hole in the chrome, a layout
+# shift when it closed, "am I signed in?" unanswerable during the gap,
+# and nothing at all if the fetch failed. Cold starts on Render take
+# three to five seconds.
+#
+# The server already knows. Every one of these page constants is built
+# at import, though, so the answer can't be baked into them — it is
+# substituted per request instead, in _send_html, which every page in
+# the app goes through. These are the three places it lands. A page
+# that somehow reached a client unfilled shows neither state rather
+# than a raw token, which is exactly what it looked like before.
+ACCOUNT_STATE_SLOT = "__ACCOUNT_STATE__"
+ACCOUNT_EMAIL_SLOT = "__ACCOUNT_EMAIL__"
+ACCOUNT_INITIALS_SLOT = "__ACCOUNT_INITIALS__"
+
+
 def account_widget(extra_links="", menu_class="", guest_plain=False):
     """The one "who's logged in" component — an avatar circle, an
     email that truncates with an ellipsis instead of wrapping/
@@ -423,12 +442,12 @@ def account_widget(extra_links="", menu_class="", guest_plain=False):
     else:
         guest_links = '<a href="/login" class="secondary">Sign in</a>\n  <a href="/signup" class="primary">Sign up</a>'
     return f"""
-<div class="app-account-guest{' plain-links' if guest_plain else ''}" id="shell-guest">
+<div class="app-account-guest{' plain-links' if guest_plain else ''}" id="shell-guest" data-account="{ACCOUNT_STATE_SLOT}">
   {guest_links}
 </div>
-<button type="button" class="app-account" id="shell-account-btn" style="display:none" aria-haspopup="true" aria-expanded="false">
-  <span class="app-avatar" id="shell-avatar">&nbsp;</span>
-  <span class="app-account-email" id="shell-email">&nbsp;</span>
+<button type="button" class="app-account" id="shell-account-btn" data-account="{ACCOUNT_STATE_SLOT}" aria-haspopup="true" aria-expanded="false">
+  <span class="app-avatar" id="shell-avatar">{ACCOUNT_INITIALS_SLOT}</span>
+  <span class="app-account-email" id="shell-email">{ACCOUNT_EMAIL_SLOT}</span>
   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--slate);flex:none">
     <path d="M3 4.5L6 7.5L9 4.5" stroke-linecap="round"/>
   </svg>
@@ -443,19 +462,9 @@ def account_widget(extra_links="", menu_class="", guest_plain=False):
 </div>
 <script>
 (function() {{
-  fetch('/api/me').then(r => r.json()).then(me => {{
-    if (!me.logged_in) {{
-      document.getElementById('shell-guest').style.display = 'flex';
-      return;
-    }}
-    const email = me.email || '';
-    document.getElementById('shell-email').textContent = email;
-    document.getElementById('shell-avatar').textContent = email.slice(0, 2).toUpperCase();
-    document.getElementById('shell-account-btn').style.display = '';
-  }}).catch(() => {{
-    document.getElementById('shell-guest').style.display = 'flex';
-  }});
-
+  // Which half of this is visible, and whose email is in it, arrived
+  // with the HTML (see ACCOUNT_STATE_SLOT above). This script is only
+  // the behaviour: open/close, sign out, theme.
   const acctBtn = document.getElementById('shell-account-btn');
   const acctMenu = document.getElementById('shell-account-menu');
   // aria-expanded on the trigger mirrors the .show class so screen readers
@@ -788,15 +797,14 @@ def app_shell(current, body):
     that page's own controls (see FLAGGED_BODY).
 
     Most pages that call this have already 302'd to /login server-side
-    if there's no session, so for them the /api/me fetch below isn't an
-    access check — it only learns which email to show in the sidebar
-    footer. /lookup and /lobbying are the exceptions: they render this
-    same shell without requiring a session at all (see the module
-    docstring's "free to look up a bill, no account needed" promise),
-    so /api/me can genuinely come back logged_in: false here — in which
-    case the sidebar footer swaps to Sign in/Sign up (#shell-guest)
-    instead of an avatar and a "Sign out" button that wouldn't do
-    anything. Sidebar links to account-gated pages (Flagged bills,
+    if there's no session. /lookup and /lobbying are the exceptions:
+    they render this same shell without requiring a session at all (see
+    the module docstring's "free to look up a bill, no account needed"
+    promise), so the footer here can genuinely be the logged-out one —
+    Sign in/Sign up (#shell-guest) instead of an avatar and a "Sign
+    out" button that wouldn't do anything. Which one ships is decided
+    per request by _fill_account_state, for these two pages as much as
+    for the rest. Sidebar links to account-gated pages (Flagged bills,
     Clients, Profile, ...) still just 302 a logged-out visitor to
     /login if they click one — same as always."""
     # data-nav carries the plain href per item (same value `current` gets
@@ -1865,13 +1873,50 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _send_html(self, status, html, set_cookie=None):
-        body = html.encode("utf-8")
+        body = self._fill_account_state(html).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self._write_set_cookie_headers(set_cookie)
         self.end_headers()
         self.wfile.write(body)
+
+    def _fill_account_state(self, page_html):
+        """Substitute the account widget's three slots (see
+        ACCOUNT_STATE_SLOT) into a page constant on its way out.
+
+        Every HTML response in the app goes through _send_html, so this
+        is one place rather than an edit to each of the ~20 page routes
+        — including /lookup and /lobbying, which render the shell
+        without requiring a session at all and were the two the widget's
+        old client-side fetch existed for. Their session state is
+        knowable here too; it just costs the lookup below, which is the
+        same one _require_user_for_page already does on every other
+        page. A page with no widget in it (the landing splash) doesn't
+        pay even that.
+
+        Resolved per request, never cached on the handler:
+        BaseHTTPRequestHandler instances are reused across keep-alive
+        requests on one connection, so a remembered email would outlive
+        a sign-out by however long that connection stays open."""
+        if ACCOUNT_STATE_SLOT not in page_html:
+            return page_html
+        email = None
+        conn = db.get_connection()
+        try:
+            user_id = self._current_user_id(conn)
+            if user_id:
+                row = conn.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()
+                email = row["email"] if row else None
+        finally:
+            conn.close()
+        if not email:
+            return (page_html.replace(ACCOUNT_STATE_SLOT, "guest")
+                             .replace(ACCOUNT_EMAIL_SLOT, "")
+                             .replace(ACCOUNT_INITIALS_SLOT, ""))
+        return (page_html.replace(ACCOUNT_STATE_SLOT, "user")
+                         .replace(ACCOUNT_EMAIL_SLOT, html_escape(email))
+                         .replace(ACCOUNT_INITIALS_SLOT, html_escape(email[:2].upper())))
 
     def _write_set_cookie_headers(self, set_cookie):
         """set_cookie may be a single cookie header string, a list of
@@ -1968,8 +2013,7 @@ class Handler(BaseHTTPRequestHandler):
         the real session cookie's HttpOnly flag deliberately blocks JS
         from reading. Anyone can forge or strip this cookie — that's
         fine, since nothing security-sensitive reads it; the real
-        /api/me check (see account_widget()) still governs actual
-        access. SIGNED_IN_HINT_COOKIE is defined near THEME_INIT_SCRIPT,
+        session lookup (_current_user_id) still governs actual access. SIGNED_IN_HINT_COOKIE is defined near THEME_INIT_SCRIPT,
         not accounts.py, since it's a UI/theme concern, not an auth
         one."""
         parts = [f"{SIGNED_IN_HINT_COOKIE}={'' if clear else '1'}", "Path=/", "SameSite=Lax"]
