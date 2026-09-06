@@ -177,15 +177,16 @@ async function copyValue(text, message) {
   }
 }
 
-function escapeText(text) {
-  return String(text == null ? '' : text)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
 // For a value going inside a single-quoted inline handler, where the
-// quote and the backslash both have to survive as data.
+// quote and the backslash both have to survive as data. JS-escaped
+// first and HTML-escaped second, and that order is load-bearing: the
+// attribute is parsed before the JS is, so a quote escaped to &#39;
+// arrives at the parser as a bare ' — it needs its backslash added
+// while it is still a quote, and the backslash then survives the HTML
+// escaping untouched.
 function escapeAttr(text) {
-  return escapeText(text).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+  return escapeText(String(text == null ? '' : text)
+    .replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n'));
 }
 
 // Saves on blur rather than per keystroke — same shape as the bill

@@ -39,8 +39,8 @@ function positionHistoryHtml(rows, options) {
   if (!rows || !rows.length) return '<p class="empty">No position changes recorded yet.</p>';
   return `<ol class="position-history">${rows.map(row => {
     const subject = showBill
-      ? `${row.state || ''} ${row.bill_number || 'a removed bill'}`.trim()
-      : titleCaseName(row.client_name || 'A deleted client');
+      ? escapeText(`${row.state || ''} ${row.bill_number || 'a removed bill'}`.trim())
+      : escapeText(titleCaseName(row.client_name || 'A deleted client'));
     const to = row.to_position
       ? `<span class="position-badge ${row.to_position}">${positionLabel(row.to_position)}</span>`
       : '<span class="position-badge removed">Removed from the bill</span>';
@@ -51,7 +51,7 @@ function positionHistoryHtml(rows, options) {
       : '';
     const effective = row.effective_date ? `In force since ${fmtHistoryDate(row.effective_date)}` : '';
     const when = `Recorded ${fmtHistoryStamp(row.changed_at)}`;
-    const who = row.changed_by_email ? ` by ${row.changed_by_email}` : '';
+    const who = row.changed_by_email ? ` by ${escapeText(row.changed_by_email)}` : '';
     return `
       <li class="position-history-row">
         <div class="position-history-what"><span class="position-history-subject">${subject}</span>${from}${to}</div>

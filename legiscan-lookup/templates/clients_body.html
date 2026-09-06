@@ -244,9 +244,9 @@ function renderAutofillMatches(dropdownEl, matches, onSelect) {
     (a.entity_type === 'employer' ? 0 : 1) - (b.entity_type === 'employer' ? 0 : 1));
   dropdownEl.innerHTML = sorted.map(r => `
     <button type="button" class="${r.entity_type === 'employer' ? '' : 'non-employer-match'}" onclick="${onSelect}(${r.id})">
-      ${r.name}
-      ${r.entity_type && r.entity_type !== 'employer' ? ` <span class="tag">${r.entity_type}</span>` : ''}
-      ${r.city || r.state ? ` <span class="sub" style="margin:0">— ${[r.city, r.state].filter(Boolean).join(', ')}</span>` : ''}
+      ${escapeText(r.name)}
+      ${r.entity_type && r.entity_type !== 'employer' ? ` <span class="tag">${escapeText(r.entity_type)}</span>` : ''}
+      ${r.city || r.state ? ` <span class="sub" style="margin:0">— ${escapeText([r.city, r.state].filter(Boolean).join(', '))}</span>` : ''}
     </button>
   `).join('');
   dropdownEl.classList.add('show');
@@ -441,10 +441,10 @@ function render(rows) {
       <tbody>
       ${rows.map(c => `
         <tr>
-          <td><a href="/clients/detail?id=${c.id}">${titleCaseName(c.name)}</a></td>
-          <td>${[[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), formatPhone(c.bus_phone)].filter(Boolean).join(' · ')}</td>
-          <td>${c.interests || ''}</td>
-          <td>${c.existing_filer_id || ''}</td>
+          <td><a href="/clients/detail?id=${c.id}">${escapeText(titleCaseName(c.name))}</a></td>
+          <td>${escapeText([[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), formatPhone(c.bus_phone)].filter(Boolean).join(' · '))}</td>
+          <td>${escapeText(c.interests || '')}</td>
+          <td>${escapeText(c.existing_filer_id || '')}</td>
           <td class="row-menu">
             <button type="button" class="secondary" onclick="editClient(${c.id})" style="margin-right:0.4rem">Edit</button>
             <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'client-${c.id}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-client-${c.id}">

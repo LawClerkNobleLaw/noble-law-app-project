@@ -45,10 +45,6 @@ function fmtStamp(iso) {
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-function escapeText(text) {
-  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 // The client picker only ever offers clients already assigned to the
 // chosen bill. A letter written on behalf of a client who isn't on the
 // bill would be a letter with no position behind it — and assigning the

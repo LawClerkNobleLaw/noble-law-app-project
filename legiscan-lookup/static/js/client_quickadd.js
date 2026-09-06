@@ -38,7 +38,7 @@ const POSITIONS = [['watch', '\u25e6 Watch'], ['support', '+ Support'], ['oppose
 const ADD_NEW_CLIENT_VALUE = '__add_new_client__';
 
 function clientOptionsHtml(available) {
-  const opts = (available || []).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+  const opts = (available || []).map(c => `<option value="${c.id}">${escapeText(c.name)}</option>`).join('');
   return opts + `<option value="${ADD_NEW_CLIENT_VALUE}">+ Add new client</option>`;
 }
 
@@ -136,9 +136,9 @@ function wireQuickAddNameAutofill() {
         (a.entity_type === 'employer' ? 0 : 1) - (b.entity_type === 'employer' ? 0 : 1));
       dropdown.innerHTML = sorted.map(r => `
         <button type="button" class="${r.entity_type === 'employer' ? '' : 'non-employer-match'}" data-id="${r.id}">
-          ${r.name}
-          ${r.entity_type && r.entity_type !== 'employer' ? ` <span class="tag">${r.entity_type}</span>` : ''}
-          ${r.city || r.state ? ` <span class="sub" style="margin:0">— ${[r.city, r.state].filter(Boolean).join(', ')}</span>` : ''}
+          ${escapeText(r.name)}
+          ${r.entity_type && r.entity_type !== 'employer' ? ` <span class="tag">${escapeText(r.entity_type)}</span>` : ''}
+          ${r.city || r.state ? ` <span class="sub" style="margin:0">— ${escapeText([r.city, r.state].filter(Boolean).join(', '))}</span>` : ''}
         </button>
       `).join('');
       dropdown.classList.add('show');

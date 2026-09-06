@@ -490,6 +490,79 @@ def test_closing_a_row_menu_only_takes_focus_back_if_it_had_it():
     assert "if (heldFocus) openBtn.focus();" in js
 
 
+# ── One escape, everywhere (U8) ───────────────────────────────────────
+ESCAPE_JS_PATH = os.path.join(ROOT, "static", "js", "escape_text.js")
+
+
+def test_the_app_has_exactly_one_html_escape():
+    # There were thirteen: nine escapeText, plus esc (dashboard), escDl
+    # (calendar), escapeAttr (bill_status), escapeHtml (report, client
+    # detail, disclosure review) and escapeNotes (report) — no two of
+    # them escaping quite the same set of characters.
+    definitions = []
+    for path in _templates() + _shared_js():
+        text = _read(path)
+        for name in re.findall(r"function (esc[A-Za-z]*)\(", text):
+            definitions.append((os.path.basename(path), name))
+    # letter_edit's escapeAttr survives on purpose: it wraps this one to
+    # add JS-string escaping for a value going inside an inline handler.
+    assert definitions == [("letter_edit_body.html", "escapeAttr"), ("escape_text.js", "escapeText")], definitions
+
+
+def test_nobody_hand_rolls_the_escape_again():
+    for path in _templates() + _shared_js():
+        if os.path.basename(path) == "escape_text.js":
+            continue
+        assert "'&amp;'" not in _read(path), os.path.basename(path)
+        assert '"&amp;"' not in _read(path), os.path.basename(path)
+
+
+def test_the_one_escape_covers_attributes_too():
+    # The nine copies were written for text between tags, but the same
+    # values land in title=, aria-label= and data- attributes all over
+    # these pages, where an unescaped " ends the attribute early.
+    js = _read(ESCAPE_JS_PATH)
+    for pair in ('/&/g, "&amp;"', '/</g, "&lt;"', '/>/g, "&gt;"', '/"/g, "&quot;"', "/'/g, \"&#39;\""):
+        assert pair in js, pair
+
+
+def test_every_page_that_renders_a_row_has_it_loaded():
+    body = app.page("T — Rotunda", "/flagged", "<p>x</p>")
+    assert "js/escape_text.js" in body
+    # Above app_shell()'s output, so it is defined before any page's own
+    # inline script and before every shared module that now calls it.
+    assert body.index("js/escape_text.js") < body.index("app-shell")
+    assert "js/escape_text.js" in app.STATIC_ASSETS
+
+
+def test_the_shared_bill_tables_escape_legiscans_own_prose():
+    # These four builders render on /report and /lookup both, and every
+    # field in them is free-form text from the feed. "Ways & Means" is
+    # the ordinary case here, not the adversarial one.
+    js = _read(os.path.join(ROOT, "static", "js", "bill_tables.js"))
+    for field in ("h.action", "h.chamber", "a.title || a.description", "h.description", "v.description"):
+        assert "escapeText(%s" % field in js, field
+
+
+def test_the_least_sanitised_string_in_the_app_is_escaped_before_it_is_linkified():
+    # raw_bill_text is free text typed into a CAL-ACCESS form, and
+    # billPills returns it as markup with bill numbers turned into
+    # links. Escaping has to happen before the pills go in, or it
+    # escapes the app's own <a> tags instead.
+    js = _read(os.path.join(TEMPLATES, "lobbying_detail_body.html"))
+    assert "return escapeText(text).replace(re," in js
+
+
+def test_the_inline_handler_escape_still_runs_in_the_right_order():
+    # escapeAttr wraps escapeText. The JS-string escaping has to come
+    # first: the attribute is parsed before the JS is, so a quote
+    # escaped to &#39; reaches the JS parser as a bare ' and needs its
+    # backslash added while it is still a quote.
+    js = _read(os.path.join(TEMPLATES, "letter_edit_body.html"))
+    body = js.split("function escapeAttr", 1)[1].split("}", 1)[0]
+    assert body.index("escapeText(") < body.index("\\\\'")
+
+
 # ── Filter rails (A7) ─────────────────────────────────────────────────
 def test_the_filtering_pages_redraw_without_dropping_focus():
     assert "keepFocus(railEl" in _read(os.path.join(TEMPLATES, "flagged_body.html"))

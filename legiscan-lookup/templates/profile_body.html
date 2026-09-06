@@ -190,10 +190,6 @@ function renderRoster() {
   `).join('');
 }
 
-function escapeText(text) {
-  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 document.getElementById('add-lobbyist-f').addEventListener('submit', async (e) => {
   e.preventDefault();
   errorEl.className = '';

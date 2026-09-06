@@ -576,6 +576,7 @@ TITLE_CASE_JS = _read_static_text("js/title_case.js")
 ROW_MENU_JS = _read_static_text("js/row_menu.js")
 PAGE_PROGRESS_JS = _read_static_text("js/page_progress.js")
 FOCUS_JS = _read_static_text("js/focus.js")
+ESCAPE_TEXT_JS = _read_static_text("js/escape_text.js")
 
 
 # Every file the /static/ route will serve, name -> (bytes, content type),
@@ -596,6 +597,7 @@ STATIC_ASSETS = {
     "js/row_menu.js": (ROW_MENU_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/page_progress.js": (PAGE_PROGRESS_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/focus.js": (FOCUS_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/escape_text.js": (ESCAPE_TEXT_JS.encode("utf-8"), JS_CONTENT_TYPE),
 }
 
 STYLE_HREF = _asset_url("style.css")
@@ -611,6 +613,7 @@ TITLE_CASE_SRC = _asset_url("js/title_case.js")
 ROW_MENU_SRC = _asset_url("js/row_menu.js")
 PAGE_PROGRESS_SRC = _asset_url("js/page_progress.js")
 FOCUS_SRC = _asset_url("js/focus.js")
+ESCAPE_TEXT_SRC = _asset_url("js/escape_text.js")
 
 TOP_BRAND = """<a href="/" class="top-brand">
   <span class="brand-mark" style="width:17px;height:17px"></span>
@@ -978,6 +981,7 @@ def page(title, path, body):
 <a class="skip-link" href="#main-content">Skip to main content</a>
 <div id="page-progress"></div>
 <script src="{PAGE_PROGRESS_SRC}"></script>
+<script src="{ESCAPE_TEXT_SRC}"></script>
 <script src="{FOCUS_SRC}"></script>
 {app_shell(path, body)}
 </body>

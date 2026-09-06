@@ -18,10 +18,6 @@ const sponsorsEl = document.getElementById('sponsors');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
 
-function escapeText(text) {
-  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 const PARTY_LABELS = { D: 'Democrat', R: 'Republican', I: 'Independent' };
 function partyLabel(party) {
   return PARTY_LABELS[party] || party;

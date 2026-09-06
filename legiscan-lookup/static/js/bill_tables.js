@@ -9,6 +9,12 @@
  * Each function takes the already-extracted array (d.hearings vs
  * r.upcoming_hearings, etc.), not the whole bill/report object, since
  * the two pages don't even use the same field name for hearings.
+ *
+ * Every field below is LegiScan's, and every one of them goes through
+ * escapeText (see escape_text.js). Action text and committee
+ * descriptions are free-form prose from the Legislature's own feed —
+ * "Ways & Means" is the ordinary case, not the adversarial one, and it
+ * rendered as "Ways &amp;amp; Means" until this pass.
  */
 
 // A history table is easy to skim by date/chamber but hard to skim by
@@ -30,16 +36,16 @@ function milestoneClass(action) {
 
 function historyRowsHtml(history) {
   return (history || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(h =>
-    `<tr class="${milestoneClass(h.action)}"><td class="date">${h.date || ''}</td><td class="chamber">${h.chamber || ''}</td><td>${h.action || ''}</td></tr>`
+    `<tr class="${milestoneClass(h.action)}"><td class="date">${escapeText(h.date || '')}</td><td class="chamber">${escapeText(h.chamber || '')}</td><td>${escapeText(h.action || '')}</td></tr>`
   ).join('');
 }
 
 function amendmentRowsHtml(amendments) {
   return (amendments || []).map(a => `
     <tr>
-      <td class="date">${a.date || ''}</td>
-      <td class="chamber">${a.chamber || ''}</td>
-      <td>${a.title || a.description || ''}${a.adopted ? ' <span class="tag">Adopted</span>' : ''}${a.url ? ` — <a href="${a.url}" target="_blank" rel="noopener">View amended text →</a>` : ''}</td>
+      <td class="date">${escapeText(a.date || '')}</td>
+      <td class="chamber">${escapeText(a.chamber || '')}</td>
+      <td>${escapeText(a.title || a.description || '')}${a.adopted ? ' <span class="tag">Adopted</span>' : ''}${a.url ? ` — <a href="${escapeText(a.url)}" target="_blank" rel="noopener">View amended text →</a>` : ''}</td>
     </tr>
   `).join('');
 }
@@ -47,9 +53,9 @@ function amendmentRowsHtml(amendments) {
 function hearingRowsHtml(hearings) {
   return (hearings || []).map(h => `
     <tr>
-      <td class="date">${h.date || ''} ${hearingTimeLabel(h.time)}</td>
-      <td class="chamber">${h.event_type || ''}</td>
-      <td>${h.description || ''}${h.location ? ` — ${h.location}` : ''}</td>
+      <td class="date">${escapeText(h.date || '')} ${escapeText(hearingTimeLabel(h.time))}</td>
+      <td class="chamber">${escapeText(h.event_type || '')}</td>
+      <td>${escapeText(h.description || '')}${h.location ? ` — ${escapeText(h.location)}` : ''}</td>
     </tr>
   `).join('');
 }
@@ -60,10 +66,10 @@ function hearingRowsHtml(hearings) {
 function voteRowsHtml(votes) {
   return (votes || []).map(v => `
     <tr>
-      <td class="date">${v.date || ''}</td>
-      <td class="chamber">${v.chamber || ''}</td>
+      <td class="date">${escapeText(v.date || '')}</td>
+      <td class="chamber">${escapeText(v.chamber || '')}</td>
       <td>
-        ${v.description || ''}${v.passed ? ' <span class="tag">Passed</span>' : ''}
+        ${escapeText(v.description || '')}${v.passed ? ' <span class="tag">Passed</span>' : ''}
         <div class="sub" style="margin:0.2rem 0 0;font-size:0.78rem">
           Yea ${v.yea || 0} · Nay ${v.nay || 0} · NV ${v.nv || 0} · Absent ${v.absent || 0}
         </div>

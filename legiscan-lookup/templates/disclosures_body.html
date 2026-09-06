@@ -171,7 +171,7 @@ function dueCell(r) {
   if (!r.due_date) {
     return '<span class="due-none">Not set</span>';
   }
-  const when = fmtDueDate(r.due_date);
+  const when = escapeText(fmtDueDate(r.due_date));
   const days = r.days_until_due;
   if (days === null || days === undefined) return when;
 
@@ -200,10 +200,10 @@ function render(rows) {
           : '<span class="status-badge">Draft</span>';
         return `
           <tr>
-            <td>${(meta && meta.label) || ('Form ' + r.form_type)}</td>
+            <td>${escapeText((meta && meta.label) || ('Form ' + r.form_type))}</td>
             <td class="col-due">${dueCell(r)}</td>
             <td>${statusBadge}</td>
-            <td class="date">${fmtDateTime(r.created_at)}</td>
+            <td class="date">${escapeText(fmtDateTime(r.created_at))}</td>
             <td class="row-menu">
               <a class="secondary" href="/disclosures/review?id=${r.id}" style="margin-right:0.4rem">Review</a>
               <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'filing-${r.id}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-filing-${r.id}">
