@@ -418,31 +418,66 @@ def test_the_longest_onboarding_form_shows_its_own_submit_working():
 # ══════════════════════════════════════════════════════════════════════
 
 # ── What every page load pays for (P1) ────────────────────────────────
-def test_no_weight_is_fetched_that_nothing_sets():
-    """Poppins came down in five weights on every navigation, one of
-    which (300) the stylesheet never sets. In a multi-page app that is
-    paid per click, not once, so the request is worth keeping honest —
-    and a list of numbers in a URL is exactly the thing that stops
-    matching reality silently."""
-    requested = set(re.search(r"wght@([\d;]+)", app.FONT_LINKS).group(1).split(";"))
+def _weights_the_app_actually_sets():
     used = set()
     for path in [STYLE_PATH] + _templates():
-        used.update(re.findall(r"font-weight: ?(\d{3})", _read(path)))
+        used.update(int(w) for w in re.findall(r"font-weight: ?(\d{3})", _read(path)))
     # 400 and 700 stay regardless: they are what unstyled body text and
     # every <strong>/<b>/<th> resolve to.
-    assert requested == used | {"400", "700"}, sorted(requested ^ (used | {"400", "700"}))
+    return used | {400, 700}
 
 
-def test_no_family_is_fetched_that_nothing_asks_for():
-    # --font-serif named Instrument Serif and no rule in the app has
-    # ever consumed the token, so two more files came down per visitor
-    # for text that doesn't exist.
+def test_no_weight_is_shipped_that_nothing_sets():
+    """Poppins came down in five weights on every navigation, one of
+    which (300) the stylesheet never sets. A list of weights is exactly
+    the thing that stops matching reality silently — more so now that
+    each one is a file in the repo."""
+    assert set(app.POPPINS_WEIGHTS) == _weights_the_app_actually_sets()
+
+
+def test_every_declared_face_is_a_file_this_app_serves():
+    faces = re.findall(r"src: url\('([^']+)'\)", app.FONT_LINKS)
+    assert len(faces) == len(app.POPPINS_WEIGHTS)
+    for url in faces:
+        name, _, version = url.lstrip("/").partition("?")
+        name = name[len("static/"):]
+        assert name in app.STATIC_ASSETS, name
+        # The content hash is what makes the year-long immutable
+        # Cache-Control on that route safe, and it is the whole reason
+        # self-hosting is cheaper than the CDN rather than merely
+        # closer.
+        assert version.startswith("v="), url
+
+
+def test_no_page_asks_a_third_party_for_anything():
+    """Not only a handshake and a swap per navigation — on a product
+    holding client strategy, every page view was a request telling
+    someone else which pages get looked at."""
+    body = app.page("T — Rotunda", "/flagged", "<p>x</p>")
+    for host in ("fonts.googleapis.com", "fonts.gstatic.com", "//"):
+        assert host not in app.FONT_LINKS, host
+    assert "http://" not in body and "https://" not in body
+
+
+def test_the_faces_that_are_preloaded_are_the_ones_every_page_needs():
+    # Body copy and the heading/label weight. Preloading all four would
+    # spend first-paint bandwidth on files some pages never use.
+    preloaded = re.findall(r'rel="preload"[^>]*poppins-(\d{3})', app.FONT_LINKS)
+    assert preloaded == ["400", "600"]
+    # crossorigin even though this is same-origin now: fonts are fetched
+    # in CORS mode, and a preload without it downloads the file twice.
+    assert app.FONT_LINKS.count("crossorigin") == len(preloaded)
+
+
+def test_the_serif_token_names_a_font_that_is_actually_there():
+    # --font-serif named Instrument Serif and nothing consumes the
+    # token, so two more files came down per visitor for text that
+    # doesn't exist. Naming it while not shipping it would have been
+    # worse than either.
     style = _read(STYLE_PATH)
-    for family in re.findall(r"family=([A-Za-z+]+)", app.FONT_LINKS):
-        name = family.replace("+", " ")
-        assert name in style, name
-    assert "Instrument" not in app.FONT_LINKS
-    assert "Instrument" not in style.split("--font-serif:", 1)[1].split(";", 1)[0]
+    serif = style.split("--font-serif:", 1)[1].split(";", 1)[0]
+    assert "Instrument" not in serif
+    assert "Georgia" in serif
 
 
 FOCUS_JS_PATH = os.path.join(ROOT, "static", "js", "focus.js")
