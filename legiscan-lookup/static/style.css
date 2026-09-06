@@ -862,10 +862,39 @@
     padding: 0 1.5rem; border-bottom: 1px solid var(--rule); background: var(--paper); gap: 1rem;
   }
   .app-topbar-sub { font-size: 0.78rem; color: var(--slate); }
+  /* The way into search from every other page. There WAS a global
+     search input here once, removed as redundant — /lookup is one
+     sidebar click away and does the same job better, so a second
+     always-visible box competing with it was furniture. Still true,
+     which is why this is a link shaped like a search field and not a
+     field: it navigates rather than searching in place, and its real
+     job is to say that ⌘K exists (see search_shortcut.js). Sized and
+     coloured off .search-box below so the two read as the same family
+     without one pretending to be the other. */
+  .topbar-search {
+    display: flex; align-items: center; gap: 0.5rem; height: 2rem; border-radius: var(--radius-md);
+    background: var(--accent-soft); border: 1px solid var(--rule-strong);
+    padding: 0 var(--space-2); font-size: 0.8rem; color: var(--slate);
+    text-decoration: none; white-space: nowrap;
+  }
+  .topbar-search:hover { border-color: var(--ink); color: var(--ink); }
+  .topbar-search svg { width: 0.75rem; height: 0.75rem; flex: none; }
+  .topbar-search kbd {
+    font: inherit; font-size: 0.7rem; font-family: ui-monospace, monospace;
+    border: 1px solid var(--rule); border-radius: var(--radius-sm);
+    padding: 0 0.25rem; color: var(--slate);
+  }
+  /* On a narrow screen the topbar is a hamburger, a date and this; the
+     words are the first thing that can go, and a magnifier beside a key
+     hint still reads as search. */
+  @media (max-width: 560px) {
+    .topbar-search span { display: none; }
+  }
+
   /* Was shared topbar chrome on every page (a global "search LegiScan"
      box + a persistent "Flag a bill" shortcut) until both were removed
-     as redundant — /lookup (linked from the sidebar) already covers
-     both a real search and flagging. Now just FLAGGED_BODY's own local
+     as redundant — see .topbar-search above for what came back and how
+     it differs. What follows is FLAGGED_BODY's own local
      filter-as-you-type box for the list already loaded on that page —
      a different job (filtering, not searching LegiScan), which is why
      it survived while the shared version didn't. */
