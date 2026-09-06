@@ -506,3 +506,31 @@ def test_every_filter_control_can_be_found_again_after_a_redraw():
         text = _read(os.path.join(TEMPLATES, name))
         for tag in re.findall(r"<button[^>]*filter-tab[^>]*>", text):
             assert "focusKeyAttr(" in tag, "%s: %s" % (name, tag)
+
+# ── The splash and the visitor's own choice (V3) ──────────────────────
+def test_the_splash_answers_an_explicit_light_choice():
+    # The audit called this "the landing page ignores the theme system".
+    # The narrower truth: a signed-out visitor is dark everywhere in
+    # this app on purpose, so OS preference is not the input — but
+    # someone who has USED the toggle got light on /signup, /login and
+    # every page after it, and black here. One page ignoring a choice
+    # every other page honours is the whole defect.
+    assert ':root[data-theme="light"] .splash' in app.LANDING_STYLE
+
+
+def test_the_splash_can_see_the_choice_before_it_paints():
+    # data-theme is set by THEME_INIT_SCRIPT, which this page didn't
+    # include at all — the attribute the rule above keys off would never
+    # have been there.
+    assert "data-theme" in app.LANDING_PAGE
+    # In <head>, before the body it colours — same placement as page().
+    assert app.LANDING_PAGE.index("localStorage.getItem('theme')") < app.LANDING_PAGE.index("<body>")
+
+
+def test_nothing_on_the_splash_is_painted_white_by_hand():
+    # Every faint dot, ring, line and glow is the ink at a low alpha. A
+    # literal white anywhere is a layer that stays white on a cream
+    # ground, which is invisible rather than merely wrong.
+    for literal in ("rgba(255,255,255", "#fff;", "background: #000;"):
+        assert literal not in app.LANDING_STYLE, literal
+    assert "rgba(255,255,255" not in app.LANDING_PAGE
