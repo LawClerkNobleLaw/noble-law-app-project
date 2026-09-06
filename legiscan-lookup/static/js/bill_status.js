@@ -72,10 +72,6 @@ function billStatusFromAction(lastAction) {
   return { label: 'In progress', inferred: true };
 }
 
-function escapeAttr(text) {
-  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-}
-
 // The one status pill. `inferred` adds the dotted underline and says so
 // in the tooltip; every pill gets the glossary definition as its title,
 // which is the hover explanation the terms never had.
@@ -84,8 +80,8 @@ function statusBadgeHtml(label, options) {
   const inferred = !!(options && options.inferred);
   const definition = BILL_STATUS_DEFINITIONS[label] || '';
   const note = inferred ? ' Inferred from the bill’s latest action — open the bill for its recorded status.' : '';
-  const title = escapeAttr((definition + note).trim());
-  return `<span class="status-badge${inferred ? ' inferred' : ''}"${title ? ` title="${title}"` : ''}>${escapeAttr(label)}</span>`;
+  const title = escapeText((definition + note).trim());
+  return `<span class="status-badge${inferred ? ' inferred' : ''}"${title ? ` title="${title}"` : ''}>${escapeText(label)}</span>`;
 }
 
 // A legend at the foot of any list that uses the pills. Only the labels
@@ -96,7 +92,7 @@ function statusLegendHtml(labels) {
   const shown = BILL_STATUS_ORDER.filter(label => present.has(label));
   if (!shown.length) return '';
   const items = shown.map(label => `
-    <div class="status-legend-item"><span class="status-legend-term">${escapeAttr(label)}</span>${escapeAttr(BILL_STATUS_DEFINITIONS[label])}</div>
+    <div class="status-legend-item"><span class="status-legend-term">${escapeText(label)}</span>${escapeText(BILL_STATUS_DEFINITIONS[label])}</div>
   `).join('');
   return `<div class="status-legend"><div class="status-legend-head">What these mean</div>${items}</div>`;
 }

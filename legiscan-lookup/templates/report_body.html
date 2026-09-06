@@ -196,12 +196,12 @@ function currentStatusCardHtml(history, amendByDate) {
   return `
     <div class="current-status-card ${milestoneClass(latest.action)}">
       <div class="current-status-label">Latest action</div>
-      <div class="current-status-action">${latest.action || 'Unknown'}</div>
-      <div class="current-status-meta">${[fmtShortDate(latest.date), latest.chamber].filter(Boolean).join(' · ')}</div>
+      <div class="current-status-action">${escapeText(latest.action || 'Unknown')}</div>
+      <div class="current-status-meta">${escapeText([fmtShortDate(latest.date), latest.chamber].filter(Boolean).join(' · '))}</div>
       <div class="current-status-amend-by">
         <label for="amend-by-input">Your amendment deadline</label>
         <div class="sub">A reminder you set. Nothing is filed from it — it shows up in Next action on your flagged list.</div>
-        <input type="date" id="amend-by-input" value="${amendByDate || ''}"
+        <input type="date" id="amend-by-input" value="${escapeText(amendByDate || '')}"
                onchange="saveAmendByDate(this)">
         <div class="sub" id="amend-by-status" aria-live="polite"></div>
       </div>
@@ -256,13 +256,6 @@ async function saveAmendByDate(inputEl) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';
   }
-}
-
-// The note goes back into a <textarea>, so only "</textarea>" can break
-// out — but &, < and > are escaped anyway rather than relying on that
-// being the only case for however long this markup stays as it is.
-function escapeNotes(text) {
-  return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 // Saves on blur rather than per keystroke — a note is written in one
@@ -407,14 +400,14 @@ function render(r) {
 
   reportEl.innerHTML = `
     <div class="card">
-      <div class="bill-id">${r.state} ${r.bill_number}</div>
+      <div class="bill-id">${escapeText(r.state)} ${escapeText(r.bill_number)}</div>
       <div class="status-line">
         ${statusBadgeHtml(r.status_label || 'In progress')}
-        ${r.status_date ? `<span class="status-since">since ${fmtShortDate(r.status_date)}</span>` : ''}
+        ${r.status_date ? `<span class="status-since">since ${escapeText(fmtShortDate(r.status_date))}</span>` : ''}
       </div>
-      <h1 class="bill-title">${r.title || ''}</h1>
-      ${r.description ? `<div class="bill-desc">${r.description}</div>` : ''}
-      ${r.url ? `<a class="bill-link" href="${r.url}" target="_blank" rel="noopener">View on LegiScan →</a>` : ''}
+      <h1 class="bill-title">${escapeText(r.title || '')}</h1>
+      ${r.description ? `<div class="bill-desc">${escapeText(r.description)}</div>` : ''}
+      ${r.url ? `<a class="bill-link" href="${escapeText(r.url)}" target="_blank" rel="noopener">View on LegiScan →</a>` : ''}
       <div class="card-actions">
         ${r.flagged
           ? `<span class="status-badge">🚩 Flagged</span>
@@ -450,8 +443,8 @@ function render(r) {
         ${billLetters.map(l => `
           <div class="saved-row" style="padding-left:0;padding-right:0">
             <div class="saved-main">
-              <a class="saved-name" href="/draft/letters/edit?id=${l.id}">${escapeNotes(l.subject)}</a>
-              <div class="saved-meta">${l.client_name ? escapeNotes(l.client_name) + ' · ' : ''}Last edited ${escapeNotes((l.updated_at || '').slice(0, 10))}</div>
+              <a class="saved-name" href="/draft/letters/edit?id=${l.id}">${escapeText(l.subject)}</a>
+              <div class="saved-meta">${l.client_name ? escapeText(l.client_name) + ' · ' : ''}Last edited ${escapeText((l.updated_at || '').slice(0, 10))}</div>
             </div>
           </div>
         `).join('')}
@@ -475,7 +468,7 @@ function render(r) {
       <div style="padding:1rem 1.15rem">
         <label for="bill-notes" class="sub" style="display:block;margin-bottom:0.35rem">Shared with your firm. Saves when you click away.</label>
         <textarea id="bill-notes" rows="4" style="width:100%" placeholder="What you're watching for on this bill, who you've talked to, what you told them…"
-                  onblur="saveNotes(this)">${escapeNotes(r.notes || '')}</textarea>
+                  onblur="saveNotes(this)">${escapeText(r.notes || '')}</textarea>
         <div class="sub" id="notes-status" style="margin-top:0.35rem"></div>
       </div>
     </div>` : ''}
@@ -739,15 +732,6 @@ async function confirmFlagBill(e) {
  */
 let redlineVersions = null;
 
-// Bill text is the Legislature's own words, not user input — but it is
-// still remote content going into innerHTML, and a redline renders far
-// more of it than anything else on this page does.
-function escapeHtml(text) {
-  return String(text == null ? '' : text)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
 // Bound inline in the panel markup above, not here: this panel is
 // painted by load()'s template literal, so at script-parse time the
 // button does not exist yet — and an addEventListener on null throws,
@@ -768,14 +752,14 @@ async function loadRedline() {
     redlineVersions = data.versions || [];
     if (data.single_version) {
       body.innerHTML = `<p class="sub" style="margin:0">This bill has only one version
-        (${escapeHtml(versionLabel(redlineVersions[0]))}), so there's nothing to compare yet.</p>`;
+        (${escapeText(versionLabel(redlineVersions[0]))}), so there's nothing to compare yet.</p>`;
       btn.remove();
       return;
     }
     btn.remove();
     renderRedline(data);
   } catch (err) {
-    body.innerHTML = `<p class="sub" style="margin:0">${escapeHtml(err.message)}</p>`;
+    body.innerHTML = `<p class="sub" style="margin:0">${escapeText(err.message)}</p>`;
     btn.disabled = false;
     btn.textContent = 'Try again';
   }
@@ -790,7 +774,7 @@ function renderRedline(data) {
   const body = document.getElementById('redline-body');
   const options = (from, selected) => redlineVersions.map(v =>
     `<option value="${v.doc_id}"${String(v.doc_id) === String(selected) ? ' selected' : ''}>${
-      escapeHtml(versionLabel(v))}</option>`).join('');
+      escapeText(versionLabel(v))}</option>`).join('');
 
   const counts = data.summary || {};
   const parts = [];
@@ -832,7 +816,7 @@ async function compareVersions() {
     if (!res.ok) throw new Error(data.error || 'Could not compare those versions.');
     renderRedline(data);
   } catch (err) {
-    out.innerHTML = `<p class="sub">${escapeHtml(err.message)}</p>`;
+    out.innerHTML = `<p class="sub">${escapeText(err.message)}</p>`;
   } finally {
     go.disabled = false;
     go.textContent = 'Compare';
@@ -851,13 +835,13 @@ function entriesHtml(entries) {
       // is read on paper. <del>/<ins> rather than styled spans so the
       // meaning survives a screen reader and a copy-paste.
       return `<p class="redline-block">${e.runs.map(run =>
-        run.kind === 'equal' ? escapeHtml(run.text)
-        : run.kind === 'delete' ? `<del>${escapeHtml(run.text)}</del>`
-        : `<ins>${escapeHtml(run.text)}</ins>`).join('')}</p>`;
+        run.kind === 'equal' ? escapeText(run.text)
+        : run.kind === 'delete' ? `<del>${escapeText(run.text)}</del>`
+        : `<ins>${escapeText(run.text)}</ins>`).join('')}</p>`;
     }
-    if (e.kind === 'added') return `<p class="redline-block"><ins>${escapeHtml(e.text)}</ins></p>`;
-    if (e.kind === 'removed') return `<p class="redline-block"><del>${escapeHtml(e.text)}</del></p>`;
-    return `<p class="redline-block redline-equal">${escapeHtml(e.text)}</p>`;
+    if (e.kind === 'added') return `<p class="redline-block"><ins>${escapeText(e.text)}</ins></p>`;
+    if (e.kind === 'removed') return `<p class="redline-block"><del>${escapeText(e.text)}</del></p>`;
+    return `<p class="redline-block redline-equal">${escapeText(e.text)}</p>`;
   }).join('');
 }
 

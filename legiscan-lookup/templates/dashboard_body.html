@@ -74,12 +74,6 @@ const ICON_CALENDAR = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor
 const ICON_ALERT = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M7 4.5v3" stroke-linecap="round"/><circle cx="7" cy="9.8" r="0.6" fill="currentColor" stroke="none"/></svg>';
 const ICON_DISCLOSURE = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="1.5" width="8" height="11" rx="1"/><path d="M5.2 6l1 1 2.2-2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
-function esc(s) {
-  return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-  ));
-}
-
 // Every countdown on this page is already measured in California days by
 // the server (see db.dashboard_summary) — this only puts words on it. A
 // negative number is overdue, which is why "ago" is a separate branch
@@ -161,7 +155,7 @@ function renderStats(s) {
 }
 
 function emptyState(text) {
-  return `<p class="empty" style="padding:1.1rem var(--space-4);margin:0">${esc(text)}</p>`;
+  return `<p class="empty" style="padding:1.1rem var(--space-4);margin:0">${escapeText(text)}</p>`;
 }
 
 function renderAttention(items) {
@@ -178,17 +172,17 @@ function renderAttention(items) {
     // distinction .next-chip.now already draws on the flagged table.
     const urgent = dated && i.days <= 1;
     const chip = dated
-      ? `<span class="due-chip ${i.days < 0 || urgent ? 'over' : 'soon'}">${esc(dayLabel(i.days))}</span>`
+      ? `<span class="due-chip ${i.days < 0 || urgent ? 'over' : 'soon'}">${escapeText(dayLabel(i.days))}</span>`
       : '';
-    let detail = esc(i.detail);
+    let detail = escapeText(i.detail);
     if (i.kind === 'hearing') {
       const where = [dateLabel(i.date), hearingTimeLabel(i.time), i.location].filter(Boolean);
-      detail = esc(where.join(' · '));
+      detail = escapeText(where.join(' · '));
     }
     return `
-      <a class="dash-row" href="${esc(i.href)}">
+      <a class="dash-row" href="${escapeText(i.href)}">
         <span class="dash-row-main">
-          <span class="dash-row-title">${esc(i.title)}</span>
+          <span class="dash-row-title">${escapeText(i.title)}</span>
           <span class="dash-row-sub">${detail}</span>
         </span>
         ${chip}
@@ -205,10 +199,10 @@ function renderRecent(rows) {
   el.innerHTML = rows.map(r => `
     <a class="dash-row" href="/report?bill_id=${encodeURIComponent(r.bill_id)}">
       <span class="dash-row-main">
-        <span class="dash-row-title">${esc(r.state)} ${esc(r.bill_number)}</span>
-        <span class="dash-row-sub">${esc(r.summary)}</span>
+        <span class="dash-row-title">${escapeText(r.state)} ${escapeText(r.bill_number)}</span>
+        <span class="dash-row-sub">${escapeText(r.summary)}</span>
       </span>
-      <span class="dash-row-when">${esc(agoLabel(r.detected_at))}</span>
+      <span class="dash-row-when">${escapeText(agoLabel(r.detected_at))}</span>
     </a>`).join('');
 }
 
@@ -221,10 +215,10 @@ function renderHearings(rows) {
   el.innerHTML = rows.map(h => `
     <a class="dash-row" href="/report?bill_id=${encodeURIComponent(h.bill_id)}">
       <span class="dash-row-main">
-        <span class="dash-row-title">${esc(h.state)} ${esc(h.bill_number)}</span>
-        <span class="dash-row-sub">${esc([hearingTimeLabel(h.time), h.location].filter(Boolean).join(' · '))}</span>
+        <span class="dash-row-title">${escapeText(h.state)} ${escapeText(h.bill_number)}</span>
+        <span class="dash-row-sub">${escapeText([hearingTimeLabel(h.time), h.location].filter(Boolean).join(' · '))}</span>
       </span>
-      <span class="dash-row-when">${esc(dateLabel(h.date))}</span>
+      <span class="dash-row-when">${escapeText(dateLabel(h.date))}</span>
     </a>`).join('');
 }
 
@@ -243,7 +237,7 @@ function renderByClient(rows, unassigned) {
     return `
       <a class="dash-row" href="/clients/detail?id=${encodeURIComponent(c.client_id)}">
         <span class="dash-row-main">
-          <span class="dash-row-title">${esc(titleCaseName(c.name))}</span>
+          <span class="dash-row-title">${escapeText(titleCaseName(c.name))}</span>
           <span class="dash-row-sub">${badges || 'No bills assigned yet'}</span>
         </span>
         <span class="dash-row-when">${c.total}</span>

@@ -55,7 +55,7 @@ function positionSelectHtml(billId, client) {
   // an undo can put back both halves of what it replaced — reverting the
   // stance but leaving the new date behind would be a third state that
   // was never true.
-  return `<select class="position-select ${position}" data-saved="${position}" data-effective="${client.effective_date || ''}" data-bill="${billId}" data-client="${client.id}" onchange="setPosition(${billId}, ${client.id}, this)" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${options}</select>`;
+  return `<select class="position-select ${position}" data-saved="${position}" data-effective="${escapeText(client.effective_date || '')}" data-bill="${billId}" data-client="${client.id}" onchange="setPosition(${billId}, ${client.id}, this)" style="font-size:0.78rem;padding:0.3rem 0.5rem;font-weight:600">${options}</select>`;
 }
 
 
@@ -80,7 +80,7 @@ function billClientCellHtml(billId, options) {
   const chips = assigned.map(c => `
     <div class="client-assignment">
       <div class="client-chip">
-        <a href="/clients/detail?id=${c.id}">${titleCaseName(c.name)}</a>
+        <a href="/clients/detail?id=${c.id}">${escapeText(titleCaseName(c.name))}</a>
         ${positionSelectHtml(billId, c)}
         <button type="button" class="icon-btn" onclick="unassignClient(${billId}, ${c.id}, this)" aria-label="Remove client from this bill" title="Remove client" style="height:1.5rem;width:1.5rem;color:var(--slate)">×</button>
       </div>
@@ -114,7 +114,7 @@ function effectiveDateHtml(billId, client) {
   return `
     <span class="chip-effective">
       <label for="${id}">In force since</label>
-      <input type="date" id="${id}" value="${client.effective_date || ''}"
+      <input type="date" id="${id}" value="${escapeText(client.effective_date || '')}"
              onchange="setEffectiveDate(${billId}, ${client.id}, this)">
     </span>
   `;

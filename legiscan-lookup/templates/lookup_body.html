@@ -1031,10 +1031,6 @@ function renderSavedSearches() {
   `).join('');
 }
 
-function escapeText(text) {
-  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
 // Running a saved search is seeing its new matches, so the count clears
 // here the same way it does when a digest goes out — otherwise the app
 // and the email would disagree about what the user has been told.

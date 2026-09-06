@@ -15,12 +15,6 @@ function fmtDateTime(iso) {
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-function escapeHtml(s) {
-  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  })[c]);
-}
-
 const errorEl = document.getElementById('error');
 const contentEl = document.getElementById('content');
 const filingId = new URLSearchParams(window.location.search).get('id');
@@ -216,14 +210,14 @@ function provenanceHtml(fieldKey) {
   const editSource = `<a href="${p.href}">Edit source</a>`;
   let sentence;
   if (p.state === 'inherited') {
-    sentence = `From ${escapeHtml(p.label)}.`;
+    sentence = `From ${escapeText(p.label)}.`;
   } else if (p.state === 'edited') {
-    sentence = `Edited here. ${escapeHtml(p.label[0].toUpperCase() + p.label.slice(1))} says
-      <span class="provenance-was">${escapeHtml(p.source_value)}</span>.`;
+    sentence = `Edited here. ${escapeText(p.label[0].toUpperCase() + p.label.slice(1))} says
+      <span class="provenance-was">${escapeText(p.source_value)}</span>.`;
   } else if (p.state === 'typed') {
-    sentence = `Typed here. ${escapeHtml(p.empty_note)}`;
+    sentence = `Typed here. ${escapeText(p.empty_note)}`;
   } else {
-    sentence = escapeHtml(p.empty_note);
+    sentence = escapeText(p.empty_note);
   }
   return `<div class="provenance${p.state === 'edited' ? ' edited' : ''}">${sentence} ${editSource}</div>`;
 }
@@ -252,13 +246,13 @@ function fieldInputHtml(field, value) {
   return `
     <label style="display:block;margin-bottom:0.8rem" id="${domId}" class="field-block${issue ? ' has-issue' : ''}">
       <div class="field-label-row">
-        <span class="field-label" style="margin:0">${escapeHtml(field.label)}${mark}</span>
+        <span class="field-label" style="margin:0">${escapeText(field.label)}${mark}</span>
         <span class="field-saved" id="${domId}-saved" aria-live="polite"></span>
       </div>
-      <input type="${type}" data-field-key="${escapeHtml(field.key)}" data-orig="${escapeHtml(value)}"
-             value="${escapeHtml(value)}" style="width:100%" onblur="saveField(this)"
+      <input type="${type}" data-field-key="${escapeText(field.key)}" data-orig="${escapeText(value)}"
+             value="${escapeText(value)}" style="width:100%" onblur="saveField(this)"
              ${field.required ? 'aria-required="true"' : ''}${issue ? ` aria-invalid="true" aria-describedby="${issueId}"` : ''}>
-      ${issue ? `<div class="field-issue" id="${issueId}">${escapeHtml(issue.message)}</div>` : ''}
+      ${issue ? `<div class="field-issue" id="${issueId}">${escapeText(issue.message)}</div>` : ''}
       ${provenanceHtml(field.key)}
     </label>`;
 }
@@ -297,8 +291,8 @@ function issuesBannerHtml() {
     <div class="review-banner" role="status">
       <div class="review-banner-head">${parts.join(' · ')}</div>
       <ul class="review-banner-list">
-        ${issues.map(i => `<li><button type="button" onclick="jumpToField('${escapeHtml(i.field_key)}')"
-          >${escapeHtml(i.message)}</button></li>`).join('')}
+        ${issues.map(i => `<li><button type="button" onclick="jumpToField('${escapeText(i.field_key)}')"
+          >${escapeText(i.message)}</button></li>`).join('')}
       </ul>
     </div>`;
 }
@@ -357,14 +351,14 @@ function clientsSectionHtml() {
   const rowsHtml = shown.map(i => {
     const clientId = rowIds[i];
     const client = allClients.find(c => c.id === clientId);
-    const heading = client ? escapeHtml(client.name) : 'Typed into row ' + (i + 1) + ' — no client assigned';
+    const heading = client ? escapeText(client.name) : 'Typed into row ' + (i + 1) + ' — no client assigned';
     // Row numbers are what the PDF and the paper form speak in, so the
     // row keeps its number even though the screen no longer counts in
     // them — a reviewer checking the generated form against this screen
     // is matching row 7 to row 7.
     const removeBtn = client
-      ? `<button type="button" class="icon-btn" title="Remove ${escapeHtml(client.name)} from this form"
-           aria-label="Remove ${escapeHtml(client.name)} from this form" onclick="removeClientRow(${client.id})">×</button>`
+      ? `<button type="button" class="icon-btn" title="Remove ${escapeText(client.name)} from this form"
+           aria-label="Remove ${escapeText(client.name)} from this form" onclick="removeClientRow(${client.id})">×</button>`
       : '';
     const fieldsHtml = ROW_KEYS.map(k => fieldInputHtml(
       { key: rowFields[i][k], label: rowLabels[k], required: false, kind: 'text' },
@@ -393,7 +387,7 @@ function clientsSectionHtml() {
     addHtml = `
       <label class="sub" style="margin:0">Add
         <select id="add-client-select">
-          ${available.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}
+          ${available.map(c => `<option value="${c.id}">${escapeText(c.name)}</option>`).join('')}
         </select>
       </label>
       <button type="button" class="secondary" onclick="addClientRow()">+ Add another client</button>`;
@@ -462,12 +456,12 @@ function deadlineCardHtml() {
       <div style="display:flex;gap:1rem;flex-wrap:wrap">
         <label style="flex:1;min-width:11rem">
           <div class="sub" style="margin-bottom:0.25rem">${triggerLabel}</div>
-          <input type="date" id="trigger_date" value="${filing.trigger_date || ''}"
+          <input type="date" id="trigger_date" value="${escapeText(filing.trigger_date || '')}"
                  style="width:100%" onchange="saveDeadline()">
         </label>
         <label style="flex:1;min-width:11rem">
           <div class="sub" style="margin-bottom:0.25rem">Due date</div>
-          <input type="date" id="due_date" value="${filing.due_date || ''}"
+          <input type="date" id="due_date" value="${escapeText(filing.due_date || '')}"
                  style="width:100%" onchange="saveDeadline(true)">
         </label>
       </div>
@@ -525,7 +519,7 @@ function render() {
   const signOffSection = signed ? `
     <div class="card">
       <div class="bill-title" style="margin-bottom:0.4rem">Signed off</div>
-      <div class="bill-desc">Confirmed accurate by <strong>${escapeHtml(filing.signed_name)}</strong> on ${fmtDateTime(filing.signed_at)}.</div>
+      <div class="bill-desc">Confirmed accurate by <strong>${escapeText(filing.signed_name)}</strong> on ${escapeText(fmtDateTime(filing.signed_at))}.</div>
       <div class="sub" style="margin:0.6rem 0 0">This app has not filed anything. Download the PDF above and file it yourself with the FPPC / Secretary of State. Editing any field above reopens this filing for another round of sign-off.</div>
     </div>
   ` : (filing.pdf_current ? `
@@ -549,8 +543,8 @@ function render() {
   contentEl.innerHTML = `
     <div class="page-head">
       <div>
-        <h1>${FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type)}</h1>
-        <p class="sub">${filing.period_label ? 'Period: ' + filing.period_label + ' — ' : ''}Prepared ${fmtDateTime(filing.created_at)}.</p>
+        <h1>${escapeText(FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type))}</h1>
+        <p class="sub">${filing.period_label ? 'Period: ' + escapeText(filing.period_label) + ' — ' : ''}Prepared ${escapeText(fmtDateTime(filing.created_at))}.</p>
         <div style="margin-top:0.6rem">${statusBadge}</div>
       </div>
       <button type="button" class="danger" onclick="removeFiling()">Delete draft</button>

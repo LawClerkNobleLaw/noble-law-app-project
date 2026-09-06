@@ -165,13 +165,6 @@ initBillClients({
   },
 });
 
-// Same three-character escape the other pages carry (profile, lookup,
-// letters). Client names and committee names both reach the rail as
-// text from the database now, so this page needs it too.
-function escapeText(text) {
-  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 function firstClientName(r) {
   const names = (r.assigned_clients || []).map(c => c.name).sort((a, b) => a.localeCompare(b));
   return names[0] || '';

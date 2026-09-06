@@ -25,10 +25,6 @@ const errorEl = document.getElementById('error');
 const listEl = document.getElementById('list');
 let currentRows = [];
 
-function escapeText(text) {
-  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 // Same "no Z means UTC" reading flagged_body.html's own fmtDateTime gives
 // archived_at/flagged_at — both come from SQLite's datetime('now').
 function fmtDateTime(iso) {

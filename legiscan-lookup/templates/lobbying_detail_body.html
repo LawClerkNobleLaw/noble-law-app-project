@@ -13,8 +13,12 @@ function money(n) {
   return typeof n === 'number' ? '$' + n.toLocaleString(undefined, {maximumFractionDigits: 0}) : '';
 }
 
+// Both branches return markup, so the name is escaped either way —
+// these are firm and client names straight out of CAL-ACCESS filings,
+// where an ampersand is the norm rather than the exception.
 function highlight(text, name) {
-  return (text || '').toLowerCase() === (name || '').toLowerCase() ? `<strong>${text}</strong>` : (text || '');
+  const safe = escapeText(text || '');
+  return (text || '').toLowerCase() === (name || '').toLowerCase() ? `<strong>${safe}</strong>` : safe;
 }
 
 // raw_bill_text is real free text from CAL-ACCESS ingestion, not a
@@ -29,7 +33,12 @@ function highlight(text, name) {
 function billPills(text) {
   if (!text) return '';
   const re = /\b(AB|SB|ACA|SCA|AJR|SJR|ACR|SCR|HR|SR)\s?(\d+(?:\s*,\s*\d+)*)\b/gi;
-  return text.replace(re, (whole, prefix, nums) => nums.split(',').map(n => {
+  // Escaped BEFORE the pills go in, not after: everything this returns
+  // that isn't a link is the filing's own prose, and it is the least
+  // sanitised string in the app — free text typed into a CAL-ACCESS
+  // form. A bill number can't contain any of the escaped characters,
+  // so the pattern still finds every one of them afterwards.
+  return escapeText(text).replace(re, (whole, prefix, nums) => nums.split(',').map(n => {
     const bill = `${prefix.toUpperCase()} ${n.trim()}`;
     return `<a class="tag" href="/lookup?bill=${encodeURIComponent(bill)}">${bill}</a>`;
   }).join(' '));
@@ -48,8 +57,8 @@ function relationshipRows(rows, selectedName) {
           <tr>
             <td>${highlight(r.firm, selectedName)}</td>
             <td>${highlight(r.client, selectedName)}</td>
-            <td><span class="tag" title="Firm/client direction is inferred from this form type">${r.form_type || '—'}</span></td>
-            <td class="date">${(r.period_start || '').split(' ')[0]} – ${(r.period_end || '').split(' ')[0]}</td>
+            <td><span class="tag" title="Firm/client direction is inferred from this form type">${escapeText(r.form_type || '—')}</span></td>
+            <td class="date">${escapeText((r.period_start || '').split(' ')[0])} – ${escapeText((r.period_end || '').split(' ')[0])}</td>
             <td>${money(r.amount_spent)}</td>
             <td>${billPills(r.raw_bill_text)}</td>
           </tr>
@@ -72,14 +81,14 @@ function renderDetail(d) {
   document.title = `${d.name} — Rotunda`;
   detailEl.innerHTML = `
     <div class="card">
-      <h1 class="bill-title">${d.name}</h1>
+      <h1 class="bill-title">${escapeText(d.name)}</h1>
       ${e ? `
         <div style="margin-top:0.3rem">
-          <span class="tag">${e.entity_type || ''}</span>
-          ${e.registration_status ? `<span class="tag">${e.registration_status}</span>` : ''}
-          ${e.source_form ? `<span class="tag">Form ${e.source_form}</span>` : ''}
+          <span class="tag">${escapeText(e.entity_type || '')}</span>
+          ${e.registration_status ? `<span class="tag">${escapeText(e.registration_status)}</span>` : ''}
+          ${e.source_form ? `<span class="tag">Form ${escapeText(e.source_form)}</span>` : ''}
         </div>
-        <div class="bill-desc" style="margin-top:0.5rem">${[e.address, e.city, e.state, e.zip].filter(Boolean).join(', ')}</div>
+        <div class="bill-desc" style="margin-top:0.5rem">${escapeText([e.address, e.city, e.state, e.zip].filter(Boolean).join(', '))}</div>
       ` : '<div class="bill-desc" style="margin-top:0.3rem">Named as a client in a disclosure — no independent registration on file.</div>'}
       <div class="card-actions">
         <a class="secondary" href="${addClientUrl(d)}">+ Add as client</a>

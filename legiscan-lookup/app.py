@@ -585,6 +585,7 @@ PAGE_PROGRESS_JS = _read_static_text("js/page_progress.js")
 POPPINS_WEIGHTS = (400, 500, 600, 700)
 POPPINS_FILES = {w: _read_static_bytes(f"fonts/poppins-{w}.woff2") for w in POPPINS_WEIGHTS}
 FOCUS_JS = _read_static_text("js/focus.js")
+ESCAPE_TEXT_JS = _read_static_text("js/escape_text.js")
 
 
 # Every file the /static/ route will serve, name -> (bytes, content type),
@@ -606,6 +607,7 @@ STATIC_ASSETS = {
     "js/page_progress.js": (PAGE_PROGRESS_JS.encode("utf-8"), JS_CONTENT_TYPE),
     **{f"fonts/poppins-{w}.woff2": (POPPINS_FILES[w], "font/woff2") for w in POPPINS_WEIGHTS},
     "js/focus.js": (FOCUS_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/escape_text.js": (ESCAPE_TEXT_JS.encode("utf-8"), JS_CONTENT_TYPE),
 }
 
 STYLE_HREF = _asset_url("style.css")
@@ -683,6 +685,7 @@ FONT_LINKS = "\n".join(
     + ["<style>", FONT_FACES, "</style>"]
 )
 FOCUS_SRC = _asset_url("js/focus.js")
+ESCAPE_TEXT_SRC = _asset_url("js/escape_text.js")
 
 TOP_BRAND = """<a href="/" class="top-brand">
   <span class="brand-mark" style="width:17px;height:17px"></span>
@@ -1049,6 +1052,7 @@ def page(title, path, body):
 <a class="skip-link" href="#main-content">Skip to main content</a>
 <div id="page-progress"></div>
 <script src="{PAGE_PROGRESS_SRC}"></script>
+<script src="{ESCAPE_TEXT_SRC}"></script>
 <script src="{FOCUS_SRC}"></script>
 {app_shell(path, body)}
 </body>

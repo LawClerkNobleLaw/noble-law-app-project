@@ -173,10 +173,6 @@ function compensationLabel(c) {
   return per ? `${money} ${per}` : money;
 }
 
-function escapeText(text) {
-  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 // "Sep 8" — the year is only worth the width when it isn't this one.
 function fmtShortDate(dateStr) {
   if (!dateStr) return '';
@@ -532,15 +528,11 @@ async function renderLetters() {
   document.getElementById('letters').innerHTML = letters.map(l => `
     <div class="saved-row" style="padding-left:0;padding-right:0">
       <div class="saved-main">
-        <a class="saved-name" href="/draft/letters/edit?id=${l.id}">${escapeHtml(l.subject)}</a>
-        <div class="saved-meta">${escapeHtml(l.bill_label || '')}${l.position ? ' · ' + positionLabel(l.position) : ''}</div>
+        <a class="saved-name" href="/draft/letters/edit?id=${l.id}">${escapeText(l.subject)}</a>
+        <div class="saved-meta">${escapeText(l.bill_label || '')}${l.position ? ' · ' + positionLabel(l.position) : ''}</div>
       </div>
     </div>
   `).join('');
-}
-
-function escapeHtml(text) {
-  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function renderHistory(rows) {

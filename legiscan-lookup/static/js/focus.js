@@ -119,12 +119,10 @@ function rememberFocus(container) {
 }
 
 /* The whole attribute, escaped, rather than a bare string: these keys
- * are built from client names and committee labels, and the page-local
- * escapeText() helpers don't escape quotes because nothing else in
- * them lands in an attribute value. */
+ * are built from client names and committee labels. This used to carry
+ * its own copy of the escape, because the page-local escapeText()
+ * helpers didn't escape quotes and a key lands in an attribute value;
+ * escape_text.js does, so there is nothing left to hand-roll. */
 function focusKeyAttr() {
-  const key = Array.from(arguments).join(':')
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  return 'data-focus-key="' + key + '"';
+  return 'data-focus-key="' + escapeText(Array.from(arguments).join(':')) + '"';
 }

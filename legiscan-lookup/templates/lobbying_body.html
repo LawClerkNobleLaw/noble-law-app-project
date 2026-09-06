@@ -86,8 +86,8 @@ function variantsRow(r) {
   if (!r.variants || !r.variants.length) return '';
   const items = r.variants.map(v => `
     <div class="variant-row">
-      <a href="${detailUrl(v)}">${titleCaseName(v.name)}</a>
-      <span class="sub" style="margin:0">${locationOrContext(v)}</span>
+      <a href="${detailUrl(v)}">${escapeText(titleCaseName(v.name))}</a>
+      <span class="sub" style="margin:0">${escapeText(locationOrContext(v))}</span>
     </div>
   `).join('');
   return `
@@ -114,15 +114,15 @@ function entityGroupRow(r) {
   if (r.kind !== 'entity_group') return '';
   const items = r.entities.map(e => `
     <div class="variant-row">
-      <a href="${detailUrl(e)}">${titleCaseName(e.name)}</a>
-      <span class="sub" style="margin:0">${[locationOrContext(e), e.registration_status].filter(Boolean).join(' · ')}</span>
+      <a href="${detailUrl(e)}">${escapeText(titleCaseName(e.name))}</a>
+      <span class="sub" style="margin:0">${escapeText([locationOrContext(e), e.registration_status].filter(Boolean).join(' · '))}</span>
     </div>
   `).join('');
   return `
     <tr class="variants-row">
       <td colspan="5">
         <details>
-          <summary>${r.entities.length} separately registered entities named ${titleCaseName(r.name)}</summary>
+          <summary>${r.entities.length} separately registered entities named ${escapeText(titleCaseName(r.name))}</summary>
           <p class="sub" style="margin:0 0 0.5rem">Each is its own real CAL-ACCESS registration, grouped here by name only — nothing has been merged.</p>
           ${items}
         </details>
@@ -144,7 +144,7 @@ function renderResults(rows, truncated) {
         <tbody>
         ${rows.map(r => r.kind === 'entity_group' ? `
           <tr>
-            <td>${titleCaseName(r.name)}</td>
+            <td>${escapeText(titleCaseName(r.name))}</td>
             <td><span class="tag">${r.entities.length} registered entities</span></td>
             <td></td>
             <td></td>
@@ -153,10 +153,10 @@ function renderResults(rows, truncated) {
           ${entityGroupRow(r)}
         ` : `
           <tr>
-            <td><a href="${detailUrl(r)}">${titleCaseName(r.name)}</a></td>
-            <td>${r.entity_type ? `<span class="tag">${r.entity_type}</span>` : `<span class="tag">named as client only</span>`}</td>
-            <td>${locationOrContext(r)}</td>
-            <td>${r.registration_status || ''}</td>
+            <td><a href="${detailUrl(r)}">${escapeText(titleCaseName(r.name))}</a></td>
+            <td>${r.entity_type ? `<span class="tag">${escapeText(r.entity_type)}</span>` : `<span class="tag">named as client only</span>`}</td>
+            <td>${escapeText(locationOrContext(r))}</td>
+            <td>${escapeText(r.registration_status || '')}</td>
             <td><a class="secondary" href="/clients?prefill_name=${encodeURIComponent(r.name)}${r.id ? `&prefill_entity_id=${r.id}` : ''}">+ Client</a></td>
           </tr>
           ${variantsRow(r)}

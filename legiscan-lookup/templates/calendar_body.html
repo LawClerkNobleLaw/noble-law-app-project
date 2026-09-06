@@ -147,9 +147,9 @@ function render() {
               <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2.5" width="10" height="9.5" rx="1"/><path d="M2 5.5h10M5 1.5v2M9 1.5v2" stroke-linecap="round"/></svg>
             </div>
             <div style="flex:1;min-width:0">
-              <div class="bill-title">${h.event_type || 'Hearing'} · ${hearingTimeLabel(h.time)}</div>
-              <div class="bill-id"><a href="/report?bill_id=${h.bill_id}">${h.state} ${h.bill_number}</a> — ${h.title || ''}</div>
-              ${(h.location || h.description) ? `<div class="sub" style="margin:0.3rem 0 0;font-size:0.78rem">${[h.location, h.description].filter(Boolean).join(' — ')}</div>` : ''}
+              <div class="bill-title">${escapeText(h.event_type || 'Hearing')} · ${escapeText(hearingTimeLabel(h.time))}</div>
+              <div class="bill-id"><a href="/report?bill_id=${h.bill_id}">${escapeText(h.state)} ${escapeText(h.bill_number)}</a> — ${escapeText(h.title || '')}</div>
+              ${(h.location || h.description) ? `<div class="sub" style="margin:0.3rem 0 0;font-size:0.78rem">${escapeText([h.location, h.description].filter(Boolean).join(' — '))}</div>` : ''}
             </div>
           </div>
         `).join('')}
@@ -182,12 +182,6 @@ fetch('/api/flagged/calendar').then(r => r.json()).then(payload => {
  * outcome worth engineering against.
  */
 let parsedDeadlines = null;
-
-function escDl(text) {
-  return String(text == null ? '' : text)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
 
 const KIND_LABELS = {
   introduction: 'Bill introduction', two_year: 'Two-year bills',
@@ -231,14 +225,14 @@ document.getElementById('deadline-read').onclick = async () => {
     parsedDeadlines = data.deadlines || [];
     preview.innerHTML = `
       ${(data.warnings || []).length
-        ? `<div class="result-truncated">${escDl(data.warnings.join(' '))}</div>` : ''}
+        ? `<div class="result-truncated">${escapeText(data.warnings.join(' '))}</div>` : ''}
       ${parsedDeadlines.length ? `
         <div class="table-scroll" style="max-height:20rem">
           <table><thead><tr><th scope="col">Date</th><th scope="col">Category</th><th scope="col">Deadline</th></tr></thead>
           <tbody>${parsedDeadlines.map(d => `
-            <tr><td>${escDl(d.date)}</td>
-                <td><span class="cite">${escDl(KIND_LABELS[d.kind] || d.kind)}</span></td>
-                <td class="sub">${escDl(d.label)}</td></tr>`).join('')}</tbody></table>
+            <tr><td>${escapeText(d.date)}</td>
+                <td><span class="cite">${escapeText(KIND_LABELS[d.kind] || d.kind)}</span></td>
+                <td class="sub">${escapeText(d.label)}</td></tr>`).join('')}</tbody></table>
         </div>
         <div class="import-actions">
           <button type="button" id="deadline-save">Save these ${parsedDeadlines.length} dates</button>
@@ -246,7 +240,7 @@ document.getElementById('deadline-read').onclick = async () => {
     const save = document.getElementById('deadline-save');
     if (save) save.onclick = saveDeadlines;
   } catch (err) {
-    preview.innerHTML = `<p class="sub">${escDl(err.message)}</p>`;
+    preview.innerHTML = `<p class="sub">${escapeText(err.message)}</p>`;
   }
 };
 
@@ -270,7 +264,7 @@ async function saveDeadlines() {
     loadDeadlines();
   } catch (err) {
     document.getElementById('deadline-preview').innerHTML =
-      `<p class="sub">${escDl(err.message)}</p>`;
+      `<p class="sub">${escapeText(err.message)}</p>`;
   } finally {
     btn.disabled = false;
     btn.textContent = 'Save';
@@ -309,9 +303,9 @@ async function loadDeadlines() {
         <div>${shown.map(d => `
           <div class="bill-row">
             <div style="flex:1;min-width:0">
-              <div class="bill-title">${escDl(KIND_LABELS[d.kind] || 'Deadline')}
-                · ${escDl(d.date)}</div>
-              <div class="sub" style="font-size:0.78rem">${escDl(d.label)}</div>
+              <div class="bill-title">${escapeText(KIND_LABELS[d.kind] || 'Deadline')}
+                · ${escapeText(d.date)}</div>
+              <div class="sub" style="font-size:0.78rem">${escapeText(d.label)}</div>
             </div>
             ${d.days_until === null ? '' : `<span class="due-chip ${
               d.days_until < 0 ? 'over' : d.days_until <= 14 ? 'over' : 'soon'

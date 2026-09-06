@@ -444,11 +444,6 @@ document.getElementById('q').addEventListener('input', () => {
   searchTimer = setTimeout(load, 200);
 });
 
-function escapeText(text) {
-  return String(text == null ? '' : text)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
 renderChamberTabs();
 load();
 </script>
