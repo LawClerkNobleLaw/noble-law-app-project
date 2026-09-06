@@ -110,7 +110,14 @@
 
 <div class="panel">
   <div class="panel-head"><h2 class="title">Your clients</h2></div>
-  <div id="list"></div>
+  <!-- #loading above is this page's SAVE indicator, not its load
+       one — the client list arrived with no placeholder at all and
+       simply appeared. The skeleton is the list's own starting
+       content, so render() replaces it the same way it replaces
+       every later render. -->
+  <div id="list">
+    <div role="status"><span class="sr-only">Loading…</span>{{skeleton_rows}}</div>
+  </div>
 </div>
 
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
@@ -414,6 +421,9 @@ async function load() {
     renderStats();
     render(rows);
   } catch (err) {
+    // Clear the skeleton the list started with, or it pulses forever
+    // under an error message about why nothing is coming.
+    listEl.innerHTML = '';
     errorEl.textContent = err.message;
     errorEl.className = 'show';
   }

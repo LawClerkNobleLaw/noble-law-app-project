@@ -1180,7 +1180,10 @@ LOBBYING_PAGE = page("Organization Search — Rotunda", "/lobbying", LOBBYING_BO
 # meant scrolling past every result to find what you clicked. Reached
 # via ?id=... (a registered entity) or ?name=... (a client only ever
 # named in someone else's filing, never independently registered).
-LOBBYING_DETAIL_BODY = _render_template("lobbying_detail_body.html")
+LOBBYING_DETAIL_BODY = _render_template(
+    "lobbying_detail_body.html",
+    skeleton_panels="".join(_skeleton_panel(rows=3) for _ in range(2)),
+)
 
 LOBBYING_DETAIL_PAGE = page("Organization Detail — Rotunda", "/lobbying", LOBBYING_DETAIL_BODY)
 
@@ -1215,6 +1218,7 @@ PROFILE_PAGE = _render_template(
 PROFILE_BODY = _render_template(
     "profile_body.html",
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
+    skeleton_panels=_skeleton_panel(rows=4, row_widths=(28, 44)),
 )
 
 PROFILE_VIEW_PAGE = page("Your profile — Rotunda", "/profile", PROFILE_BODY)
@@ -1265,6 +1269,7 @@ FLAGGED_PAGE = page("My Flagged Bills — Rotunda", "/flagged", FLAGGED_BODY)
 # separate nav section.
 ARCHIVED_BODY = _render_template(
     "archived_body.html",
+    skeleton_rows=_skeleton_rows(5, (25, 12, 28, 14, 6)),
     BILL_STATUS_SRC=BILL_STATUS_SRC,
     TOAST_SRC=TOAST_SRC,
     POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
@@ -1283,6 +1288,7 @@ ARCHIVED_PAGE = page("Archived Bills — Rotunda", "/flagged", ARCHIVED_BODY)
 # this is a view onto that same set of bills, not a separate section.
 CALENDAR_BODY = _render_template(
     "calendar_body.html",
+    skeleton_rows=_skeleton_rows(5, (16, 30, 22)),
     HEARING_TIME_SRC=HEARING_TIME_SRC,
 )
 
@@ -1302,6 +1308,7 @@ CALENDAR_PAGE = page("Hearing Calendar — Rotunda", "/flagged", CALENDAR_BODY)
 # LOOKUP_BODY's own sponsor chips) already treats them.
 SPONSOR_ROLLUP_BODY = _render_template(
     "sponsor_rollup_body.html",
+    skeleton_panels="".join(_skeleton_panel(rows=2) for _ in range(2)),
     BILL_STATUS_SRC=BILL_STATUS_SRC,
     POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
     TITLE_CASE_SRC=TITLE_CASE_SRC,
@@ -1312,6 +1319,7 @@ SPONSOR_ROLLUP_PAGE = page("Sponsors &amp; Votes — Rotunda", "/flagged", SPONS
 
 CLIENTS_BODY = _render_template(
     "clients_body.html",
+    skeleton_rows=_skeleton_rows(4, (22, 30, 26, 12, 6)),
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
     TITLE_CASE_SRC=TITLE_CASE_SRC,
     ROW_MENU_SRC=ROW_MENU_SRC,
@@ -1339,6 +1347,7 @@ DIRECTORY_PAGE = page("Capitol directory — Rotunda", "/directory", DIRECTORY_B
 # or Organization Search's "+ Add as client" link.
 CLIENT_DETAIL_BODY = _render_template(
     "client_detail_body.html",
+    skeleton_panels=_skeleton_panel(rows=4, row_widths=(26, 14, 20, 12)),
     HEARING_TIME_SRC=HEARING_TIME_SRC,
     BILL_STATUS_SRC=BILL_STATUS_SRC,
     POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
@@ -1388,6 +1397,7 @@ REPORT_PAGE = page("Bill report — Rotunda", "/flagged", REPORT_BODY)
 # and nothing is sent.
 LETTERS_BODY = _render_template(
     "letters_body.html",
+    skeleton_rows=_skeleton_rows(4, (30, 12, 22, 16, 6)),
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
     POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
     TITLE_CASE_SRC=TITLE_CASE_SRC,
@@ -1395,7 +1405,12 @@ LETTERS_BODY = _render_template(
 
 LETTERS_PAGE = page("Letters — Rotunda", "/draft/letters", LETTERS_BODY)
 
-LETTER_EDIT_BODY = _render_template("letter_edit_body.html")
+LETTER_EDIT_BODY = _render_template(
+    "letter_edit_body.html",
+    # The editor is a short header card over one long body of text, so
+    # its placeholder is full-width lines rather than table columns.
+    skeleton_panels=_skeleton_panel(rows=6, row_widths=(92,)),
+)
 
 LETTER_EDIT_PAGE = page("Letter — Rotunda", "/draft/letters", LETTER_EDIT_BODY)
 
@@ -1407,6 +1422,7 @@ LETTER_EDIT_PAGE = page("Letter — Rotunda", "/draft/letters", LETTER_EDIT_BODY
 # db.sign_off_prepared_filing for where that boundary is enforced.
 DISCLOSURES_BODY = _render_template(
     "disclosures_body.html",
+    skeleton_rows=_skeleton_rows(4, (26, 14, 16, 14, 6)),
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
     ROW_MENU_SRC=ROW_MENU_SRC,
 )
@@ -1416,6 +1432,11 @@ DISCLOSURES_PAGE = page("Disclosure Forms — Rotunda", "/disclosures", DISCLOSU
 
 DISCLOSURE_REVIEW_BODY = _render_template(
     "disclosure_review_body.html",
+    # Not one of the ten the audit named, but the same defect: a form
+    # this long arriving behind a spinner is the biggest jump of any of
+    # them, and leaving it would have made the rule below ("a spinner
+    # means an action, never a page's first content") untrue by one.
+    skeleton_panels=_skeleton_panel(rows=5, row_widths=(24, 40)),
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
 )
 
