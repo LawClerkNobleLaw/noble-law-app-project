@@ -28,7 +28,7 @@ function confirmDelete(title, message, confirmLabel) {
         <div class="modal-panel" role="alertdialog" aria-modal="true" aria-labelledby="cd-title" aria-describedby="cd-message">
           <div class="modal-head">
             <div>
-              <div class="title" id="cd-title"></div>
+              <h2 class="title" id="cd-title"></h2>
               <div class="sub" id="cd-message"></div>
             </div>
           </div>

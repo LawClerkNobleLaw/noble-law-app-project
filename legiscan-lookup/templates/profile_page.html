@@ -19,14 +19,15 @@
   </div>
 
   <div class="card">
+  <p class="sub req-legend"><span class="req" aria-hidden="true">*</span> Required. Everything else can wait.</p>
   <form id="f">
     <label style="flex:1 1 100%">
-      <div class="sub" style="margin:0 0 0.3rem">Legal name of firm or individual</div>
+      <div class="field-label">Legal name of firm or individual <span class="req" aria-hidden="true">*</span></div>
       <input id="legal_name" required autocomplete="organization" style="width:100%">
     </label>
 
     <div style="flex:1 1 100%">
-      <div class="sub" style="margin:0 0 0.3rem">Registering as</div>
+      <div class="field-label">Registering as <span class="req" aria-hidden="true">*</span></div>
       <label style="display:inline-flex;align-items:center;gap:0.4rem;margin-right:1.2rem;font-size:0.9rem">
         <input type="radio" name="registrant_type" value="individual" style="width:auto" required> Individual lobbyist
       </label>
@@ -38,14 +39,27 @@
     <div style="flex:1 1 100%">
       <h2 class="section" style="margin-top:1.2rem">Business address</h2>
     </div>
-    <label for="bus_addr1" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Street address</label>
-    <input id="bus_addr1" placeholder="Street address" autocomplete="section-business street-address" style="flex:1 1 100%">
-    <label for="bus_city" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">City</label>
-    <input id="bus_city" placeholder="City" autocomplete="section-business address-level2" style="flex:2">
-    <label for="bus_st" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">State</label>
-    <input id="bus_st" placeholder="State" maxlength="2" autocomplete="section-business address-level1" style="flex:1;text-transform:uppercase">
-    <label for="bus_zip4" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">ZIP code</label>
-    <input id="bus_zip4" placeholder="ZIP" autocomplete="section-business postal-code" style="flex:1">
+    <!-- Visible labels, not clipped ones. Two address blocks with
+         identical field sets sit one above the other on this form, and
+         the placeholder — the only visible cue these had — is gone the
+         moment anyone types. That is a real mis-entry risk on what
+         becomes a compliance record. -->
+    <label style="flex:1 1 100%">
+      <div class="field-label">Street address</div>
+      <input id="bus_addr1" autocomplete="section-business street-address" style="width:100%">
+    </label>
+    <label style="flex:2">
+      <div class="field-label">City</div>
+      <input id="bus_city" autocomplete="section-business address-level2" style="width:100%">
+    </label>
+    <label style="flex:1">
+      <div class="field-label">State</div>
+      <input id="bus_st" maxlength="2" autocomplete="section-business address-level1" style="width:100%;text-transform:uppercase">
+    </label>
+    <label style="flex:1">
+      <div class="field-label">ZIP code</div>
+      <input id="bus_zip4" autocomplete="section-business postal-code" style="width:100%">
+    </label>
 
     <div style="flex:1 1 100%">
       <h2 class="section" style="margin-top:1.2rem">Mailing address</h2>
@@ -54,25 +68,36 @@
       </label>
     </div>
     <div id="mail_fields" style="display:none;flex:1 1 100%;gap:0.6rem;flex-wrap:wrap">
-      <label for="mail_addr1" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing street address</label>
-      <input id="mail_addr1" placeholder="Street address" autocomplete="section-mailing street-address" style="flex:1 1 100%">
-      <label for="mail_city" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing city</label>
-      <input id="mail_city" placeholder="City" autocomplete="section-mailing address-level2" style="flex:2">
-      <label for="mail_st" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing state</label>
-      <input id="mail_st" placeholder="State" maxlength="2" autocomplete="section-mailing address-level1" style="flex:1;text-transform:uppercase">
-      <label for="mail_zip4" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Mailing ZIP code</label>
-      <input id="mail_zip4" placeholder="ZIP" autocomplete="section-mailing postal-code" style="flex:1">
+      <label style="flex:1 1 100%">
+        <div class="field-label">Mailing street address</div>
+        <input id="mail_addr1" autocomplete="section-mailing street-address" style="width:100%">
+      </label>
+      <label style="flex:2">
+        <div class="field-label">Mailing city</div>
+        <input id="mail_city" autocomplete="section-mailing address-level2" style="width:100%">
+      </label>
+      <label style="flex:1">
+        <div class="field-label">Mailing state</div>
+        <input id="mail_st" maxlength="2" autocomplete="section-mailing address-level1" style="width:100%;text-transform:uppercase">
+      </label>
+      <label style="flex:1">
+        <div class="field-label">Mailing ZIP code</div>
+        <input id="mail_zip4" autocomplete="section-mailing postal-code" style="width:100%">
+      </label>
     </div>
 
-    <div style="flex:1 1 100%">
-      <h2 class="section" style="margin-top:1.2rem">Phone number</h2>
-    </div>
-    <input id="bus_phone" placeholder="(916) 555-0100" autocomplete="tel" style="flex:1 1 100%">
+    <label style="flex:1 1 100%;margin-top:1.2rem">
+      <div class="field-label">Phone number</div>
+      <input id="bus_phone" placeholder="e.g. (916) 555-0100" autocomplete="tel" style="width:100%">
+    </label>
 
-    <div style="flex:1 1 100%">
-      <h2 class="section" style="margin-top:1.2rem">California Secretary of State filer ID <span style="text-transform:none;font-weight:400;color:var(--slate)">(optional — if you already have one)</span></h2>
-    </div>
-    <input id="existing_filer_id" placeholder="e.g. 1486088" autocomplete="off" style="flex:1 1 100%">
+    <!-- These last two were section headings with an unlabelled input
+         under them: visible text that read as a label but wasn't one.
+         A real <label> costs the same and says so. -->
+    <label style="flex:1 1 100%;margin-top:1.2rem">
+      <div class="field-label">California Secretary of State filer ID <span style="font-weight:400;color:var(--slate)">(optional — if you already have one)</span></div>
+      <input id="existing_filer_id" placeholder="e.g. 1486088" autocomplete="off" style="width:100%">
+    </label>
 
     <button type="submit" style="margin-top:1rem">Save and finish →</button>
   </form>
@@ -141,7 +166,16 @@ form.addEventListener('submit', async (e) => {
   const registrantType = form.querySelector('input[name="registrant_type"]:checked');
 
   errorEl.className = ''; loadingEl.className = 'show';
-  form.querySelector('button').disabled = true;
+  // The button itself says what's happening, not just #loading below
+  // it: this is the longest form in the onboarding flow and on a phone
+  // that busy indicator sits well below the fold, so the only thing the
+  // user could see after pressing submit was a button that hadn't
+  // visibly changed. Its own label is restored on failure, since
+  // success navigates away.
+  const submitBtn = form.querySelector('button[type="submit"]');
+  const submitLabel = submitBtn.textContent;
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Saving…';
 
   try {
     const res = await fetch('/api/profile', {
@@ -174,7 +208,8 @@ form.addEventListener('submit', async (e) => {
     errorEl.textContent = err.message;
     errorEl.className = 'show';
     loadingEl.className = '';
-    form.querySelector('button').disabled = false;
+    submitBtn.disabled = false;
+    submitBtn.textContent = submitLabel;
   }
 });
 </script>

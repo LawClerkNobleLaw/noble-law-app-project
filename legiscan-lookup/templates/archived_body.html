@@ -11,7 +11,7 @@
 <div id="error" role="alert" aria-live="assertive"></div>
 
 <div class="panel">
-  <div class="panel-head"><div class="title">Archived</div></div>
+  <div class="panel-head"><h2 class="title">Archived</h2></div>
   <div id="loading" role="status" class="show" style="padding:1rem 1.15rem"><span class="spinner"></span>Loading…</div>
   <div id="list"></div>
 </div>
@@ -80,7 +80,7 @@ function render(rows) {
   listEl.innerHTML = `
     <div style="overflow-x:auto">
     <table>
-      <thead><tr><th>Bill</th><th>Status</th><th>Clients &amp; positions</th><th>Archived</th><th></th></tr></thead>
+      <thead><tr><th scope="col">Bill</th><th scope="col">Status</th><th scope="col">Clients &amp; positions</th><th scope="col">Archived</th><th scope="col"></th></tr></thead>
       <tbody>${rows.map(rowHtml).join('')}</tbody>
     </table>
     </div>

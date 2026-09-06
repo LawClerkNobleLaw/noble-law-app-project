@@ -17,7 +17,7 @@
 <div class="panel" id="saved-panel" hidden style="margin-bottom:1rem">
   <div class="panel-head">
     <div>
-      <div class="title">Saved searches</div>
+      <h2 class="title">Saved searches</h2>
       <div class="sub">Re-run every morning. New matches arrive in your daily digest.</div>
     </div>
   </div>
@@ -38,7 +38,7 @@
   <div class="panel" id="moved-panel" hidden style="margin-bottom:1rem">
     <div class="panel-head">
       <div>
-        <div class="title" id="moved-title">Moved this week</div>
+        <h2 class="title" id="moved-title">Moved this week</h2>
         <div class="sub">Among the bills your firm already tracks — this app only checks those.</div>
       </div>
       <a class="secondary" href="/flagged">All flagged bills →</a>
@@ -49,7 +49,7 @@
   <div class="panel" id="keywords-panel" hidden style="margin-bottom:1rem">
     <div class="panel-head">
       <div>
-        <div class="title">Your clients' interests</div>
+        <h2 class="title">Your clients' interests</h2>
         <div class="sub">One click searches every California bill for that term.</div>
       </div>
     </div>
@@ -59,7 +59,7 @@
   <div class="panel" id="recent-panel" hidden style="margin-bottom:1rem">
     <div class="panel-head">
       <div>
-        <div class="title">Recent searches</div>
+        <h2 class="title">Recent searches</h2>
         <div class="sub">Kept in this browser only — never sent anywhere.</div>
       </div>
       <button type="button" class="secondary" onclick="clearRecentSearches()">Clear</button>
@@ -74,6 +74,12 @@
   </div>
 </div>
 <div id="error" role="alert" aria-live="assertive"></div>
+<!-- The count this page already prints, said out loud. #results is
+     replaced wholesale on every search, filter and sort, so a live
+     region inside it would be born in the same tick as its own
+     content — the thing screen readers reliably miss. This one is
+     server-rendered, empty, and only ever written to. -->
+<div id="result-count" class="sr-only" role="status"></div>
 <div id="results"></div>
 
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
@@ -616,6 +622,11 @@ function sessionLabel(year) {
 // the search: a flag toggle, a selection, a filter and a sort all change
 // what's on screen without changing what LegiScan was asked, and a
 // second search would cost another API call for the same answer.
+function announceCount(text) {
+  const el = document.getElementById('result-count');
+  if (el) el.textContent = text;
+}
+
 function renderRows() {
   const all = currentResults;
   if (!all.length) {
@@ -630,6 +641,7 @@ function renderRows() {
       ${corpusNoticeHtml()}
       ${searchMode === 'summary' ? '' : modeFiltersHtml()}
       <p class="empty">${emptyMessageForMode()}</p>`;
+    announceCount('No bills match.');
     return;
   }
   const rows = visibleRows();
@@ -676,6 +688,7 @@ function renderRows() {
   const countLine = filtered
     ? `${rows.length.toLocaleString()} of ${all.length.toLocaleString()} bills`
     : `${all.length.toLocaleString()} bill${all.length === 1 ? '' : 's'} match`;
+  announceCount(countLine);
 
   resultsEl.innerHTML = `
     ${citationNoticeHtml()}
@@ -704,7 +717,7 @@ function renderRows() {
         </div>
       </div>
       <div style="overflow-x:auto">
-      <table><thead><tr><th class="pick-cell"></th><th>Bill</th><th>Title</th><th>Status</th><th>Last action</th><th></th></tr></thead><tbody>${rowsHtml}</tbody></table>
+      <table><thead><tr><th scope="col" class="pick-cell"></th><th scope="col">Bill</th><th scope="col">Title</th><th scope="col">Status</th><th scope="col">Last action</th><th scope="col"></th></tr></thead><tbody>${rowsHtml}</tbody></table>
       </div>
       ${rows.length ? legend : emptyFilterHtml()}
     </div>

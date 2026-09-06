@@ -94,7 +94,7 @@ function render(sponsors) {
     <div class="panel" style="margin-bottom:1rem">
       <div class="panel-head">
         <div>
-          <div class="title">${escapeText(s.name)}</div>
+          <h2 class="title">${escapeText(s.name)}</h2>
           <div class="sub">${s.party ? partyLabel(s.party) : 'No party on file'} · Sponsors ${s.bill_count} of your flagged bill${s.bill_count === 1 ? '' : 's'}</div>
         </div>
       </div>

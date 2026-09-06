@@ -50,8 +50,12 @@ const billId = new URLSearchParams(window.location.search).get('bill_id');
   const navItem = Array.from(document.querySelectorAll('.side-nav-item[data-nav]'))
     .find(a => (a.dataset.nav.split('/')[1] || '') === fromSection);
   if (navItem) {
-    document.querySelectorAll('.side-nav-item.active').forEach(a => a.classList.remove('active'));
+    document.querySelectorAll('.side-nav-item.active').forEach(a => {
+      a.classList.remove('active');
+      a.removeAttribute('aria-current');
+    });
     navItem.classList.add('active');
+    navItem.setAttribute('aria-current', 'page');
     // If navItem sits inside a (possibly collapsed) Bills/Lobbying
     // Activity/Draft group — see render_group() in app_shell() — open
     // its ancestor .nav-group too, or the newly-active item would be
@@ -431,7 +435,7 @@ function render(r) {
     </div>
 
     <div class="panel" style="margin-top:1rem">
-      <div class="panel-head"><div class="title">Assigned client${(r.assigned_clients || []).length === 1 ? '' : 's'}</div></div>
+      <div class="panel-head"><h2 class="title">Assigned client${(r.assigned_clients || []).length === 1 ? '' : 's'}</h2></div>
       <div style="padding:1rem 1.15rem">
         ${r.flagged
           ? billClientCellHtml(r.bill_id, { showEffectiveDate: true })
@@ -441,7 +445,7 @@ function render(r) {
 
     ${billLetters.length ? `
     <div class="panel" style="margin-top:1rem">
-      <div class="panel-head"><div class="title">Letters on this bill</div></div>
+      <div class="panel-head"><h2 class="title">Letters on this bill</h2></div>
       <div id="letters-list" style="padding:0.4rem 1.15rem 1rem">
         ${billLetters.map(l => `
           <div class="saved-row" style="padding-left:0;padding-right:0">
@@ -458,7 +462,7 @@ function render(r) {
     <div class="panel" style="margin-top:1rem">
       <div class="panel-head">
         <div>
-          <div class="title">Position history</div>
+          <h2 class="title">Position history</h2>
           <div class="sub">Every change to a client's stance on this bill, newest first.</div>
         </div>
       </div>
@@ -467,7 +471,7 @@ function render(r) {
 
     ${r.flagged ? `
     <div class="panel" style="margin-top:1rem">
-      <div class="panel-head"><div class="title">Your notes</div></div>
+      <div class="panel-head"><h2 class="title">Your notes</h2></div>
       <div style="padding:1rem 1.15rem">
         <label for="bill-notes" class="sub" style="display:block;margin-bottom:0.35rem">Shared with your firm. Saves when you click away.</label>
         <textarea id="bill-notes" rows="4" style="width:100%" placeholder="What you're watching for on this bill, who you've talked to, what you told them…"
@@ -479,16 +483,16 @@ function render(r) {
     ${currentStatusCardHtml(r.history, r.amend_by_date)}
 
     <div class="panel" style="margin-top:1rem">
-      <div class="panel-head"><div class="title">Status history</div></div>
+      <div class="panel-head"><h2 class="title">Status history</h2></div>
       ${historyRows
-        ? `<div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Chamber</th><th>Action</th></tr></thead><tbody>${historyRows}</tbody></table></div>`
+        ? `<div style="overflow-x:auto"><table><thead><tr><th scope="col">Date</th><th scope="col">Chamber</th><th scope="col">Action</th></tr></thead><tbody>${historyRows}</tbody></table></div>`
         : '<p class="empty" style="padding:1rem 1.15rem">No status history recorded yet.</p>'}
     </div>
 
     <div class="panel" style="margin-top:1rem">
-      <div class="panel-head"><div class="title">Amendment history</div></div>
+      <div class="panel-head"><h2 class="title">Amendment history</h2></div>
       ${amendmentRows
-        ? `<div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Chamber</th><th>Amendment</th></tr></thead><tbody>${amendmentRows}</tbody></table></div>`
+        ? `<div style="overflow-x:auto"><table><thead><tr><th scope="col">Date</th><th scope="col">Chamber</th><th scope="col">Amendment</th></tr></thead><tbody>${amendmentRows}</tbody></table></div>`
         : '<p class="empty" style="padding:1rem 1.15rem">No amendments recorded.</p>'}
     </div>
 
@@ -500,7 +504,7 @@ function render(r) {
     <div class="panel" style="margin-top:1rem" id="redline-panel">
       <div class="panel-head">
         <div>
-          <div class="title">Compare versions</div>
+          <h2 class="title">Compare versions</h2>
           <div class="sub" id="redline-sub">See what changed between two versions of this bill.</div>
         </div>
         <button type="button" class="secondary" id="redline-load" onclick="loadRedline()">Load versions</button>
@@ -509,16 +513,16 @@ function render(r) {
     </div>
 
     <div class="panel" style="margin-top:1rem">
-      <div class="panel-head"><div class="title">Upcoming hearings</div></div>
+      <div class="panel-head"><h2 class="title">Upcoming hearings</h2></div>
       ${hearingRows
-        ? `<div style="overflow-x:auto"><table><thead><tr><th>When (PT)</th><th>Type</th><th>Details</th></tr></thead><tbody>${hearingRows}</tbody></table></div>`
+        ? `<div style="overflow-x:auto"><table><thead><tr><th scope="col">When (PT)</th><th scope="col">Type</th><th scope="col">Details</th></tr></thead><tbody>${hearingRows}</tbody></table></div>`
         : '<p class="empty" style="padding:1rem 1.15rem">No upcoming hearings scheduled.</p>'}
     </div>
 
     <div class="panel" style="margin-top:1rem">
-      <div class="panel-head"><div class="title">Votes</div></div>
+      <div class="panel-head"><h2 class="title">Votes</h2></div>
       ${voteRows
-        ? `<div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Chamber</th><th>Result</th></tr></thead><tbody>${voteRows}</tbody></table></div>`
+        ? `<div style="overflow-x:auto"><table><thead><tr><th scope="col">Date</th><th scope="col">Chamber</th><th scope="col">Result</th></tr></thead><tbody>${voteRows}</tbody></table></div>`
         : '<p class="empty" style="padding:1rem 1.15rem">No votes recorded yet.</p>'}
     </div>
   `;
@@ -549,20 +553,20 @@ function ensureFlagModal() {
     <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="flag-modal-title">
       <div class="modal-head">
         <div>
-          <div class="title" id="flag-modal-title">Flag this bill</div>
+          <h2 class="title" id="flag-modal-title">Flag this bill</h2>
           <div class="sub" id="flag-modal-bill"></div>
         </div>
         <button type="button" class="icon-btn" id="flag-modal-close" aria-label="Close">×</button>
       </div>
       <form id="flag-modal-form">
         <label>
-          <div class="sub" style="margin:0 0 0.3rem">Client</div>
+          <div class="field-label">Client</div>
           <select id="flag-client-select" required onchange="onFlagClientSelectChange(this)">
             <option value="">Choose a client…</option>
           </select>
         </label>
         <label>
-          <div class="sub" style="margin:0 0 0.3rem">Position</div>
+          <div class="field-label">Position</div>
           <select id="flag-position-select"></select>
         </label>
         <div id="flag-modal-error" role="alert" aria-live="assertive"></div>

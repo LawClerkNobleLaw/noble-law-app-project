@@ -58,14 +58,14 @@ function ensureQuickAddClientModal() {
     <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="qac-title">
       <div class="modal-head">
         <div>
-          <div class="title" id="qac-title">Add new client</div>
+          <h2 class="title" id="qac-title">Add new client</h2>
           <div class="sub">The rest of the form (effective date, agencies lobbied, etc.) can be filled in later on /clients.</div>
         </div>
         <button type="button" class="icon-btn" id="qac-close" aria-label="Close">×</button>
       </div>
       <form id="qac-form">
         <label style="position:relative">
-          <div class="sub" style="margin:0 0 0.3rem">Client / employer name</div>
+          <div class="field-label">Client / employer name</div>
           <input id="qac-name" required autocomplete="off">
           <div id="qac-name-autofill-dropdown" class="autofill-dropdown" style="top:100%;left:0;right:0;width:auto"></div>
         </label>
@@ -77,11 +77,11 @@ function ensureQuickAddClientModal() {
           <input id="qac-bus_zip4" placeholder="ZIP" style="flex:1">
         </div>
         <label>
-          <div class="sub" style="margin:0 0 0.3rem">Description of the client's industry or interests</div>
+          <div class="field-label">Description of the client's industry or interests</div>
           <textarea id="qac-interests" rows="2"></textarea>
         </label>
         <label>
-          <div class="sub" style="margin:0 0 0.3rem">California Secretary of State filer ID <span style="font-weight:400">(optional)</span></div>
+          <div class="field-label">California Secretary of State filer ID <span style="font-weight:400">(optional)</span></div>
           <input id="qac-existing_filer_id" placeholder="e.g. 1486088">
         </label>
         <div id="qac-error" role="alert" aria-live="assertive"></div>

@@ -19,18 +19,19 @@
   </div>
 
   <div class="card">
+    <p class="sub req-legend"><span class="req" aria-hidden="true">*</span> Both fields are required.</p>
     <form id="f" style="margin:0">
       <label style="flex:1 1 100%">
-        <div class="sub" style="margin:0 0 0.3rem">Email</div>
+        <div class="field-label">Email <span class="req" aria-hidden="true">*</span></div>
         <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required style="width:100%">
       </label>
       <label style="flex:1 1 100%">
-        <div class="sub" style="margin:0 0 0.3rem">Password</div>
+        <div class="field-label">Password <span class="req" aria-hidden="true">*</span></div>
         <div style="display:flex;gap:0.5rem">
           <input id="password" type="password" autocomplete="new-password" required minlength="8" style="width:100%">
-          <button type="button" id="toggle-password" class="secondary" aria-pressed="false" style="flex:none">Show</button>
+          <button type="button" id="toggle-password" class="secondary" aria-pressed="false" aria-label="Show password" style="flex:none">Show</button>
         </div>
-        <div class="sub" style="margin:0.3rem 0 0;font-size:0.78rem">8+ characters</div>
+        <div class="sub" id="password-hint" style="margin:0.3rem 0 0;font-size:0.78rem">8+ characters</div>
       </label>
       <button type="submit">Continue →</button>
     </form>
@@ -48,8 +49,42 @@ togglePasswordBtn.addEventListener('click', () => {
   const show = passwordInput.type === 'password';
   passwordInput.type = show ? 'text' : 'password';
   togglePasswordBtn.textContent = show ? 'Hide' : 'Show';
+  // The visible word stays one word; the accessible name says what it
+  // is a word about. Out of context "Show, toggle button" is a button
+  // that shows something unspecified.
+  togglePasswordBtn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
   togglePasswordBtn.setAttribute('aria-pressed', show ? 'true' : 'false');
 });
+/* U5: the hint resolves as you type.
+ *
+ * "8+ characters" was static text, and the only enforcement was
+ * minlength plus a server round trip — so the one flow every user
+ * completes exactly once could end in a rejected submit for a rule
+ * that was on screen the whole time. The message stays word-for-word
+ * what the server says; only its state changes.
+ *
+ * aria-live is deliberately absent: the hint is already the input's
+ * description, and announcing on every keystroke would talk over the
+ * typing. A screen-reader user hears it on focus, and hears the
+ * server's identical sentence if they submit early anyway.
+ */
+const passwordHint = document.getElementById('password-hint');
+const MIN_PASSWORD = 8;
+passwordInput.setAttribute('aria-describedby', 'password-hint');
+passwordInput.addEventListener('input', () => {
+  const len = passwordInput.value.length;
+  if (!len) {
+    passwordHint.className = 'sub';
+    passwordHint.textContent = '8+ characters';
+    return;
+  }
+  const ok = len >= MIN_PASSWORD;
+  passwordHint.className = ok ? 'sub hint-met' : 'sub hint-unmet';
+  passwordHint.textContent = ok
+    ? '✓ 8+ characters'
+    : `${MIN_PASSWORD - len} more character${MIN_PASSWORD - len === 1 ? '' : 's'} to go`;
+});
+
 const form = document.getElementById('f');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');

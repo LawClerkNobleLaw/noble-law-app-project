@@ -12,7 +12,7 @@
 <div class="panel" style="margin-top:1rem" id="roster-panel" hidden>
   <div class="panel-head">
     <div>
-      <div class="title">Lobbyists at this firm</div>
+      <h2 class="title">Lobbyists at this firm</h2>
       <div class="sub">Listed on Part I of every Form 601 you prepare from here.</div>
     </div>
   </div>
@@ -31,7 +31,7 @@
 <div class="panel" style="margin-top:1rem" id="notifications">
   <div class="panel-head">
     <div>
-      <div class="title">Notifications</div>
+      <h2 class="title">Notifications</h2>
       <div class="sub">What the daily digest email covers, how often it goes out, and who else gets it.</div>
     </div>
   </div>
@@ -130,7 +130,7 @@ async function load() {
         <span class="tag">${profile.registrant_type === 'firm' ? 'Firm' : 'Individual lobbyist'}</span>
       </div>
       <div class="panel" style="margin-top:1rem">
-        <div class="panel-head"><div class="title">Registration details</div></div>
+        <div class="panel-head"><h2 class="title">Registration details</h2></div>
         <div style="padding:0 1.15rem">
           ${row('Business address', [profile.bus_addr1, profile.bus_city, profile.bus_st, profile.bus_zip4].filter(Boolean).join(', '))}
           ${row('Mailing address', mailing)}

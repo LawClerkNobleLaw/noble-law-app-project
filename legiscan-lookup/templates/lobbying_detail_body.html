@@ -39,10 +39,10 @@ function relationshipRows(rows, selectedName) {
   if (!rows.length) return '<div class="panel" style="padding:1rem 1.15rem"><p class="empty">No lobbying relationships found for this name.</p></div>';
   return `
     <div class="panel">
-      <div class="panel-head"><div class="title">Lobbying relationships</div></div>
+      <div class="panel-head"><h2 class="title">Lobbying relationships</h2></div>
       <div style="overflow-x:auto">
       <table>
-        <thead><tr><th>Firm</th><th>Client / employer</th><th>Form</th><th>Period</th><th>Amount</th><th>Bill / activity</th></tr></thead>
+        <thead><tr><th scope="col">Firm</th><th scope="col">Client / employer</th><th scope="col">Form</th><th scope="col">Period</th><th scope="col">Amount</th><th scope="col">Bill / activity</th></tr></thead>
         <tbody>
         ${rows.map(r => `
           <tr>

@@ -17,7 +17,15 @@
 <div class="panel">
   <div class="panel-head">
     <div>
-      <div class="title">Flagged Bills</div>
+      <h2 class="title">Flagged Bills</h2>
+      <!-- role="status": filtering is the core interaction on this page
+           and its entire outcome used to be invisible to a screen
+           reader — the count lived only inside the rail's per-facet
+           .n spans. Server-rendered and empty rather than created
+           alongside its first message, for the same reason toast.js
+           keeps a standing region. It's also the only place on screen
+           that says how many rows survived the filters. -->
+      <div class="sub"><span id="result-count" role="status"></span></div>
       <div class="sub" id="freshness"></div>
     </div>
     <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
@@ -36,12 +44,21 @@
           <option value="activity">Most recent activity</option>
         </select>
       </label>
-      <label class="group-toggle" title="One section per client — a bill assigned to three clients appears under all three">
-        <input type="checkbox" id="group-by-client">
+      <label class="group-toggle">
+        <input type="checkbox" id="group-by-client" aria-describedby="controls-hint">
         Group by client
       </label>
       <button type="button" class="secondary" id="export-csv" onclick="exportCsv()"
-              title="Download the rows below, exactly as filtered, as a spreadsheet">Export CSV</button>
+              aria-describedby="controls-hint">Export CSV</button>
+      <!-- What these two do used to live in title= on each of them,
+           which never appears on a touch device, is inconsistently
+           surfaced to screen readers and can't be reached by keyboard —
+           on a product whose own coarse-pointer work says it's used on
+           phones. One visible line, described by both controls. -->
+      <p class="sub control-hint" id="controls-hint">
+        Grouping lists a bill under every client it's assigned to. Export downloads the rows
+        below, exactly as filtered.
+      </p>
     </div>
   </div>
   <div id="loading" role="status" class="skeleton show"><span class="sr-only">Loading…</span>{{skeleton_rows}}</div>
@@ -679,7 +696,24 @@ function groupedRows() {
 function applyFilters() {
   syncUrl();
   renderRail();
-  render(visibleRows());
+  const rows = visibleRows();
+  renderResultCount(rows.length);
+  render(rows);
+}
+
+// "14 of 62 bills" while anything is narrowing the list, "62 bills"
+// when nothing is. Written as text rather than rebuilt as markup so the
+// live region keeps its identity across updates — replacing the element
+// would put us back to announcing from a region that didn't exist a
+// moment ago.
+function renderResultCount(shown) {
+  const el = document.getElementById('result-count');
+  if (!el) return;
+  const total = currentRows.length;
+  if (!total) { el.textContent = ''; return; }
+  el.textContent = shown === total
+    ? `${total} bill${total === 1 ? '' : 's'}`
+    : `${shown} of ${total} bills`;
 }
 
 if (groupEl) {
@@ -788,9 +822,17 @@ function lastChangeCell(r) {
     const detected = (change.detected_at || '').slice(0, 10);
     const when = (change.event_date && change.event_date <= detected) ? change.event_date : detected;
     const also = change.also_count ? ` +${change.also_count} more` : '';
+    // The full description stayed in title= — invisible on a phone,
+    // unreachable by keyboard, and inconsistently read out. The summary
+    // is still what's on screen (the column is one line wide), but the
+    // sentence behind it is in the row now rather than in a tooltip.
+    // Hover keeps working; it just isn't the only way in.
+    const description = change.description || '';
+    const fullText = (description && description !== change.summary)
+      ? `<span class="sr-only"> — ${escapeText(description)}</span>` : '';
     return `
       <div class="change-when">${fmtShortDate(when)}</div>
-      <div class="change-what${r.unread_count ? ' unread' : ''}" title="${(change.description || '').replace(/"/g, '&quot;')}">${change.summary || ''}${also}</div>
+      <div class="change-what${r.unread_count ? ' unread' : ''}" title="${description.replace(/"/g, '&quot;')}">${change.summary || ''}${also}${fullText}</div>
     `;
   }
   if (r.latest_activity_date) {
@@ -925,7 +967,7 @@ function rowHtml(r) {
 `;
 }
 
-const TABLE_HEAD = `<thead><tr><th class="col-bill">Bill</th><th class="col-next">Next action</th><th class="col-status">Status</th><th class="col-change">Last change</th><th class="col-clients">Clients &amp; positions</th></tr></thead>`;
+const TABLE_HEAD = `<thead><tr><th scope="col" class="col-bill">Bill</th><th scope="col" class="col-next">Next action</th><th scope="col" class="col-status">Status</th><th scope="col" class="col-change">Last change</th><th scope="col" class="col-clients">Clients &amp; positions</th></tr></thead>`;
 
 // What is narrowing the list, in words, for the empty state. The rail
 // above already shows it as controls; a user who has filtered themselves

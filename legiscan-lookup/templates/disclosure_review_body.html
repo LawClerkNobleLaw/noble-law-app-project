@@ -238,20 +238,37 @@ function fieldDomId(fieldKey) {
 
 function fieldInputHtml(field, value) {
   const type = field.kind === 'email' ? 'email' : 'text';
-  const mark = field.required ? ' <span class="req" title="Required before this can be signed off">*</span>' : '';
+  // aria-hidden on the asterisk, aria-required on the input: the glyph
+  // is the sighted shorthand, the attribute is the same fact stated
+  // properly. What the star means is spelled out once in the form's own
+  // legend (requiredLegendHtml) rather than in a title= that never
+  // appears on a phone and can't be reached by keyboard.
+  const mark = field.required ? ' <span class="req" aria-hidden="true">*</span>' : '';
   const domId = fieldDomId(field.key);
   const issue = (filing.issues || []).find(i => i.field_key === field.key);
+  // The error-summary banner jumps to and focuses this field; until
+  // now, arriving here announced nothing about what was wrong with it.
+  const issueId = `${domId}-issue`;
   return `
     <label style="display:block;margin-bottom:0.8rem" id="${domId}" class="field-block${issue ? ' has-issue' : ''}">
       <div class="field-label-row">
-        <span class="sub" style="margin:0">${escapeHtml(field.label)}${mark}</span>
+        <span class="field-label" style="margin:0">${escapeHtml(field.label)}${mark}</span>
         <span class="field-saved" id="${domId}-saved" aria-live="polite"></span>
       </div>
       <input type="${type}" data-field-key="${escapeHtml(field.key)}" data-orig="${escapeHtml(value)}"
-             value="${escapeHtml(value)}" style="width:100%" onblur="saveField(this)">
-      ${issue ? `<div class="field-issue">${escapeHtml(issue.message)}</div>` : ''}
+             value="${escapeHtml(value)}" style="width:100%" onblur="saveField(this)"
+             ${field.required ? 'aria-required="true"' : ''}${issue ? ` aria-invalid="true" aria-describedby="${issueId}"` : ''}>
+      ${issue ? `<div class="field-issue" id="${issueId}">${escapeHtml(issue.message)}</div>` : ''}
       ${provenanceHtml(field.key)}
     </label>`;
+}
+
+// The asterisk's only explanation used to be a title attribute — the
+// one place this form said what it required at all.
+function requiredLegendHtml() {
+  return `<p class="sub" style="margin:0 0 0.9rem">
+    Fields marked <span class="req" aria-hidden="true">*</span> are required before this filing can be signed off.
+  </p>`;
 }
 
 /* ── What is still missing ─────────────────────────────────────────────
@@ -516,7 +533,7 @@ function render() {
       <div class="bill-title" style="margin-bottom:0.4rem">Sign-off — required before this can be marked ready to file</div>
       <form id="sign-form" onsubmit="signOff(event)">
         <label style="flex:1 1 100%">
-          <div class="sub" style="margin:0 0 0.3rem">Type your full legal name to confirm</div>
+          <div class="field-label">Type your full legal name to confirm</div>
           <input id="signed_name" required style="width:100%">
         </label>
         <label style="flex:1 1 100%;display:flex;align-items:flex-start;gap:0.5rem;margin-top:0.8rem;font-size:0.9rem">
@@ -556,6 +573,7 @@ function render() {
     <div class="card">
       <h2 class="section" style="margin-top:0">Business information</h2>
       ${autosaveNoteHtml()}
+      ${requiredLegendHtml()}
       ${businessFieldsHtml}
     </div>
 
