@@ -197,3 +197,50 @@ def test_days_ago_is_measured_on_californias_clock(conn):
     from datetime import date
     delta = date.fromisoformat(today) - date.fromisoformat(db.days_ago_in_california(7))
     assert delta.days == 7
+
+
+# ── Which index, chosen before the search rather than after ────────────
+#
+# The three "Search in" tabs used to render inside #results, so on a
+# fresh page they did not exist: the only route to full bill text was to
+# run a title search you didn't want and then switch. The choice of
+# index is part of the question, so it belongs beside the box.
+
+import app
+
+
+def _lookup():
+    return app.LOOKUP_BODY
+
+
+def test_the_mode_tabs_are_on_the_page_before_any_search():
+    body = _lookup()
+    assert 'id="mode-tabs"' in body
+    # In the search card, above the input — not in the results area,
+    # which is empty until a search has run.
+    assert body.index('id="mode-tabs"') < body.index('<input id="q"')
+    assert body.index('id="mode-tabs"') < body.index('id="results"')
+
+
+def test_the_mode_tabs_are_rendered_at_load():
+    assert 'renderModeTabs();' in _lookup()
+
+
+def test_the_results_rail_no_longer_carries_its_own_copy_of_the_tabs():
+    """Two sets of the same three tabs, one of them the stale one, is
+    how a control starts contradicting itself."""
+    assert 'modeFiltersHtml' not in _lookup()
+    assert _lookup().count('function modeTabsHtml') == 1
+
+
+def test_a_mode_states_how_much_it_can_answer_for():
+    """A mode that only holds 40 bills should say 40 before it is
+    picked, not in a footnote under the empty result."""
+    body = _lookup()
+    assert "/api/corpus" in body
+    assert "function modeCoverage" in body
+
+
+def test_an_empty_title_search_points_at_whatever_index_can_answer():
+    assert "function alternativesHtml" in _lookup()
+    assert "searchMeta.alternatives" in _lookup()

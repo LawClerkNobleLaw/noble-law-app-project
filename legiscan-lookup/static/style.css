@@ -1503,6 +1503,25 @@
     .start-chip { min-height: 2.5rem; }
   }
 
+  /* ── "Search in", above the box rather than below the results ──
+     The three indexes are a property of the question, not of the answer,
+     so the tabs sit inside the search card with the input they change
+     the meaning of. Reuses .filter-group/.filter-tab wholesale — same
+     component, moved — with a rule under the tabs separating "which
+     index" from "what am I asking it", and a bottom margin because
+     `form`'s own is the card's only spacing otherwise. */
+  .search-modes {
+    padding-bottom: 0.75rem; margin-bottom: 0.85rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .search-modes-tabs { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+  .search-modes .filter-tab { font-size: 0.78rem; padding: 0.2rem 0.6rem; }
+  /* The search form is the last thing in this card, so `form`'s own
+     2rem page margin would hang below the card's padding. Scoped to the
+     form that follows these tabs — every other card in the app keeps
+     the spacing it was built with. */
+  .search-modes + form { margin-bottom: 0; }
+
   /* ── Search filters (P1-11) ──
      The rail above the results. Every dimension here is DERIVED from a
      field getSearch already returns (see _shape_search_rows in

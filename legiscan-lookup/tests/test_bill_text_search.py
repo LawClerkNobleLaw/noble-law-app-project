@@ -302,3 +302,65 @@ def test_index_one_indexes_the_current_version(conn, monkeypatch):
     assert row["body"] == "local control of housing"
     assert row["last_action"] == "Referred to committee"
     assert len(db.search_bill_text(conn, "local control")) == 1
+
+
+# ── When the title search comes back empty ──────────────────────────
+#
+# A policy phrase almost never appears in a bill's title, so a
+# title/summary search returning nothing is the normal case, not a rare
+# one — and it is the moment the user is most likely to conclude the
+# bill doesn't exist. Both other indexes are local, so the server checks
+# them for free before answering with an empty page (see
+# _search_alternatives in app.py).
+
+import app  # noqa: E402
+
+
+def test_alternatives_offers_the_text_index_when_it_has_hits(conn):
+    _index(conn, 1, title="Elections: precinct maps.",
+           body="This bill would create a state-mandated local program.")
+    offers = app._search_alternatives(conn, "state-mandated local program")
+    assert [(o["mode"], o["count"]) for o in offers] == [("text", 1)]
+
+
+def test_alternatives_is_empty_when_no_other_index_can_answer(conn):
+    _index(conn, 1, title="Elections.", body="Nothing about housing here.")
+    assert app._search_alternatives(conn, "cannabis licensing") == []
+
+
+def test_alternatives_offers_a_citation_search_for_a_section_number(conn):
+    _index(conn, 1, title="Taxation.", body="An act.")
+    db.replace_bill_code_sections(conn, 1, [
+        {"code": "Revenue and Taxation Code", "section": "17053.5",
+         "action": "amend", "citation": "Section 17053.5"},
+    ])
+    offers = app._search_alternatives(conn, "17053.5")
+    assert [o["mode"] for o in offers] == ["section"]
+    assert offers[0]["count"] == 1
+    assert "17053.5" in offers[0]["label"]
+
+
+def test_a_phrase_with_no_section_number_never_offers_a_citation_search(conn):
+    """parse_query matches code names loosely enough that plain prose can
+    look like one. A citation offer needs an actual number behind it —
+    otherwise it is a guess presented as a suggestion."""
+    _index(conn, 1, title="Health.", body="An act about health and safety.")
+    db.replace_bill_code_sections(conn, 1, [
+        {"code": "Health and Safety Code", "section": "39617.2",
+         "action": "amend", "citation": "Section 39617.2"},
+    ])
+    offers = app._search_alternatives(conn, "health and safety")
+    assert [o["mode"] for o in offers] == ["text"]
+
+
+def test_a_single_hit_gets_the_singular_verb(conn):
+    """The count is the subject of the sentence the page builds: "1 bill
+    adds", not "1 bill add"."""
+    _index(conn, 1, title="Taxation.", body="An act.")
+    db.replace_bill_code_sections(conn, 1, [
+        {"code": "Civil Code", "section": "1714.02", "action": "add",
+         "citation": "Section 1714.02"},
+    ])
+    offer = app._search_alternatives(conn, "1714.02")[0]
+    assert offer["label_one"].startswith("adds,")
+    assert offer["label"].startswith("add,")

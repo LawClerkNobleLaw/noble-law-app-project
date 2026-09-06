@@ -7,6 +7,18 @@
 </div>
 
 <div class="card">
+  <!-- ── "Search in" lives here, not in the results rail ─────────────────
+       These tabs used to render inside #results, which meant they did
+       not exist until a search had already run: the only route to full
+       bill text was to run a title search you didn't want and then
+       switch. The choice of index belongs beside the box you type into,
+       at the moment you're deciding what to ask, and each tab states
+       its own coverage (filled in from /api/corpus below) so picking
+       one is an informed choice rather than a surprise. -->
+  <div class="search-modes filter-group" role="group" aria-label="Search in">
+    <span class="filter-group-label">Search in</span>
+    <div id="mode-tabs" class="search-modes-tabs"></div>
+  </div>
   <form id="f" style="margin:0">
     <label for="q" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Bill number or search terms</label>
     <input id="q" placeholder="e.g. SB122, or housing element, cannabis licensing…" required style="flex:1">
@@ -165,6 +177,44 @@ let searchMode = 'summary';
 fetch('/api/clients').then(res => res.ok ? res.json() : []).then(list => { allClients = list || []; }).catch(() => {});
 loadSavedSearches();
 loadStartState();
+loadCorpusStats();
+
+/* ── How much these indexes actually hold ──────────────────────────────
+ *
+ * The text and citation indexes are built a budget at a time (see
+ * build_bill_corpus.py), so at any moment they cover some fraction of
+ * the session. That fraction was only ever visible as a footnote under
+ * a search that had already disappointed someone. It belongs on the tab
+ * instead: a mode that can only answer for 40 bills should say 40
+ * before it is picked, not after.
+ */
+let corpusStats = null;
+
+async function loadCorpusStats() {
+  try {
+    const res = await fetch('/api/corpus');
+    if (!res.ok) return;
+    corpusStats = await res.json();
+    renderModeTabs();
+  } catch (err) { /* The tabs work unlabelled. */ }
+}
+
+function modeCoverage(value) {
+  if (!corpusStats) return null;
+  if (value === 'text') return corpusStats.bills || 0;
+  if (value === 'section') return corpusStats.parsed || 0;
+  return null;
+}
+
+function renderModeTabs() {
+  const el = document.getElementById('mode-tabs');
+  if (!el) return;
+  // Clicking a tab destroys the tab that was clicked, so this redraw
+  // needs the same focus handling the filter rail has (see focus.js) —
+  // otherwise a keyboard user lands on <body> every time they change
+  // where they're searching.
+  keepFocus(el, () => { el.innerHTML = modeTabsHtml(); });
+}
 
 /* ── The start state ───────────────────────────────────────────────────
  *
@@ -378,7 +428,11 @@ function setSearchMode(mode) {
   if (mode === searchMode) return;
   searchMode = mode;
   document.getElementById('q').placeholder = placeholderForMode();
+  renderModeTabs();
   if (currentQuery) runSearch(currentQuery, true);
+  // Nothing searched yet: switching index is the whole interaction, so
+  // put the cursor where the next thing has to be typed.
+  else document.getElementById('q').focus();
 }
 
 // LegiScan's search doesn't return a coded status the way getBill does
@@ -574,8 +628,6 @@ function filterRailHtml() {
        onclick="setSessionScope('${value}')">${label}</button>`
   ).join('');
 
-  const modeTabs = modeTabsHtml();
-
   // The session tabs are LegiScan's, and the corpus only holds the
   // current one — offering "All sessions" beside a text search would
   // be a control that silently does nothing.
@@ -583,7 +635,12 @@ function filterRailHtml() {
     ? ''
     : `<div class="filter-group"><span class="filter-group-label">Session</span>${sessionTabs}</div>`;
 
-  const sortHtml = `
+  // A sort control over one row sorts nothing, and with "Search in"
+  // moved up into the card it would be the only thing left in the rail
+  // — a full-width bar holding one idle <select>. Same rule the filter
+  // groups above already follow: a control that can't change the list
+  // isn't shown.
+  const sortHtml = currentResults.length < 2 ? '' : `
     <div class="filter-sort">
       <label class="filter-group-label" for="sort-mode" style="min-width:0">Sort</label>
       <select id="sort-mode" data-focus-key="sort" onchange="setSort(this.value)">
@@ -593,12 +650,16 @@ function filterRailHtml() {
       </select>
     </div>`;
 
+  const chipsHtml = activeChipsHtml();
+  // Nothing to sort, nothing to filter, nowhere else to look: the rail
+  // is an empty box, so it doesn't render at all.
+  if (!sortHtml && !scopeGroup && !groupsHtml && !chipsHtml) return '';
   return `
     <div class="search-filters">
-      <div class="filter-group"><span class="filter-group-label">Search in</span>${modeTabs}${sortHtml}</div>
+      ${sortHtml ? `<div class="filter-group">${sortHtml}</div>` : ''}
       ${scopeGroup}
       ${groupsHtml}
-      ${activeChipsHtml()}
+      ${chipsHtml}
     </div>`;
 }
 
@@ -647,18 +708,24 @@ function renderRows() {
 function renderRowsNow() {
   const all = currentResults;
   if (!all.length) {
-    // The mode tabs stay, and the notices with them. A zero-result
-    // search is the moment the user most needs to change WHERE they
-    // searched, and dropping the tabs here left them with a message
-    // about spelling and no way back to another index. The two
-    // notices are what say which kind of empty this is — an
-    // unreadable citation, or a corpus that hasn't reached this bill.
+    // The mode tabs are in the search card now, so a zero-result page
+    // never strands anyone: the way to another index is still on
+    // screen. The notices say which kind of empty this is — an
+    // unreadable citation, or a corpus that hasn't reached this bill —
+    // and alternativesHtml() says when another index already has the
+    // answer this one didn't.
     resultsEl.innerHTML = `
       ${citationNoticeHtml()}
       ${corpusNoticeHtml()}
-      ${searchMode === 'summary' ? '' : modeFiltersHtml()}
-      <p class="empty">${emptyMessageForMode()}</p>`;
-    announceCount('No bills match.');
+      ${alternativesHtml()}
+      ${(searchMeta.alternatives || []).length ? '' : `<p class="empty">${emptyMessageForMode()}</p>`}`;
+    // A screen reader gets the offer too, not just the zero — it is the
+    // whole content of this state when another index has the answer.
+    const offers = searchMeta.alternatives || [];
+    announceCount(offers.length
+      ? 'No bills match. ' + offers.map(o => `${o.count} in ${
+          SEARCH_MODES.find(([value]) => value === o.mode)[1]}`).join(', ') + '.'
+      : 'No bills match.');
     return;
   }
   const rows = visibleRows();
@@ -766,19 +833,20 @@ const SEARCH_MODES = [['summary', 'Title & summary'], ['text', 'Full bill text']
                       ['section', 'Code section']];
 
 function modeTabsHtml() {
-  return SEARCH_MODES.map(([value, label]) =>
-    `<button type="button" class="filter-tab${searchMode === value ? ' active' : ''}"
+  return SEARCH_MODES.map(([value, label]) => {
+    const held = modeCoverage(value);
+    // The number is the count of bills the index can speak for, which
+    // is a different kind of number from the result counts on the
+    // filter tabs below — hence the words in the tooltip. Absent
+    // entirely until /api/corpus answers, rather than shown as a 0 that
+    // would read as "this mode is broken".
+    const coverage = held === null ? '' :
+      `<span class="n" title="${held.toLocaleString()} bill${held === 1 ? '' : 's'} indexed — about ${
+        Math.max(1, Math.round((held / SESSION_BILL_ESTIMATE) * 100))}% of the session">${held.toLocaleString()}</span>`;
+    return `<button type="button" class="filter-tab${searchMode === value ? ' active' : ''}"
        aria-pressed="${searchMode === value}" ${focusKeyAttr('mode', value)}
-       onclick="setSearchMode('${value}')">${label}</button>`
-  ).join('');
-}
-
-// Just the "Search in" group, for the zero-result state where the rest
-// of the filter bar has nothing to filter.
-function modeFiltersHtml() {
-  return `<div class="search-filters">
-    <div class="filter-group"><span class="filter-group-label">Search in</span>${modeTabsHtml()}</div>
-  </div>`;
+       onclick="setSearchMode('${value}')">${label}${coverage}</button>`;
+  }).join('');
 }
 
 // A zero-result search means something different per mode, and the
@@ -819,6 +887,32 @@ function citationNoticeHtml() {
   return `<div class="result-note">Bills that add, amend or repeal
     <strong>${escapeText(read)}</strong>${code && !section ? ' — every section of it' : ''}${
     !code && section ? ', in any code' : ''}.</div>`;
+}
+
+/* ── When another index has the answer this one didn't ────────────────
+ *
+ * A title search that returns nothing is the moment someone is most
+ * likely to conclude the bill doesn't exist — when what actually
+ * happened is that the words they used appear in the operative text and
+ * not in the title, which is the normal case for a policy phrase. Both
+ * other indexes are local SQLite, so the server checks them for free
+ * whenever a summary search comes back empty (see _search_alternatives
+ * in app.py) and this says what they hold.
+ *
+ * The reverse direction is deliberately not offered this way: counting
+ * LegiScan hits is an API call, and quota shouldn't be spent
+ * pre-answering a question the user hasn't asked. The empty text and
+ * citation states point at "Title & summary" in words instead.
+ */
+function alternativesHtml() {
+  const offers = searchMeta.alternatives || [];
+  if (!offers.length) return '';
+  const parts = offers.map(o =>
+    `<button type="button" class="linklike" onclick="setSearchMode('${o.mode}')">${
+      o.count.toLocaleString()} bill${o.count === 1 ? '' : 's'} ${
+      escapeText(o.count === 1 ? (o.label_one || o.label) : o.label)}</button>`);
+  const joined = parts.length === 1 ? parts[0] : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
+  return `<div class="result-note">No title or summary matches — but ${joined}.</div>`;
 }
 
 function corpusNoticeHtml() {
@@ -1095,5 +1189,12 @@ async function saveCurrentSearch() {
     errorEl.className = 'show';
   }
 }
+
+// Last, not up with the other kick-offs: modeTabsHtml() reads
+// SEARCH_MODES and SESSION_BILL_ESTIMATE, which are `const`s declared
+// further down this script and so are in the temporal dead zone until
+// it has run through. The async fetches above are safe up there because
+// nothing they touch resolves before then.
+renderModeTabs();
 
 </script>
