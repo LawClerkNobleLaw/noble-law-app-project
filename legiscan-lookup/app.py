@@ -135,6 +135,15 @@ def _read_static_text(name):
         return fh.read()
 
 
+def _read_static_bytes(name):
+    """Same, for an asset that isn't text — the four Poppins woff2 files
+    below are the only ones. They go through STATIC_ASSETS like every
+    other asset so they get _asset_url's content hash, which is what
+    makes the year-long Cache-Control on that route safe."""
+    with open(os.path.join(STATIC_DIR, name), "rb") as fh:
+        return fh.read()
+
+
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
 _TEMPLATE_SLOT = re.compile(r"\{\{(\w+)\}\}")
@@ -342,19 +351,6 @@ THEME_INIT_SCRIPT = f"""
 </script>
 """
 
-# Two Google Fonts (free, no licensing decision needed): Poppins is the
-# body/UI typeface (--font-sans in STYLE); Instrument Serif is the one
-# deliberate display exception the mockup uses for an editorial-style
-# headline (--font-serif). Garet, the mockup's actual primary typeface,
-# is a paid font whose web-embedding license isn't confirmed — omitted
-# here on purpose (see STYLE's own comment on --font-sans); the stack
-# already falls through to Poppins without it. Included in every page's
-# <head> alongside THEME_INIT_SCRIPT so both are one edit, not five.
-FONT_LINKS = """
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
-"""
 
 
 def nav_links(current):
@@ -575,6 +571,10 @@ CONFIRM_DELETE_JS = _read_static_text("js/confirm_delete.js")
 TITLE_CASE_JS = _read_static_text("js/title_case.js")
 ROW_MENU_JS = _read_static_text("js/row_menu.js")
 PAGE_PROGRESS_JS = _read_static_text("js/page_progress.js")
+
+# Poppins, self-hosted — see FONT_LINKS for why.
+POPPINS_WEIGHTS = (400, 500, 600, 700)
+POPPINS_FILES = {w: _read_static_bytes(f"fonts/poppins-{w}.woff2") for w in POPPINS_WEIGHTS}
 FOCUS_JS = _read_static_text("js/focus.js")
 
 
@@ -595,6 +595,7 @@ STATIC_ASSETS = {
     "js/title_case.js": (TITLE_CASE_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/row_menu.js": (ROW_MENU_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/page_progress.js": (PAGE_PROGRESS_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    **{f"fonts/poppins-{w}.woff2": (POPPINS_FILES[w], "font/woff2") for w in POPPINS_WEIGHTS},
     "js/focus.js": (FOCUS_JS.encode("utf-8"), JS_CONTENT_TYPE),
 }
 
@@ -610,6 +611,68 @@ CONFIRM_DELETE_SRC = _asset_url("js/confirm_delete.js")
 TITLE_CASE_SRC = _asset_url("js/title_case.js")
 ROW_MENU_SRC = _asset_url("js/row_menu.js")
 PAGE_PROGRESS_SRC = _asset_url("js/page_progress.js")
+
+# Poppins is the body/UI typeface (--font-sans in STYLE), served from
+# this app rather than from Google Fonts. Garet, the mockup's actual
+# primary typeface, is a paid font whose web-embedding license isn't
+# confirmed — omitted on purpose (see STYLE's own comment on
+# --font-sans); the stack already falls through to Poppins without it.
+# Included in every page's <head> alongside THEME_INIT_SCRIPT so both
+# are one edit, not five.
+#
+# This used to be a render-blocking third-party <link>, and this is a
+# multi-page app — no client-side router, so every click is a full
+# document load and paid it again: two DNS+TLS handshakes to two other
+# hosts, then a font swap, every time. It also asked for more than it
+# used (Instrument Serif for a --font-serif token nothing consumes, and
+# Poppins 300 for a weight the stylesheet never sets), and it meant
+# every page view of a product holding client strategy was a request to
+# a third party.
+#
+# So the four weights the app actually sets are files in static/fonts/,
+# served by the same route as everything else, which gives them
+# _asset_url's content hash and with it the year-long immutable
+# Cache-Control — genuinely free after first load, where the CDN
+# version was a revalidation away from free at best. 31KB for all four.
+# The @font-face rules are built here rather than written into
+# style.css because only Python knows the hashed URLs.
+#
+# Latin only, which is what was authorised and what this app's own text
+# is. A name carrying a Central or Eastern European glyph (ł, ő, ș)
+# falls through to the system stack for that character rather than
+# rendering in Poppins; latin-ext is four more files if that shows up
+# in practice.
+POPPINS_LATIN_RANGE = (
+    "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, "
+    "U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, "
+    "U+2212, U+2215, U+FEFF, U+FFFD"
+)
+
+FONT_FACES = "\n".join(
+    f"""@font-face {{
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: {weight};
+  font-display: swap;
+  src: url('{_asset_url(f"fonts/poppins-{weight}.woff2")}') format('woff2');
+  unicode-range: {POPPINS_LATIN_RANGE};
+}}"""
+    for weight in POPPINS_WEIGHTS
+)
+
+# 400 and 600 preloaded, the other two not: those are body copy and the
+# headings/labels every page has, so they are needed for the first
+# paint either way — 500 and 700 aren't on every page. crossorigin is
+# required even though this is now same-origin, since fonts are fetched
+# in CORS mode and a preload without it fetches the file twice.
+FONT_LINKS = "\n".join(
+    [
+        f'<link rel="preload" as="font" type="font/woff2" '
+        f'href="{_asset_url(f"fonts/poppins-{weight}.woff2")}" crossorigin>'
+        for weight in (400, 600)
+    ]
+    + ["<style>", FONT_FACES, "</style>"]
+)
 FOCUS_SRC = _asset_url("js/focus.js")
 
 TOP_BRAND = """<a href="/" class="top-brand">
