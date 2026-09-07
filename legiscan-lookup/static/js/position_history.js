@@ -61,21 +61,15 @@ function positionHistoryHtml(rows, options) {
   }).join('')}</ol>`;
 }
 
-// effective_date is a plain California date, not an instant — parsed at
-// local midnight so it can't slip a day the way `new Date('2026-09-03')`
-// does for anyone west of UTC.
+// effective_date is a plain California date, and changed_at a UTC
+// instant — the always-year date and the timestamp, both from dates.js
+// (loaded globally by page() before this file). fmtHistoryStamp keeps
+// its own missing-value wording so "changed <stamp>" still reads as a
+// sentence when the stamp is absent.
 function fmtHistoryDate(dateStr) {
-  const d = new Date(dateStr + 'T00:00:00');
-  if (isNaN(d.getTime())) return dateStr;
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return fmtDate(dateStr);
 }
 
-// changed_at is a UTC 'YYYY-MM-DDTHH:MM:SSZ' stamp — an instant, not a
-// date, so unlike every deadline in this app it's shown in the reader's
-// own clock rather than California's.
 function fmtHistoryStamp(iso) {
-  if (!iso) return 'at an unknown time';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return iso ? fmtStamp(iso) : 'at an unknown time';
 }

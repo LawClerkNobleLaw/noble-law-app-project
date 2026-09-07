@@ -44,14 +44,6 @@
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script src="{{ROW_MENU_SRC}}"></script>
 <script>
-// A friendly "Aug 21, 2:03 PM" instead of the raw
-// "2026-08-21T14:03:00" ISO string the API returns.
-function fmtDateTime(iso) {
-  if (!iso) return '';
-  const d = new Date(iso.includes('Z') || iso.includes('+') ? iso : iso + 'Z');
-  if (isNaN(d)) return iso;
-  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-}
 
 // Only 601 exists today, but this stays keyed by form_type so adding a
 // form that DOES need a period later is just one more entry here.
@@ -150,14 +142,6 @@ async function load() {
   }
 }
 
-// "Sep 5, 2026" — the year stays here, unlike the flagged list. A filing
-// deadline is the one date in this app worth being unambiguous about.
-function fmtDueDate(iso) {
-  if (!iso) return '';
-  const d = new Date(iso + 'T00:00:00');
-  if (isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
 
 // The deadline, and how close it is. days_until_due is computed from
 // California's date server-side (see db._row_to_prepared_filing), so a
@@ -171,7 +155,7 @@ function dueCell(r) {
   if (!r.due_date) {
     return '<span class="due-none">Not set</span>';
   }
-  const when = escapeText(fmtDueDate(r.due_date));
+  const when = escapeText(fmtDate(r.due_date));
   const days = r.days_until_due;
   if (days === null || days === undefined) return when;
 
@@ -203,7 +187,7 @@ function render(rows) {
             <td>${escapeText((meta && meta.label) || ('Form ' + r.form_type))}</td>
             <td class="col-due">${dueCell(r)}</td>
             <td>${statusBadge}</td>
-            <td class="date">${escapeText(fmtDateTime(r.created_at))}</td>
+            <td class="date">${escapeText(fmtStamp(r.created_at))}</td>
             <td class="row-menu">
               <a class="secondary" href="/disclosures/review?id=${r.id}" style="margin-right:0.4rem">Review</a>
               <button type="button" class="row-menu-btn" onclick="toggleRowMenu(event, 'filing-${r.id}')" aria-label="More actions" aria-haspopup="true" aria-expanded="false" aria-controls="row-menu-filing-${r.id}">

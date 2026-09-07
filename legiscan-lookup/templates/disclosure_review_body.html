@@ -6,14 +6,6 @@
 
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script>
-// A friendly "Aug 21, 2:03 PM" instead of the raw
-// "2026-08-21T14:03:00" ISO string the API returns.
-function fmtDateTime(iso) {
-  if (!iso) return '';
-  const d = new Date(iso.includes('Z') || iso.includes('+') ? iso : iso + 'Z');
-  if (isNaN(d)) return iso;
-  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-}
 
 const errorEl = document.getElementById('error');
 const contentEl = document.getElementById('content');
@@ -519,7 +511,7 @@ function render() {
   const signOffSection = signed ? `
     <div class="card">
       <div class="bill-title" style="margin-bottom:0.4rem">Signed off</div>
-      <div class="bill-desc">Confirmed accurate by <strong>${escapeText(filing.signed_name)}</strong> on ${escapeText(fmtDateTime(filing.signed_at))}.</div>
+      <div class="bill-desc">Confirmed accurate by <strong>${escapeText(filing.signed_name)}</strong> on ${escapeText(fmtStamp(filing.signed_at))}.</div>
       <div class="sub" style="margin:0.6rem 0 0">This app has not filed anything. Download the PDF above and file it yourself with the FPPC / Secretary of State. Editing any field above reopens this filing for another round of sign-off.</div>
     </div>
   ` : (filing.pdf_current ? `
@@ -544,7 +536,7 @@ function render() {
     <div class="page-head">
       <div>
         <h1>${escapeText(FORM_LABELS[filing.form_type] || ('Form ' + filing.form_type))}</h1>
-        <p class="sub">${filing.period_label ? 'Period: ' + escapeText(filing.period_label) + ' — ' : ''}Prepared ${escapeText(fmtDateTime(filing.created_at))}.</p>
+        <p class="sub">${filing.period_label ? 'Period: ' + escapeText(filing.period_label) + ' — ' : ''}Prepared ${escapeText(fmtStamp(filing.created_at))}.</p>
         <div style="margin-top:0.6rem">${statusBadge}</div>
       </div>
       <button type="button" class="danger" onclick="removeFiling()">Delete draft</button>

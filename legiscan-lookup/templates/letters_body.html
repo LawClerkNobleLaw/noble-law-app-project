@@ -38,12 +38,6 @@ const billSelect = document.getElementById('letter-bill');
 const clientSelect = document.getElementById('letter-client');
 let flaggedBills = [];
 
-function fmtStamp(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-}
 
 // The client picker only ever offers clients already assigned to the
 // chosen bill. A letter written on behalf of a client who isn't on the

@@ -210,16 +210,6 @@ function currentStatusCardHtml(history, amendByDate) {
 }
 
 // "Aug 25" — same shape the flagged list prints dates in, so the header's
-// "since" date and this card's "Latest action" date can be read against
-// each other without one of them being an ISO string.
-function fmtShortDate(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr + 'T00:00:00');
-  if (isNaN(d.getTime())) return dateStr;
-  const opts = { month: 'short', day: 'numeric' };
-  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
-  return d.toLocaleDateString('en-US', opts);
-}
 
 // Saves on change (no separate Save button — a date input's own picker
 // already commits the value with one action), same disable/revert/
@@ -444,7 +434,7 @@ function render(r) {
           <div class="saved-row" style="padding-left:0;padding-right:0">
             <div class="saved-main">
               <a class="saved-name" href="/draft/letters/edit?id=${l.id}">${escapeText(l.subject)}</a>
-              <div class="saved-meta">${l.client_name ? escapeText(l.client_name) + ' · ' : ''}Last edited ${escapeText((l.updated_at || '').slice(0, 10))}</div>
+              <div class="saved-meta">${l.client_name ? escapeText(l.client_name) + ' · ' : ''}Last edited ${escapeText(fmtStamp(l.updated_at))}</div>
             </div>
           </div>
         `).join('')}

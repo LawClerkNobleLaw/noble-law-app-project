@@ -774,27 +774,9 @@ function renderFreshness() {
   if (!el) return;
   const stamps = currentRows.map(r => r.last_checked_at).filter(Boolean).sort();
   const latest = stamps[stamps.length - 1];
-  el.textContent = latest ? `Checked ${fmtDateTime(latest)}` : '';
+  el.textContent = latest ? `Checked ${fmtStamp(latest)}` : '';
 }
 
-// A friendly "Aug 24, 2:03 PM" instead of the raw
-// "2026-08-24T14:03:00" ISO string the API returns.
-function fmtDateTime(iso) {
-  if (!iso) return '';
-  const d = new Date(iso.includes('Z') || iso.includes('+') ? iso : iso + 'Z');
-  if (isNaN(d)) return iso;
-  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-}
-
-// "Sep 8" — the year is only worth the width when it isn't the obvious one.
-function fmtShortDate(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr + 'T00:00:00');
-  if (isNaN(d.getTime())) return dateStr;
-  const opts = { month: 'short', day: 'numeric' };
-  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
-  return d.toLocaleDateString('en-US', opts);
-}
 
 // The unread marker: this bill has changes recorded since the last time
 // this user opened its report (see db._unread_counts_for_bills). What
