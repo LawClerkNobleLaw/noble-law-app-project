@@ -100,6 +100,33 @@ function billClientCellHtml(billId, options) {
   `;
 }
 
+// A read-only summary of a bill's client positions — name plus a
+// position badge per assigned client, no controls. billClientCellHtml
+// above is the full editor; on a dense list (the flagged table) drawing
+// that editor once per row is dozens of <select>s and buttons competing
+// at once, so the list shows this instead and moves the editing behind a
+// click that opens the editor in a popover. The button carries
+// data-clients-trigger (the bill id) as the hook that popover wiring
+// keys off; it stays page-agnostic, like the rest of this file, by not
+// naming any page's open() function itself.
+function billClientSummaryHtml(billId) {
+  const assigned = billClientsHooks.assignedClients(billId) || [];
+  const inner = assigned.length
+    ? assigned.map(c =>
+        `<span class="client-position">` +
+        `<span class="client-position-name">${titleCaseName(c.name)}</span>` +
+        `<span class="position-badge ${c.position || 'watch'}">${positionLabel(c.position || 'watch')}</span>` +
+        `</span>`
+      ).join('')
+    : '<span class="client-position-empty">Add clients…</span>';
+  const label = assigned.length
+    ? `Edit client positions on this bill (${assigned.length} assigned)`
+    : 'Add clients to this bill';
+  return `<button type="button" class="clients-summary" data-clients-trigger="${billId}" aria-haspopup="dialog" aria-label="${label}">`
+    + `<span class="clients-summary-list">${inner}</span>`
+    + `<span class="clients-summary-edit" aria-hidden="true">✎</span></button>`;
+}
+
 // `undoOf` is the position this call is putting back, set only when
 // setPosition is called from a toast's Undo. It suppresses the toast
 // that would otherwise offer to undo the undo, and changes the wording

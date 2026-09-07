@@ -65,6 +65,12 @@
   <div id="list"></div>
 </div>
 
+<!-- The client-cell editor, opened from a row's read-only summary. Kept
+     out of #list (which render() replaces wholesale) and positioned
+     fixed, so it survives a table repaint and isn't clipped by the
+     table's own overflow-x scroller. -->
+<div id="clients-popover" class="clients-popover" role="dialog" aria-label="Clients and positions" hidden></div>
+
 <script src="{{HEARING_TIME_SRC}}"></script>
 <script src="{{BILL_STATUS_SRC}}"></script>
 <script src="{{TOAST_SRC}}"></script>
@@ -956,7 +962,7 @@ function rowHtml(r) {
           <td class="col-next next-action">${nextActionCell(r)}</td>
           <td class="col-status">${statusBadgeHtml(r.status_label)}</td>
           <td class="col-change">${lastChangeCell(r)}</td>
-          <td class="col-clients">${billClientCellHtml(r.bill_id)}</td>
+          <td class="col-clients">${billClientSummaryHtml(r.bill_id)}</td>
         </tr>
 `;
 }
@@ -976,6 +982,15 @@ function narrowingDescription() {
 }
 
 function render(rows) {
+  renderTable(rows);
+  // The client cell is now a read-only summary that opens the full
+  // editor in a body-level popover; whenever the table repaints (a
+  // position change, a filter, a sort) the summary the popover was
+  // anchored to is a new node, so re-anchor or dismiss it here.
+  refreshOpenClientsPopover();
+}
+
+function renderTable(rows) {
   if (!currentRows.length) {
     listEl.innerHTML = '<p class="empty">Nothing flagged yet — look up a bill and click "Flag this bill" from there.</p>';
     return;
@@ -1014,6 +1029,135 @@ function render(rows) {
     ${statusLegendHtml(rows.map(r => r.status_label))}
   `;
 }
+
+/* ── The client-cell popover ───────────────────────────────────────────
+ *
+ * The flagged list used to draw the full assignment editor
+ * (billClientCellHtml — chips, position <select>s, add-client picker) in
+ * every row at once: eight bills across a few clients was already dozens
+ * of controls, and it scaled straight into unusable. The cell is now a
+ * read-only summary (billClientSummaryHtml); clicking it opens that same
+ * editor for the one bill, in a popover anchored to the row.
+ *
+ * The editor inside works through the very same bill_clients.js hooks
+ * the inline version did (initBillClients above), so a change here still
+ * runs onChanged -> load() -> render(); render() then calls
+ * refreshOpenClientsPopover() to re-anchor this popover to the row's new
+ * (repainted) summary, or dismiss it if that bill has dropped out of the
+ * filtered list.
+ */
+let clientsPopoverBillId = null;
+
+function popoverBillLabel(billId) {
+  const row = currentRows.find(r => r.bill_id === billId);
+  return row ? `${row.state} ${row.bill_number}` : 'this bill';
+}
+
+function positionClientsPopover(trigger) {
+  const pop = document.getElementById('clients-popover');
+  const r = trigger.getBoundingClientRect();
+  // Measure at its natural size before deciding where it fits.
+  pop.hidden = false;
+  pop.style.visibility = 'hidden';
+  const pw = pop.offsetWidth;
+  const ph = pop.offsetHeight;
+  const margin = 8;
+  let left = Math.min(r.left, window.innerWidth - pw - margin);
+  left = Math.max(margin, left);
+  // Below the cell by default; flip above when it would run off the
+  // bottom and there's more room up top.
+  let top = r.bottom + 6;
+  if (top + ph > window.innerHeight - margin && r.top - ph - 6 > margin) {
+    top = r.top - ph - 6;
+  }
+  top = Math.max(margin, Math.min(top, window.innerHeight - ph - margin));
+  pop.style.left = left + 'px';
+  pop.style.top = top + 'px';
+  pop.style.visibility = '';
+}
+
+function renderClientsPopover(billId) {
+  const pop = document.getElementById('clients-popover');
+  pop.innerHTML = `
+    <div class="clients-popover-head">
+      <span class="clients-popover-title">${escapeText(popoverBillLabel(billId))} — clients &amp; positions</span>
+      <button type="button" class="icon-btn" onclick="closeClientsPopover(true)" aria-label="Close">×</button>
+    </div>
+    <div class="clients-popover-body">${billClientCellHtml(billId)}</div>`;
+}
+
+function openClientsPopover(billId, trigger) {
+  clientsPopoverBillId = billId;
+  trigger.setAttribute('aria-expanded', 'true');
+  renderClientsPopover(billId);
+  positionClientsPopover(trigger);
+  const pop = document.getElementById('clients-popover');
+  const first = pop.querySelector('.clients-popover-body select, .clients-popover-body input, .clients-popover-body a, .clients-popover-body button');
+  // preventScroll so focusing the control can't scroll the page, which
+  // the scroll listener below would read as a reason to close the very
+  // popover we just opened.
+  if (first) first.focus({ preventScroll: true });
+}
+
+function closeClientsPopover(returnFocus) {
+  const pop = document.getElementById('clients-popover');
+  if (pop.hidden) return;
+  const billId = clientsPopoverBillId;
+  pop.hidden = true;
+  pop.innerHTML = '';
+  clientsPopoverBillId = null;
+  const trigger = document.querySelector(`[data-clients-trigger="${billId}"]`);
+  if (trigger) trigger.setAttribute('aria-expanded', 'false');
+  if (returnFocus && trigger) trigger.focus();
+}
+
+// Called by render() after every repaint. The summary the popover was
+// anchored to has been replaced by a fresh node, so re-render the
+// popover against the new row data and re-anchor it — unless that bill
+// is no longer in the list, in which case there's nothing to point at.
+function refreshOpenClientsPopover() {
+  if (clientsPopoverBillId == null) return;
+  const trigger = document.querySelector(`[data-clients-trigger="${clientsPopoverBillId}"]`);
+  if (!trigger) { closeClientsPopover(false); return; }
+  trigger.setAttribute('aria-expanded', 'true');
+  renderClientsPopover(clientsPopoverBillId);
+  positionClientsPopover(trigger);
+}
+
+// Open (or toggle) the popover from a click on a row's summary button.
+// Delegated on #list so it keeps working across every repaint.
+listEl.addEventListener('click', (e) => {
+  const trigger = e.target.closest('[data-clients-trigger]');
+  if (!trigger) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const billId = Number(trigger.dataset.clientsTrigger);
+  if (clientsPopoverBillId === billId) { closeClientsPopover(true); return; }
+  openClientsPopover(billId, trigger);
+});
+
+// Close on a click outside — but not on the trigger (handled above), not
+// inside the popover, and not inside the quick-add modal it can open.
+document.addEventListener('click', (e) => {
+  if (clientsPopoverBillId == null) return;
+  if (e.target.closest('[data-clients-trigger]')) return;
+  if (e.target.closest('#clients-popover')) return;
+  if (e.target.closest('.modal-backdrop')) return;
+  closeClientsPopover(false);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && clientsPopoverBillId != null) closeClientsPopover(true);
+});
+// A page scroll or resize leaves a fixed popover stranded away from its
+// row; simplest correct behaviour is to close it and let the user
+// reopen. Scrolling *inside* the popover (or the quick-add modal it can
+// open) is not that, so those are excluded.
+window.addEventListener('resize', () => closeClientsPopover(false));
+window.addEventListener('scroll', (e) => {
+  const t = e.target;
+  if (t && t.closest && (t.closest('#clients-popover') || t.closest('.modal-backdrop'))) return;
+  closeClientsPopover(false);
+}, true);
 
 // A bookmarked or shared link arrives with the whole view in it, so the
 // filters have to be in place before the first render — not applied
