@@ -625,17 +625,24 @@ async function openFlagModal() {
   // loaded, but only if the user hasn't already moved somewhere else.
   const openedOn = document.activeElement;
 
-  // /report doesn't otherwise need the client list, so it's fetched
-  // lazily here rather than on every page load like /flagged does.
+  // load() already fetched the full client list into allClients on page
+  // load, so reuse it rather than spending a second /api/clients round
+  // trip when the modal opens. Only fall back to a fetch when it's empty
+  // — a signed-out visitor, whose fetch here is what surfaces the login
+  // redirect below.
   const sel = document.getElementById('flag-client-select');
   sel.disabled = true;
   try {
-    const res = await fetch('/api/clients');
-    if (res.status === 401) {
-      window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
-      return;
+    if (allClients && allClients.length) {
+      flagModalClients = allClients;
+    } else {
+      const res = await fetch('/api/clients');
+      if (res.status === 401) {
+        window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+        return;
+      }
+      flagModalClients = await res.json();
     }
-    flagModalClients = await res.json();
     renderFlagClientSelect('');
   } catch (err) {
     document.getElementById('flag-modal-error').textContent = 'Could not load your clients. Try again.';
