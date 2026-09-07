@@ -259,8 +259,9 @@ async function saveAmendByDate(inputEl) {
 }
 
 // Saves on blur rather than per keystroke — a note is written in one
-// sitting, and the status line below says so instead of leaving the user
-// guessing whether it took.
+// sitting. The status line below confirms the save with the time it
+// happened ("Saved 1:03 PM"), so the acknowledgement reads as an event
+// that just occurred rather than as the field's standing help text.
 async function saveNotes(textareaEl) {
   const statusEl = document.getElementById('notes-status');
   if (textareaEl.value === textareaEl.defaultValue) return;
@@ -276,7 +277,7 @@ async function saveNotes(textareaEl) {
     if (!res.ok) throw new Error(data.error || 'Could not save your notes.');
     textareaEl.defaultValue = textareaEl.value;
     if (currentReport) currentReport.notes = data.notes;
-    statusEl.textContent = 'Saved.';
+    statusEl.textContent = 'Saved ' + new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) + '.';
   } catch (err) {
     statusEl.textContent = '';
     errorEl.textContent = err.message;
