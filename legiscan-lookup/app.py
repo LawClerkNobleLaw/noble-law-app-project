@@ -817,7 +817,7 @@ SHELL_NAV_ITEMS = [
      [
          # Was two separate items ("Lookup" + "Discover") until the two
          # pages merged into one search experience — see LOOKUP_BODY.
-         ("/lookup", "Bill lookup",
+         ("/lookup", "Search bills",
           '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
           '<circle cx="6" cy="6" r="4"/><path d="M9.5 9.5L12.5 12.5" stroke-linecap="round"/></svg>'),
          ("/flagged", "Flagged bills",
@@ -828,7 +828,7 @@ SHELL_NAV_ITEMS = [
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
      '<path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>',
      [
-         ("/lobbying", "Search",
+         ("/lobbying", "Organization search",
           '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
           '<circle cx="6" cy="6" r="4"/><path d="M9.5 9.5L12.5 12.5" stroke-linecap="round"/></svg>'),
          ("/clients", "Clients",
@@ -1245,7 +1245,7 @@ LOOKUP_BODY = _render_template(
     top_nav=''.join(('<div class="skeleton-row">\n      <div class="skeleton-bar" style="width:10%"></div>\n      <div class="skeleton-bar" style="width:45%"></div>\n      <div class="skeleton-bar" style="width:14%"></div>\n      <div class="skeleton-bar" style="width:12%"></div>\n    </div>' for _ in range(3))),
 )
 
-PAGE = page("Look up a bill — Rotunda", "/lookup", LOOKUP_BODY)
+PAGE = page("Search bills — Rotunda", "/lookup", LOOKUP_BODY)
 
 
 # Same reasoning as LOOKUP_BODY above — /lobbying is the other page that
@@ -1378,7 +1378,7 @@ FLAGGED_BODY = _render_template(
     ROW_MENU_SRC=ROW_MENU_SRC,
 )
 
-FLAGGED_PAGE = page("My Flagged Bills — Rotunda", "/flagged", FLAGGED_BODY)
+FLAGGED_PAGE = page("Flagged Bills — Rotunda", "/flagged", FLAGGED_BODY)
 
 
 # Unflagging used to DELETE the flagged_bills row (and every
