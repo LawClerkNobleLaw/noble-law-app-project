@@ -171,10 +171,15 @@ let sessionScope = 'current';
 // about local control" (see bill_text.py).
 let searchMode = 'summary';
 
-// Only used by the "flag selected" bar's client picker. A signed-out
-// visitor gets an empty list and no picker, which is right — they can't
-// flag anything either.
-fetch('/api/clients').then(res => res.ok ? res.json() : []).then(list => { allClients = list || []; }).catch(() => {});
+// The client list, fetched once and shared: the "flag selected" bar's
+// picker reads allClients, and loadClientKeywords() awaits this same
+// promise rather than fetching /api/clients a second time on the same
+// page load. A signed-out visitor gets an empty list and no picker,
+// which is right — they can't flag anything either.
+const clientsReady = fetch('/api/clients')
+  .then(res => res.ok ? res.json() : [])
+  .catch(() => [])
+  .then(list => { allClients = list || []; return allClients; });
 loadSavedSearches();
 loadStartState();
 loadCorpusStats();
@@ -301,9 +306,7 @@ function interestKeywords(clients) {
 
 async function loadClientKeywords() {
   try {
-    const res = await fetch('/api/clients');
-    if (!res.ok) return;
-    const keywords = interestKeywords(await res.json());
+    const keywords = interestKeywords(await clientsReady);
     if (!keywords.length) return;
     document.getElementById('keywords-panel').hidden = false;
     document.getElementById('keywords-list').innerHTML = keywords.map(k => `
