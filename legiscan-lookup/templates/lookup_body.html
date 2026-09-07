@@ -372,17 +372,70 @@ form.addEventListener('submit', (e) => {
   if (q) runSearch(q);
 });
 
-// Two different things prefill this page: the global header search
-// box + any old /discover?q=... bookmark send ?q=..., while a link
-// that already knows an exact bill number (billPills() elsewhere in
-// this app, and the ?next=... round trip _redirect_to_login() builds)
-// sends ?bill=... — both just seed the same one search box now that
-// lookup and discovery are a single page.
-const urlParams = new URLSearchParams(window.location.search);
-const prefillQuery = urlParams.get('q') || urlParams.get('bill');
-if (prefillQuery) {
-  document.getElementById('q').value = prefillQuery;
-  runSearch(prefillQuery);
+/* ── The URL is the search ─────────────────────────────────────────────
+ *
+ * The whole search — text, index, session scope, filters and sort —
+ * lives in the query string, exactly as the flagged list's does (see
+ * "The URL is the view" in FLAGGED_BODY). That is what makes a result
+ * set shareable and survive a reload or the Back button: a link is
+ * "here's the search I'm looking at", and returning from a bill lands
+ * on it instead of an empty box. replaceState, not pushState —
+ * narrowing a filter isn't a place to come Back to, and a dozen clicks
+ * shouldn't cost a dozen presses of the browser's back button.
+ *
+ * Two prefills still arrive from elsewhere and seed ?q= / ?bill=: the
+ * global header search box and any old /discover?q=... bookmark send
+ * ?q=..., while a link that already knows an exact bill number
+ * (billPills() elsewhere in this app, and the ?next=... round trip
+ * _redirect_to_login() builds) sends ?bill=... — both just fill the one
+ * search box now that lookup and discovery are a single page.
+ */
+function currentSearchUrl() {
+  const params = new URLSearchParams();
+  const q = (currentQuery || '').trim();
+  if (q) params.set('q', q);
+  if (searchMode !== 'summary') params.set('mode', searchMode);
+  if (sessionScope !== 'current') params.set('session', sessionScope);
+  for (const group of FILTER_GROUPS) {
+    if (filters[group.key].size) params.set(group.key, Array.from(filters[group.key]).join(','));
+  }
+  if (sortMode !== 'relevance') params.set('sort', sortMode);
+  if (hideTracked) params.set('hide', 'tracked');
+  return params.toString();
+}
+
+function syncUrl() {
+  const query = currentSearchUrl();
+  history.replaceState(null, '', query ? `${location.pathname}?${query}` : location.pathname);
+}
+
+function applyStateFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const mode = params.get('mode');
+  if (mode === 'summary' || mode === 'text') searchMode = mode;
+  const session = params.get('session');
+  if (session === 'current' || session === 'all') sessionScope = session;
+  for (const group of FILTER_GROUPS) {
+    filters[group.key] = new Set((params.get(group.key) || '').split(',').filter(Boolean));
+  }
+  const sort = params.get('sort');
+  if (sort === 'relevance' || sort === 'action' || sort === 'number') sortMode = sort;
+  hideTracked = params.get('hide') === 'tracked';
+
+  const q = (params.get('q') || params.get('bill') || '').trim();
+  const box = document.getElementById('q');
+  box.value = q;
+  box.placeholder = placeholderForMode();
+  renderModeTabs();
+  // keepFilters: true so the search doesn't reset the filters and sort we
+  // just read off the URL. The two things a fresh search does that are
+  // still wanted here — hide the start card, remember the query — are done
+  // explicitly, since keepFilters skips them.
+  if (q) {
+    rememberSearch(q);
+    setStartStateVisible(false);
+    runSearch(q, true);
+  }
 }
 
 // A new search clears the filters; changing the session scope keeps
@@ -423,6 +476,9 @@ function setSessionScope(scope) {
   if (scope === sessionScope) return;
   sessionScope = scope;
   if (currentQuery) runSearch(currentQuery, true);
+  // No query yet: the search that would sync the URL never runs, so keep
+  // the chosen scope in the URL directly (a shareable "open in this scope").
+  else syncUrl();
 }
 
 // Same search, different index — so filters are kept, exactly as
@@ -434,8 +490,9 @@ function setSearchMode(mode) {
   renderModeTabs();
   if (currentQuery) runSearch(currentQuery, true);
   // Nothing searched yet: switching index is the whole interaction, so
-  // put the cursor where the next thing has to be typed.
-  else document.getElementById('q').focus();
+  // put the cursor where the next thing has to be typed — and keep the
+  // chosen index in the URL, since no search will run to sync it.
+  else { syncUrl(); document.getElementById('q').focus(); }
 }
 
 // LegiScan's search doesn't return a coded status the way getBill does
@@ -709,6 +766,11 @@ function renderRows() {
 }
 
 function renderRowsNow() {
+  // Every state-changing interaction ends here — a completed search, a
+  // filter toggle, a sort, a hide, a selection — so this is the one place
+  // that writes the current search back into the URL. (Selection isn't in
+  // the URL; syncing on it is a harmless no-op.)
+  syncUrl();
   const all = currentResults;
   if (!all.length) {
     // The mode tabs are in the search card now, so a zero-result page
@@ -1193,11 +1255,13 @@ async function saveCurrentSearch() {
   }
 }
 
-// Last, not up with the other kick-offs: modeTabsHtml() reads
-// SEARCH_MODES and SESSION_BILL_ESTIMATE, which are `const`s declared
-// further down this script and so are in the temporal dead zone until
-// it has run through. The async fetches above are safe up there because
-// nothing they touch resolves before then.
-renderModeTabs();
+// Last, not up with the other kick-offs: applyStateFromUrl() calls
+// renderModeTabs(), whose modeTabsHtml() reads SEARCH_MODES and
+// SESSION_BILL_ESTIMATE — `const`s declared further down this script and
+// so in the temporal dead zone until it has run through. Restoring the
+// search off the URL likewise has to wait for runSearch() and every
+// filter/sort helper to be defined. The async fetches above are safe up
+// there because nothing they touch resolves before then.
+applyStateFromUrl();
 
 </script>
