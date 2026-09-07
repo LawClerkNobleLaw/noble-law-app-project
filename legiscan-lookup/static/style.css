@@ -562,6 +562,43 @@
   .modal-panel label { display: block; }
   .modal-panel input, .modal-panel select, .modal-panel textarea { width: 100%; }
   .modal-actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
+  /* ── The flagged list's client cell (see billClientSummaryHtml in
+       bill_clients.js and the popover wiring in FLAGGED_BODY). The list
+       used to draw the full assignment editor in every row — dozens of
+       controls at a handful of bills; the cell is now a read-only
+       summary that opens that editor in a popover. */
+  .clients-summary {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.5rem;
+    width: 100%; text-align: left; cursor: pointer; font: inherit; color: inherit;
+    background: none; border: 1px solid transparent; border-radius: var(--radius-md);
+    padding: 0.3rem 0.4rem;
+  }
+  .clients-summary:hover { background: var(--accent-soft); border-color: var(--rule); }
+  .clients-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .clients-summary[aria-expanded="true"] { background: var(--accent-soft); border-color: var(--rule-strong); }
+  .clients-summary-list { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.5rem; flex: 1 1 auto; }
+  .client-position { display: inline-flex; align-items: center; gap: 0.35rem; }
+  .client-position-name { font-size: 0.82rem; font-weight: 600; color: var(--ink); }
+  .client-position-empty { font-size: 0.82rem; color: var(--slate); }
+  .clients-summary-edit { flex: none; color: var(--slate); font-size: 0.85rem; opacity: 0.55; }
+  .clients-summary:hover .clients-summary-edit,
+  .clients-summary:focus-visible .clients-summary-edit,
+  .clients-summary[aria-expanded="true"] .clients-summary-edit { opacity: 1; }
+  /* Anchored, fixed-position editor — below .modal-backdrop's z-index so
+     the "+ Add new client" quick-add modal it can open sits above it,
+     and above the row menus/account menu (z-index 20) it can sit over. */
+  .clients-popover {
+    position: fixed; z-index: 90; width: min(22rem, calc(100vw - 1rem));
+    background: var(--surface); border: 1px solid var(--rule-card);
+    box-shadow: var(--shadow-hover); border-radius: var(--radius-lg);
+  }
+  .clients-popover[hidden] { display: none; }
+  .clients-popover-head {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+    padding: 0.55rem 0.5rem 0.55rem 0.85rem; border-bottom: 1px solid var(--rule);
+  }
+  .clients-popover-title { font-size: 0.85rem; font-weight: 700; }
+  .clients-popover-body { padding: 0.7rem 0.85rem; max-height: min(24rem, 70vh); overflow-y: auto; }
   tr.row-link { cursor: pointer; }
   tr.row-link:hover { background: var(--accent-soft); }
   .tag { display: inline-block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
