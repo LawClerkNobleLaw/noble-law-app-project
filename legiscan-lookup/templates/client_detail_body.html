@@ -173,15 +173,6 @@ function compensationLabel(c) {
   return per ? `${money} ${per}` : money;
 }
 
-// "Sep 8" — the year is only worth the width when it isn't this one.
-function fmtShortDate(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr + 'T00:00:00');
-  if (isNaN(d.getTime())) return dateStr;
-  const opts = { month: 'short', day: 'numeric' };
-  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
-  return d.toLocaleDateString('en-US', opts);
-}
 
 /* ── What is coming up for this client ─────────────────────────────── */
 

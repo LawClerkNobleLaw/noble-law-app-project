@@ -25,14 +25,6 @@ const errorEl = document.getElementById('error');
 const listEl = document.getElementById('list');
 let currentRows = [];
 
-// Same "no Z means UTC" reading flagged_body.html's own fmtDateTime gives
-// archived_at/flagged_at — both come from SQLite's datetime('now').
-function fmtDateTime(iso) {
-  if (!iso) return '';
-  const d = new Date(iso.includes('Z') || iso.includes('+') ? iso : iso + 'Z');
-  if (isNaN(d)) return iso;
-  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-}
 
 function clientChipsHtml(r) {
   const clients = r.assigned_clients || [];
@@ -58,7 +50,7 @@ function rowHtml(r) {
       </td>
       <td>${statusBadgeHtml(r.status_label || 'In progress')}</td>
       <td>${clientChipsHtml(r)}</td>
-      <td class="date">${fmtDateTime(r.archived_at)}</td>
+      <td class="date">${fmtStamp(r.archived_at)}</td>
       <td style="text-align:right;white-space:nowrap">
         <a class="secondary" href="/report?bill_id=${r.bill_id}&from_label=Archived&from_href=%2Fflagged%2Farchived">Bill report</a>
         <button type="button" class="secondary" onclick="restore(${r.bill_id})">Restore</button>

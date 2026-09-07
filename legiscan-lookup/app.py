@@ -587,6 +587,7 @@ POPPINS_FILES = {w: _read_static_bytes(f"fonts/poppins-{w}.woff2") for w in POPP
 FOCUS_JS = _read_static_text("js/focus.js")
 SEARCH_SHORTCUT_JS = _read_static_text("js/search_shortcut.js")
 ESCAPE_TEXT_JS = _read_static_text("js/escape_text.js")
+DATES_JS = _read_static_text("js/dates.js")
 
 
 # Every file the /static/ route will serve, name -> (bytes, content type),
@@ -610,6 +611,7 @@ STATIC_ASSETS = {
     "js/focus.js": (FOCUS_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/escape_text.js": (ESCAPE_TEXT_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/search_shortcut.js": (SEARCH_SHORTCUT_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/dates.js": (DATES_JS.encode("utf-8"), JS_CONTENT_TYPE),
 }
 
 STYLE_HREF = _asset_url("style.css")
@@ -689,6 +691,7 @@ FONT_LINKS = "\n".join(
 FOCUS_SRC = _asset_url("js/focus.js")
 SEARCH_SHORTCUT_SRC = _asset_url("js/search_shortcut.js")
 ESCAPE_TEXT_SRC = _asset_url("js/escape_text.js")
+DATES_SRC = _asset_url("js/dates.js")
 
 TOP_BRAND = """<a href="/" class="top-brand">
   <span class="brand-mark" style="width:17px;height:17px"></span>
@@ -1075,6 +1078,7 @@ def page(title, path, body):
 <div id="page-progress"></div>
 <script src="{PAGE_PROGRESS_SRC}"></script>
 <script src="{ESCAPE_TEXT_SRC}"></script>
+<script src="{DATES_SRC}"></script>
 <script src="{FOCUS_SRC}"></script>
 <script src="{SEARCH_SHORTCUT_SRC}"></script>
 {app_shell(path, body)}
