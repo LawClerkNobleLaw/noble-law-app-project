@@ -135,8 +135,23 @@ const ROLES = [
 // directory because the empty-query load landed after it.
 let loadSeq = 0;
 
+// The search + chamber go in the URL, so a filtered directory view is
+// shareable and survives a reload — the same discipline /lookup follows.
+// Called from load(), the one funnel every search and chamber change
+// passes through; empty values are omitted so the bare page stays a
+// clean /directory.
+function syncUrl() {
+  const params = new URLSearchParams();
+  const q = document.getElementById('q') ? document.getElementById('q').value.trim() : '';
+  if (q) params.set('q', q);
+  if (chamber) params.set('chamber', chamber);
+  const query = params.toString();
+  history.replaceState(null, '', query ? `${location.pathname}?${query}` : location.pathname);
+}
+
 async function load() {
   const seq = ++loadSeq;
+  syncUrl();
   errorEl.className = '';
   loadingEl.className = 'skeleton show';
   try {
@@ -444,6 +459,14 @@ document.getElementById('q').addEventListener('input', () => {
   searchTimer = setTimeout(load, 200);
 });
 
+// Restore a shared or reloaded view before the first load: the URL is
+// the view here too. Chamber is validated against the two real values
+// (anything else falls back to Both), same as the server would.
+const dirParams = new URLSearchParams(window.location.search);
+const initialQuery = (dirParams.get('q') || '').trim();
+const initialChamber = dirParams.get('chamber');
+if (initialChamber === 'Assembly' || initialChamber === 'Senate') chamber = initialChamber;
+if (initialQuery) document.getElementById('q').value = initialQuery;
 renderChamberTabs();
 load();
 </script>
