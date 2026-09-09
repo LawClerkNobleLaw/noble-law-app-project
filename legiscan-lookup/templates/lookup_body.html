@@ -47,17 +47,12 @@
      for asking it. Saved searches keeps its own always-visible
      behaviour, which was a decision made when it shipped. -->
 <div id="start-state">
-  <div class="panel" id="moved-panel" hidden style="margin-bottom:1rem">
-    <div class="panel-head">
-      <div>
-        <h2 class="title" id="moved-title">Moved this week</h2>
-        <div class="sub">Among the bills your firm already tracks — this app only checks those.</div>
-      </div>
-      <a class="secondary" href="/flagged">All flagged bills →</a>
-    </div>
-    <div id="moved-list"></div>
-  </div>
-
+  <!-- "Moved this week" used to live here too, but it restated the
+       dashboard's "Recent activity" panel (both are /api/recent-changes-
+       style "flagged bills that moved") on a page whose job is search.
+       The dashboard is the home for that summary; this start-state keeps
+       only the search-native fillers — a client-interest to search for,
+       and what you searched last. -->
   <div class="panel" id="keywords-panel" hidden style="margin-bottom:1rem">
     <div class="panel-head">
       <div>
@@ -226,9 +221,11 @@ function renderModeTabs() {
  * "A blank input asks the user to already know what they want. It's
  * also a free slot on a frequently visited screen." (P2-28)
  *
- * Three fillers, each answering a different version of "what should I
- * look at": what has moved among what we already track, what our
- * clients care about, and what I searched for last time.
+ * Two fillers, each answering a different version of "what should I
+ * search for": what our clients care about, and what I searched for
+ * last time. ("What has moved among what we track" was a third, but it
+ * duplicated the dashboard's Recent activity — see the start-state
+ * markup above — so it lives there alone now.)
  */
 function setStartStateVisible(visible) {
   const el = document.getElementById('start-state');
@@ -239,43 +236,8 @@ async function loadStartState() {
   // A search prefilled from a link or the header box runs immediately,
   // so there is no start state to build — see the prefill handling
   // below.
-  await Promise.all([loadMovedThisWeek(), loadClientKeywords()]);
+  await loadClientKeywords();
   renderRecentSearches();
-}
-
-/* Moved this week ─────────────────────────────────────────────────────
- *
- * Scoped to the firm's own flagged bills, and labelled that way, because
- * that is all the data can support: the refresh job only visits bills
- * somebody flagged, so this is never a claim about the Legislature at
- * large. Same house rule as the 601's "Known gaps" card — say what we
- * don't know rather than imply we know it.
- */
-async function loadMovedThisWeek() {
-  try {
-    const res = await fetch('/api/recent-changes?days=7');
-    if (!res.ok) return;                 // Signed out — no panel, no error.
-    const data = await res.json();
-    const changes = data.changes || [];
-    if (!changes.length) return;
-    document.getElementById('moved-panel').hidden = false;
-    // One line per bill, not per change: a bill that moved three times
-    // this week is still one thing to look at, and the newest change is
-    // the one that says where it stands now.
-    const seen = new Set();
-    const rows = changes.filter(c => !seen.has(c.bill_id) && seen.add(c.bill_id));
-    document.getElementById('moved-title').textContent =
-      `Moved this week · ${rows.length} bill${rows.length === 1 ? '' : 's'}`;
-    document.getElementById('moved-list').innerHTML = rows.map(c => `
-      <div class="saved-row">
-        <div class="saved-main">
-          <a class="saved-name" href="/report?bill_id=${c.bill_id}">${escapeText(c.state)} ${escapeText(c.bill_number)}</a>
-          <div class="saved-meta">${escapeText(c.title || '')}</div>
-          <div class="saved-meta">${escapeText(c.description || '')}</div>
-        </div>
-        <span class="tag" style="white-space:nowrap">${escapeText(c.summary || '')}</span>
-      </div>`).join('');
-  } catch (err) { /* The page works without it. */ }
 }
 
 /* Your clients' interests ─────────────────────────────────────────────
