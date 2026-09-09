@@ -1606,6 +1606,11 @@
     border-radius: var(--radius-md); padding: 0.9rem 1rem; margin-bottom: 0.75rem;
   }
   .filter-group { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  /* The three client-side facet groups flow together and wrap as units,
+     instead of each claiming a full row of its own. A wider column-gap
+     than the gap inside a group keeps the groups reading as separate
+     things once two share a line. */
+  .facet-groups { display: flex; flex-wrap: wrap; gap: var(--space-2) 1.4rem; }
   .filter-group-label {
     font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
     color: var(--slate); min-width: 4.5rem;
@@ -1627,8 +1632,22 @@
     background: transparent; border-color: var(--rule);
   }
   .filter-tab[disabled]:hover { border-color: var(--rule); }
-  .filter-sort { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
-  .filter-sort select { font-size: 0.78rem; padding: 0.25rem 0.4rem; }
+  /* The results panel head's right cluster: how you view the set (Sort)
+     and what you hide from it (Active only, Hide N tracked), plus Save
+     search. These were scattered before — Sort down in the rail, one hide
+     buried inside the Status group, the other a lone checkbox here — and
+     read as one row of view controls now. The two hide toggles reuse
+     .filter-tab so they match the rail's tabs, pressed state and all. */
+  .result-controls { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+  .result-controls .filter-tab { font-size: 0.78rem; padding: 0.2rem 0.6rem; }
+  .view-sort {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--slate);
+  }
+  .view-sort select {
+    font: inherit; font-size: 0.78rem; font-weight: 400; letter-spacing: 0; text-transform: none;
+    padding: 0.25rem 0.4rem;
+  }
 
   /* Active filters restated as removable chips. The tabs above already
      show their own state, but once three groups are set the only way to

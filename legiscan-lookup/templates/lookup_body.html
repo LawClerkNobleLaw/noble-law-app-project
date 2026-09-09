@@ -644,9 +644,32 @@ function toggleFilter(groupKey, value) {
   renderRows();
 }
 
-function setActiveOnly() {
+// "Active only" is a preset over the Status filter, not a separate axis:
+// it selects exactly the live-status tabs, so it can never contradict an
+// explicit status pick — it *is* one. It reads as a hide toggle in the
+// panel head (next to "Hide N tracked"), but underneath it just drives
+// the same status Set the rail's tabs do, which is why toggling it lights
+// those tabs up. Clicking it again, while it is the current status
+// selection, clears it — a toggle, not the one-way set it used to be.
+function activeStatusesPresent() {
   const present = new Set(currentResults.map(r => billStatusFromAction(r.last_action).label));
-  filters.status = new Set(ACTIVE_STATUSES.filter(s => present.has(s)));
+  return ACTIVE_STATUSES.filter(s => present.has(s));
+}
+function isActiveOnly() {
+  const preset = activeStatusesPresent();
+  const picked = filters.status;
+  return preset.length > 0 && picked.size === preset.length && preset.every(s => picked.has(s));
+}
+// Offered only when the results actually mix live and settled bills —
+// otherwise the toggle would filter nothing, so it isn't shown.
+function canHideSettled() {
+  const present = new Set(currentResults.map(r => billStatusFromAction(r.last_action).label));
+  const hasActive = ACTIVE_STATUSES.some(s => present.has(s));
+  const hasSettled = Array.from(present).some(s => s && !ACTIVE_STATUSES.includes(s));
+  return hasActive && hasSettled;
+}
+function setActiveOnly() {
+  filters.status = isActiveOnly() ? new Set() : new Set(activeStatusesPresent());
   renderRows();
 }
 
@@ -676,10 +699,7 @@ function filterRailHtml() {
         aria-pressed="${on}" ${n ? '' : 'disabled'} ${focusKeyAttr('tab', group.key, value)}
         onclick="toggleFilter('${group.key}', '${value}')">${escapeText(value)}<span class="n">${n}</span></button>`;
     }).join('');
-    const preset = group.key === 'status'
-      ? `<button type="button" class="filter-chip" ${focusKeyAttr('active-only')} onclick="setActiveOnly()" title="Hide bills that passed, failed or were vetoed">Active only</button>`
-      : '';
-    return `<div class="filter-group"><span class="filter-group-label">${group.label}</span>${tabs}${preset}</div>`;
+    return `<div class="filter-group"><span class="filter-group-label">${group.label}</span>${tabs}</div>`;
   }).join('');
 
   const sessionTabs = [['current', 'Current session'], ['all', 'All sessions']].map(([value, label]) =>
@@ -695,30 +715,20 @@ function filterRailHtml() {
     ? ''
     : `<div class="filter-group"><span class="filter-group-label">Session</span>${sessionTabs}</div>`;
 
-  // A sort control over one row sorts nothing, and with "Search in"
-  // moved up into the card it would be the only thing left in the rail
-  // — a full-width bar holding one idle <select>. Same rule the filter
-  // groups above already follow: a control that can't change the list
-  // isn't shown.
-  const sortHtml = currentResults.length < 2 ? '' : `
-    <div class="filter-sort">
-      <label class="filter-group-label" for="sort-mode" style="min-width:0">Sort</label>
-      <select id="sort-mode" data-focus-key="sort" onchange="setSort(this.value)">
-        <option value="relevance" ${sortMode === 'relevance' ? 'selected' : ''}>Relevance</option>
-        <option value="action" ${sortMode === 'action' ? 'selected' : ''}>Last action — newest</option>
-        <option value="number" ${sortMode === 'number' ? 'selected' : ''}>Bill number</option>
-      </select>
-    </div>`;
-
   const chipsHtml = activeChipsHtml();
-  // Nothing to sort, nothing to filter, nowhere else to look: the rail
-  // is an empty box, so it doesn't render at all.
-  if (!sortHtml && !scopeGroup && !groupsHtml && !chipsHtml) return '';
+  // Sort and the hide toggles moved up into the panel head — they change
+  // how the set is viewed, not what is in it — so the rail is filters
+  // only. Nothing to narrow and nowhere else to look means an empty box,
+  // so it doesn't render at all.
+  if (!scopeGroup && !groupsHtml && !chipsHtml) return '';
+  // Session re-queries LegiScan (a scope switch, not a facet), so it sits
+  // on its own line above the three client-side facet groups, which flow
+  // together and wrap as units instead of each taking a full row of its
+  // own — the rail was five stacked rows before, most of them near-empty.
   return `
     <div class="search-filters">
-      ${sortHtml ? `<div class="filter-group">${sortHtml}</div>` : ''}
       ${scopeGroup}
-      ${groupsHtml}
+      ${groupsHtml ? `<div class="facet-groups">${groupsHtml}</div>` : ''}
       ${chipsHtml}
     </div>`;
 }
@@ -848,7 +858,23 @@ function renderRowsNow() {
     <div class="panel">
       <div class="panel-head">
         <div class="sub" style="margin:0">${countLine}</div>
-        <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+        <div class="result-controls">
+        ${all.length > 1 ? `
+        <label class="view-sort">Sort
+          <select data-focus-key="sort" onchange="setSort(this.value)">
+            <option value="relevance" ${sortMode === 'relevance' ? 'selected' : ''}>Relevance</option>
+            <option value="action" ${sortMode === 'action' ? 'selected' : ''}>Last action — newest</option>
+            <option value="number" ${sortMode === 'number' ? 'selected' : ''}>Bill number</option>
+          </select>
+        </label>` : ''}
+        ${canHideSettled() ? `
+        <button type="button" class="filter-tab${isActiveOnly() ? ' active' : ''}" aria-pressed="${isActiveOnly()}"
+          ${focusKeyAttr('active-only')} onclick="setActiveOnly()"
+          title="Hide bills that passed, failed or were vetoed">Active only</button>` : ''}
+        ${trackedCount ? `
+        <button type="button" class="filter-tab${hideTracked ? ' active' : ''}" aria-pressed="${hideTracked}"
+          ${focusKeyAttr('hide-tracked')} onclick="setHideTracked(${!hideTracked})"
+          title="Hide bills you already track">Hide ${trackedCount} tracked</button>` : ''}
         ${signedIn ? `
         ${allClients.length ? `
         <label class="sub" style="margin:0">for
@@ -858,11 +884,6 @@ function renderRowsNow() {
           </select>
         </label>` : ''}
         <button type="button" class="secondary" onclick="saveCurrentSearch()">Save this search</button>` : ''}
-        ${trackedCount ? `
-        <label class="sub" style="display:flex;align-items:center;gap:0.35rem;margin:0">
-          <input type="checkbox" ${hideTracked ? 'checked' : ''} onchange="setHideTracked(this.checked)">
-          Hide the ${trackedCount} I already track
-        </label>` : ''}
         </div>
       </div>
       <div style="overflow-x:auto">
