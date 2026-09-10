@@ -419,7 +419,16 @@
     border-radius: var(--radius-pill); background: var(--accent-solid); color: var(--accent-solid-text); cursor: pointer;
     transition: background .12s ease;
   }
-  button:hover { background: var(--accent-solid-hover); }
+  /* :where() zeroes this selector's specificity to (0,1,0) so ANY
+     class-level background (a .filter-tab/.switch-btn/.linklike/… that
+     opts out of the solid pill) wins on hover instead of losing to it.
+     Without that, this rule's (0,1,1) beat those (0,1,0) base rules and
+     repainted transparent link/tab buttons with the solid fill while
+     their text colour stayed — the invisible-on-hover text. Solid
+     buttons (bare <button>, .auth-submit) set no class background, so
+     they still darken. Supersedes the per-button `background:none on
+     hover` band-aids noted at .settings-tab/.icon-btn. */
+  :where(button):hover { background: var(--accent-solid-hover); }
   button:disabled { opacity: 0.5; cursor: default; }
   /* Secondary/danger actions are outlined pills (transparent fill, a
      border that deepens on hover) rather than the old soft-filled
