@@ -316,39 +316,24 @@ SIGNED_IN_HINT_COOKIE = "signed_in_hint"
 # Sets data-theme from localStorage BEFORE first paint, so a page load
 # doesn't flash the wrong theme for a moment before JS gets around to
 # correcting it. Every page's <head> includes this, right after <style>
-# (see STYLE's own :not([data-theme="light"]) media query and
-# :root[data-theme="dark"] block, which is what this attribute actually
-# controls).
+# (see STYLE's own :root[data-theme="dark"] block, which is what this
+# attribute actually controls).
 #
-# Priority order: (1) an explicit choice from the toggle in
-# account_widget() (localStorage['theme'], set for anyone — signed in
-# or not — who's ever used it) always wins. (2) Failing that, a
-# signed-OUT visitor defaults to dark rather than following the OS's
-# light/dark preference — product decision, not a bug: this app is
-# meant to look like the mockup's always-dark marketing/auth
-# experience for anyone who hasn't signed in yet. "Signed out" here
-# means SIGNED_IN_HINT_COOKIE is absent — that cookie is set/cleared
-# alongside the real session cookie (see _signed_in_hint_cookie_header)
-# specifically because this script runs synchronously before any
-# fetch could resolve, and the real session cookie is HttpOnly (opaque
-# to JS by design). (3) Otherwise (signed in, no explicit choice),
-# leave the attribute unset entirely, so the plain OS-preference media
-# query keeps working exactly as it always has.
-#
-# One edge case worth naming: a session created before this change
-# shipped won't have SIGNED_IN_HINT_COOKIE yet, so that visitor reads
-# as "signed out" for this initial-paint guess only, until their next
-# login/logout resets it — the sidebar footer, which the server fills
-# in from the real session (see _fill_account_state), still shows them
-# as signed in regardless; this only affects which theme they see.
-THEME_INIT_SCRIPT = f"""
+# Dark is Rotunda's default identity — the whole app is designed from an
+# always-dark mockup — so this defaults EVERYONE to dark rather than
+# following the OS light/dark preference. Priority: (1) an explicit
+# choice from the toggle in account_widget() (localStorage['theme'],
+# set for anyone who's ever used it) always wins, either direction;
+# (2) otherwise, dark. A user who wants light keeps it via the toggle;
+# the light palette (STYLE's :root, and :root[data-theme="light"]) is
+# fully maintained and contrast-tested, it's just no longer the default.
+THEME_INIT_SCRIPT = """
 <script>
-(function() {{
+(function() {
   var t = localStorage.getItem('theme');
-  if (t === 'dark' || t === 'light') {{ document.documentElement.setAttribute('data-theme', t); return; }}
-  var signedIn = document.cookie.indexOf('{SIGNED_IN_HINT_COOKIE}=1') !== -1;
-  if (!signedIn) document.documentElement.setAttribute('data-theme', 'dark');
-}})();
+  if (t === 'dark' || t === 'light') { document.documentElement.setAttribute('data-theme', t); return; }
+  document.documentElement.setAttribute('data-theme', 'dark');
+})();
 </script>
 """
 
@@ -584,6 +569,16 @@ PAGE_PROGRESS_JS = _read_static_text("js/page_progress.js")
 # Poppins, self-hosted — see FONT_LINKS for why.
 POPPINS_WEIGHTS = (400, 500, 600, 700)
 POPPINS_FILES = {w: _read_static_bytes(f"fonts/poppins-{w}.woff2") for w in POPPINS_WEIGHTS}
+
+# Garet, the mockup's display face — self-hosted the same way, and used
+# only for headings/wordmark (see --font-display in style.css), never
+# body copy, so two weights cover it: Book (400) for the rare regular-
+# weight display line and Heavy (800) for the big rounded headlines the
+# mockup leans on ("everything under the dome", "Welcome back."). The
+# team confirmed the web-embedding licence and supplied these two
+# .woff2 files; body copy stays Poppins.
+GARET_FACES = {"book": 400, "heavy": 800}
+GARET_FILES = {name: _read_static_bytes(f"fonts/garet-{name}.woff2") for name in GARET_FACES}
 FOCUS_JS = _read_static_text("js/focus.js")
 SEARCH_SHORTCUT_JS = _read_static_text("js/search_shortcut.js")
 ESCAPE_TEXT_JS = _read_static_text("js/escape_text.js")
@@ -608,6 +603,7 @@ STATIC_ASSETS = {
     "js/row_menu.js": (ROW_MENU_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/page_progress.js": (PAGE_PROGRESS_JS.encode("utf-8"), JS_CONTENT_TYPE),
     **{f"fonts/poppins-{w}.woff2": (POPPINS_FILES[w], "font/woff2") for w in POPPINS_WEIGHTS},
+    **{f"fonts/garet-{name}.woff2": (GARET_FILES[name], "font/woff2") for name in GARET_FACES},
     "js/focus.js": (FOCUS_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/escape_text.js": (ESCAPE_TEXT_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/search_shortcut.js": (SEARCH_SHORTCUT_JS.encode("utf-8"), JS_CONTENT_TYPE),
@@ -664,7 +660,8 @@ POPPINS_LATIN_RANGE = (
 )
 
 FONT_FACES = "\n".join(
-    f"""@font-face {{
+    [
+        f"""@font-face {{
   font-family: 'Poppins';
   font-style: normal;
   font-weight: {weight};
@@ -672,7 +669,22 @@ FONT_FACES = "\n".join(
   src: url('{_asset_url(f"fonts/poppins-{weight}.woff2")}') format('woff2');
   unicode-range: {POPPINS_LATIN_RANGE};
 }}"""
-    for weight in POPPINS_WEIGHTS
+        for weight in POPPINS_WEIGHTS
+    ]
+    # Garet carries only headings/the wordmark, so no unicode-range: it's
+    # never the fallback for a stray glyph the way body Poppins is, and
+    # our own headline text is latin. font-display: swap so a headline
+    # paints in the fallback (Poppins) immediately rather than blocking.
+    + [
+        f"""@font-face {{
+  font-family: 'Garet';
+  font-style: normal;
+  font-weight: {weight};
+  font-display: swap;
+  src: url('{_asset_url(f"fonts/garet-{name}.woff2")}') format('woff2');
+}}"""
+        for name, weight in GARET_FACES.items()
+    ]
 )
 
 # 400 and 600 preloaded, the other two not: those are body copy and the
@@ -685,6 +697,13 @@ FONT_LINKS = "\n".join(
         f'<link rel="preload" as="font" type="font/woff2" '
         f'href="{_asset_url(f"fonts/poppins-{weight}.woff2")}" crossorigin>'
         for weight in (400, 600)
+    ]
+    # Garet Heavy is the above-the-fold headline on every page (page-head
+    # title, wordmark), so it's preloaded alongside body Poppins; Book is
+    # rarer and left to load on demand.
+    + [
+        f'<link rel="preload" as="font" type="font/woff2" '
+        f'href="{_asset_url("fonts/garet-heavy.woff2")}" crossorigin>'
     ]
     + ["<style>", FONT_FACES, "</style>"]
 )

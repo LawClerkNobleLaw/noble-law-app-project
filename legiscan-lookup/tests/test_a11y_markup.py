@@ -431,13 +431,17 @@ def test_no_weight_is_shipped_that_nothing_sets():
     """Poppins came down in five weights on every navigation, one of
     which (300) the stylesheet never sets. A list of weights is exactly
     the thing that stops matching reality silently — more so now that
-    each one is a file in the repo."""
-    assert set(app.POPPINS_WEIGHTS) == _weights_the_app_actually_sets()
+    each one is a file in the repo. Two families ship now (Poppins for
+    body, Garet for display headings at 800), so the invariant is that
+    every weight the app sets is shipped by ONE of them — no orphan
+    weight in the CSS, no shipped weight nothing uses."""
+    shipped = set(app.POPPINS_WEIGHTS) | set(app.GARET_FACES.values())
+    assert shipped == _weights_the_app_actually_sets()
 
 
 def test_every_declared_face_is_a_file_this_app_serves():
     faces = re.findall(r"src: url\('([^']+)'\)", app.FONT_LINKS)
-    assert len(faces) == len(app.POPPINS_WEIGHTS)
+    assert len(faces) == len(app.POPPINS_WEIGHTS) + len(app.GARET_FACES)
     for url in faces:
         name, _, version = url.lstrip("/").partition("?")
         name = name[len("static/"):]
@@ -464,9 +468,15 @@ def test_the_faces_that_are_preloaded_are_the_ones_every_page_needs():
     # spend first-paint bandwidth on files some pages never use.
     preloaded = re.findall(r'rel="preload"[^>]*poppins-(\d{3})', app.FONT_LINKS)
     assert preloaded == ["400", "600"]
+    # Garet Heavy is the above-the-fold headline on every page, so it's
+    # preloaded too; Garet Book is not (rarer).
+    preload_links = re.findall(r'<link rel="preload"[^>]*>', app.FONT_LINKS)
+    assert any("garet-heavy" in link for link in preload_links)
+    assert not any("garet-book" in link for link in preload_links)
     # crossorigin even though this is same-origin now: fonts are fetched
     # in CORS mode, and a preload without it downloads the file twice.
-    assert app.FONT_LINKS.count("crossorigin") == len(preloaded)
+    # One per preload link (two Poppins + one Garet).
+    assert app.FONT_LINKS.count("crossorigin") == app.FONT_LINKS.count('rel="preload"')
 
 
 def test_the_serif_token_names_a_font_that_is_actually_there():

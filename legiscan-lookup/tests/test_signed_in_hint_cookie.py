@@ -123,15 +123,15 @@ def test_logout_clears_both_cookies(live_server):
     assert "Max-Age=0" in hint_cookies[0]
 
 
-def test_theme_init_script_defaults_dark_only_when_hint_cookie_is_absent():
+def test_theme_init_script_defaults_dark():
     """Not a browser/JS test (this suite has no JS engine) — just
-    confirms the inline script app.py ships actually contains the
-    cookie-gated fallback this whole feature depends on, so a future
-    edit to THEME_INIT_SCRIPT can't silently drop the "signed-out
-    defaults to dark" behavior without a test noticing."""
+    confirms the inline script app.py ships still defaults to dark, so a
+    future edit to THEME_INIT_SCRIPT can't silently drop Rotunda's
+    always-dark default without a test noticing. Dark is now the default
+    for EVERYONE (the whole app is designed from an always-dark mockup),
+    no longer gated on the signed-in hint cookie."""
     script = app.THEME_INIT_SCRIPT
-    assert f"'{app.SIGNED_IN_HINT_COOKIE}=1'" in script
     assert "setAttribute('data-theme', 'dark')" in script
     # The explicit localStorage choice (light OR dark) must still be
-    # checked, and win, before the cookie fallback is ever consulted.
+    # checked, and win, before the dark default is applied.
     assert "localStorage.getItem('theme')" in script

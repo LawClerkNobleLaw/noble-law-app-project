@@ -14,7 +14,7 @@
       "runtimeExecutable": "/bin/zsh",
       "runtimeArgs": [
         "-c",
-        "cd '/Users/daezhongilbarg/Projects/noble law app project/legiscan-lookup' && BILLWATCH_DATA_DIR='/private/tmp/claude-501/-Users-daezhongilbarg-Projects-noble-law-app-project/44f34a9d-0bf0-4f4c-889e-d2c7e28a6e01/scratchpad/devdata' PORT=8421 python3 app.py"
+        "cd '/Users/daezhongilbarg/Projects/noble law app project/legiscan-lookup' && BILLWATCH_DATA_DIR='/private/tmp/claude-501/-Users-daezhongilbarg-Projects-noble-law-app-project/e061d14d-7b6e-4b85-8f79-2708e9321946/scratchpad/devdata' LEGISCAN_API_KEY='dev-dummy-key' PORT=8421 python3 app.py"
       ],
       "port": 8421
     }
