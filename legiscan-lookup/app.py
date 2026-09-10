@@ -1364,6 +1364,21 @@ PROFILE_PAGE = _render_template(
 )
 
 
+# The first-run wizard (2026 redesign): Create Account → /onboarding →
+# dashboard. Steps 1–2 write the profile (a lighter path into the same
+# /api/profile the full registration form uses; the complete CAL-ACCESS
+# address is fillable later in Settings), step 3 flags first bills via
+# /api/flag-by-number, step 4 finishes. Team invites are called out as
+# coming-soon, since the app is single-seat (see db.ORG_SCOPE).
+ONBOARDING_PAGE = _render_template(
+    "onboarding_page.html",
+    STYLE_HREF=STYLE_HREF,
+    FONT_LINKS=FONT_LINKS,
+    THEME_INIT_SCRIPT=THEME_INIT_SCRIPT,
+    top_nav=top_nav('/onboarding', left_extra='<a href="/dashboard">Skip for now →</a>'),
+)
+
+
 PROFILE_BODY = _render_template(
     "profile_body.html",
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
@@ -2491,6 +2506,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
             self._send_html(200, PROFILE_PAGE)
+            return
+
+        if parsed.path == "/onboarding":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+            finally:
+                conn.close()
+            if not user_id:
+                # Same as /signup/profile: no session means send them to
+                # sign up rather than a wizard with nothing to save against.
+                self.send_response(302)
+                self.send_header("Location", "/signup")
+                self.end_headers()
+                return
+            self._send_html(200, ONBOARDING_PAGE)
             return
 
         if parsed.path == "/profile":
@@ -3701,6 +3732,45 @@ class Handler(BaseHTTPRequestHandler):
                 db.flag_bill(conn, user_id, bill_id)
                 conn.commit()
                 self._send_json(200, {"status": "flagged"})
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/flag-by-number":
+            # Flag a bill from its number alone, with no client to link it
+            # to — the onboarding wizard's "add your first bills" step.
+            # Same resolve-then-flag as /api/client-bills above, minus the
+            # client link; reuses lookup_bill so a bare number ("SB122")
+            # becomes the right LegiScan bill.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            bill_number = (body.get("bill_number") or "").strip()
+            if not bill_number:
+                self._send_json(400, {"error": "Enter a bill number."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to flag bills.")
+                if not user_id:
+                    return
+                try:
+                    bill = lookup_bill(bill_number)
+                except Exception:
+                    traceback.print_exc()
+                    self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
+                    return
+                db.upsert_bill(conn, bill)
+                db.flag_bill(conn, user_id, bill["id"])
+                conn.commit()
+                self._send_json(200, {
+                    "bill_id": bill["id"],
+                    "state": bill.get("state"),
+                    "bill_number": bill.get("bill_number"),
+                    "title": bill.get("title"),
+                })
             finally:
                 conn.close()
             return

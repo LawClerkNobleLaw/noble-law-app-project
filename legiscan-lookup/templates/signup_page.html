@@ -16,7 +16,7 @@
   <h1>Create your account</h1>
   <div class="step-indicator">
     <span class="step-dot filled"></span><span class="step-dot"></span>
-    <span class="sub">Step 1 of 2 — after this, you'll fill in your CAL-ACCESS-style registration details.</span>
+    <span class="sub">First, your login — then a short setup to get you under the dome.</span>
   </div>
 
   <div class="card auth-card">
@@ -108,7 +108,7 @@ form.addEventListener('submit', async (e) => {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not create account');
-    window.location.href = '/signup/profile';
+    window.location.href = '/onboarding';
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';
