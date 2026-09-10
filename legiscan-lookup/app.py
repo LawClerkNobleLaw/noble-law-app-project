@@ -1150,7 +1150,13 @@ LANDING_STYLE = """
      capability pillars, compliance, FAQ) the mockup calls for. */
   body.lp { background: var(--bg); color: var(--ink); }
   .lp main { display: block; }
-  .lp a { color: inherit; text-decoration: none; }
+  /* :where() zeroes the `a` part so this default (links take the body
+     text colour) can't outrank a single-class link colour — otherwise
+     .lp a (0,1,1) beat .lp-getstarted / .lp-signin (0,1,0) and repainted
+     the cream "Get started" pill's text near-white --ink, invisible on
+     its own fill. text-decoration keeps normal specificity. */
+  .lp :where(a) { color: inherit; }
+  .lp a { text-decoration: none; }
   .lp section { max-width: 62rem; margin: 0 auto; padding: 5rem 1.5rem; }
 
   /* Nav */
@@ -1170,7 +1176,10 @@ LANDING_STYLE = """
     display: inline-flex; align-items: center; background: var(--accent-solid); color: var(--accent-solid-text);
     font-weight: 600; font-size: 0.9rem; padding: 0.5rem 1.1rem; border-radius: var(--radius-pill);
   }
-  .lp-getstarted:hover { background: var(--accent-solid-hover); }
+  /* Hold the pill's dark text on hover — style.css's `a:hover` warms
+     every link to --gold (0,1,1), which would otherwise beat this
+     button's base colour and paint gold-on-white here. */
+  .lp-getstarted:hover { background: var(--accent-solid-hover); color: var(--accent-solid-text); }
 
   /* Hero */
   .lp-hero { position: relative; text-align: center; padding: 5.5rem 1.5rem 4.5rem; overflow: hidden; }
