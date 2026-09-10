@@ -239,6 +239,24 @@
   }
   ::selection { background: var(--accent-solid); color: var(--accent-solid-text); }
   .wrap { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+  /* Auth pages (login/signup) — the mockup's centered hero: dome mark,
+     a big Garet headline and a one-line subtitle stacked above a
+     narrow, borderless form that sits straight on the dark page. The
+     .card border/background is dropped here (.auth-card) so the fields
+     read as the mockup's do — dark inputs on the ground, no framed
+     panel. Everything centers except the form's own labels/inputs. */
+  .auth-wrap { max-width: 26rem; padding-top: 3.5rem; text-align: center; }
+  .auth-mark { margin: 0 auto 1.1rem; }
+  .auth-wrap h1 { font-size: 2rem; margin: 0 0 0.4rem; }
+  .auth-sub { color: var(--slate); font-size: 0.95rem; margin: 0 auto 2rem; max-width: 22rem; }
+  /* .card.auth-card, not .auth-card: .card is defined further down the
+     file, so it needs the extra class to win the border/background off. */
+  .card.auth-card { background: none; border: none; box-shadow: none; padding: 0; text-align: left; }
+  .auth-submit { width: 100%; justify-content: center; margin-top: 0.5rem; }
+  .auth-alt { color: var(--slate); font-size: 0.9rem; margin: 1.5rem 0 0; }
+  .auth-alt a { color: var(--ink); font-weight: 600; }
+  .auth-wrap #loading, .auth-wrap #error { justify-content: center; margin-top: 1rem; }
+  .auth-wrap .step-indicator { justify-content: center; flex-wrap: wrap; margin: 0 auto 1.75rem; }
   /* A full-width bar, same grammar as the signed-in shell's .app-topbar
      (fixed height, border-bottom, solid --paper against the page's
      --content-bg) — public pages don't get the sidebar, but the top
