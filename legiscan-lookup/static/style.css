@@ -1042,6 +1042,45 @@
   /* The inert 2FA/devices panels read as "not yet", not "broken". */
   .settings-soon { opacity: 0.82; }
   .settings-soon button[disabled] { cursor: not-allowed; }
+
+  /* ── Alerts screen ──────────────────────────────────────────────────
+     The daily-digest feed (grouped by client) and the alert-rule list. */
+  .digest-group { padding: 0.2rem 0 0.6rem; }
+  .digest-group + .digest-group { border-top: 1px solid var(--rule); }
+  .digest-group-head {
+    padding: 0.7rem 1.15rem 0.35rem; font-size: 0.72rem; font-weight: 700;
+    letter-spacing: 0.05em; text-transform: uppercase; color: var(--slate);
+  }
+  .digest-row {
+    display: flex; align-items: baseline; gap: 0.75rem; padding: 0.5rem 1.15rem;
+    color: inherit; border-radius: 0;
+  }
+  .digest-row:hover { background: var(--accent-soft); }
+  .digest-type {
+    flex: none; width: 5.5rem; font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.03em; padding-top: 0.15rem;
+  }
+  .digest-type.type-status { color: var(--info); }
+  .digest-type.type-amendment { color: var(--warn); }
+  .digest-type.type-hearing { color: var(--gold); }
+  .digest-type.type-vote { color: var(--good); }
+  .digest-body { flex: 1 1 auto; min-width: 0; }
+  .digest-bill { font-family: var(--mono); font-size: 0.82rem; font-weight: 600; color: var(--ink); margin-right: 0.5rem; }
+  .digest-summary { font-size: 0.86rem; color: var(--slate); }
+  .digest-when { flex: none; font-size: 0.75rem; color: var(--slate); white-space: nowrap; }
+
+  /* Alert-rule On/Off — a switch-shaped button rather than a checkbox,
+     so its label ("On"/"Off") reads the same closed and to a screen
+     reader (role="switch" + aria-checked carry the state). */
+  .rule-actions { display: flex; align-items: center; gap: 0.5rem; flex: none; }
+  .switch-btn {
+    min-width: 3rem; padding: 0.25rem 0.7rem; font-size: 0.78rem; font-weight: 600;
+    background: none; border: 1px solid var(--rule-strong); border-radius: var(--radius-pill);
+    color: var(--slate); cursor: pointer;
+  }
+  .switch-btn[aria-checked="true"] { background: var(--good-soft); border-color: var(--good); color: var(--good); }
+  .switch-btn:hover { border-color: var(--ink); }
+  .saved-row.rule-off .saved-name { color: var(--slate); }
   .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: var(--space-3); margin-bottom: 1rem; }
   .stat-card {
     background: var(--surface); border: 1px solid var(--rule-card); box-shadow: var(--shadow-rest);

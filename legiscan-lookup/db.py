@@ -177,6 +177,12 @@ def _migrate(conn):
         if col not in profile_cols:
             conn.execute(f"ALTER TABLE lobbyist_profiles ADD COLUMN {col} TEXT")
 
+    # Alerts screen (2026 redesign) added an On/Off flag to saved searches;
+    # DEFAULT 1 so existing rules keep running (see schema.sql).
+    saved_search_cols = {row["name"] for row in conn.execute("PRAGMA table_info(saved_searches)")}
+    if "enabled" not in saved_search_cols:
+        conn.execute("ALTER TABLE saved_searches ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
+
     _backfill_organizations(conn)
     _migrate_bill_views(conn)
     _migrate_calaccess_dates(conn)
@@ -2313,6 +2319,7 @@ def list_saved_searches(conn, user_id):
     lists, and what makes a saved search worth opening."""
     rows = conn.execute(
         f"""SELECT s.id, s.name, s.query, s.client_id, s.created_at, s.last_run_at,
+                  COALESCE(s.enabled, 1) AS enabled,
                   c.name AS client_name,
                   (SELECT COUNT(*) FROM saved_search_matches m
                     WHERE m.saved_search_id = s.id AND m.reported = 0) AS new_match_count
@@ -2326,12 +2333,28 @@ def list_saved_searches(conn, user_id):
 
 
 def list_saved_searches_for_run(conn):
-    """Every saved search across every account, for the daily job. Not
-    user-scoped on purpose — this is the one caller that runs on nobody's
-    behalf in particular."""
+    """Every *enabled* saved search across every account, for the daily
+    job. Not user-scoped on purpose — this is the one caller that runs on
+    nobody's behalf in particular. A rule the user switched Off on the
+    Alerts screen (enabled = 0) is skipped here, which is what makes that
+    toggle mean something; COALESCE keeps rows that predate the column."""
     return [dict(r) for r in conn.execute(
-        "SELECT id, user_id, name, query, client_id FROM saved_searches ORDER BY id"
+        "SELECT id, user_id, name, query, client_id FROM saved_searches "
+        "WHERE COALESCE(enabled, 1) = 1 ORDER BY id"
     )]
+
+
+def set_saved_search_enabled(conn, user_id, saved_search_id, enabled):
+    """Flip a saved search On/Off from the Alerts rule list. Org-scoped
+    like every other saved-search write, so a colleague's rule can be
+    toggled by anyone at the firm — the same sharing the rules already
+    have. Returns True if a row was actually changed."""
+    cur = conn.execute(
+        f"UPDATE saved_searches SET enabled = ? WHERE id = ? AND {ORG_SCOPE}",
+        (1 if enabled else 0, saved_search_id, user_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def record_saved_search_matches(conn, saved_search_id, rows, seen_at=None):

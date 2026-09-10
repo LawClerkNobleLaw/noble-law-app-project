@@ -846,6 +846,11 @@ SHELL_NAV_ITEMS = [
           '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
           '<path d="M2 1v12M2 2h8l-2 2.5L10 7H2" stroke-linejoin="round"/></svg>'),
      ]),
+    ("Alerts",
+     '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+     '<path d="M7 1.5a3.5 3.5 0 00-3.5 3.5c0 3-1.5 4-1.5 4h10s-1.5-1-1.5-4A3.5 3.5 0 007 1.5z" stroke-linejoin="round"/>'
+     '<path d="M5.8 12a1.4 1.4 0 002.4 0" stroke-linecap="round"/></svg>',
+     "/alerts"),
     ("Lobbying Activity",
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
      '<path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>',
@@ -1382,6 +1387,22 @@ DASHBOARD_BODY = _render_template(
 )
 
 DASHBOARD_PAGE = page("Dashboard — Rotunda", "/dashboard", DASHBOARD_BODY)
+
+
+# Alerts (2026 redesign): two views on one page — the in-app daily-digest
+# feed (db.recent_bill_changes, grouped by client) and the alert-rule list
+# (saved searches, with an On/Off that db.list_saved_searches_for_run
+# honours). Nothing here is new data: the digest is /api/recent-changes'
+# longer sibling and the rules are the same saved searches the search page
+# already manages.
+ALERTS_BODY = _render_template(
+    "alerts_body.html",
+    TOAST_SRC=TOAST_SRC,
+    CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
+    skeleton_rows=_skeleton_rows(4, (30, 50)),
+)
+
+ALERTS_PAGE = page("Alerts — Rotunda", "/alerts", ALERTS_BODY)
 
 
 FLAGGED_BODY = _render_template(
@@ -2485,6 +2506,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send_html(200, DASHBOARD_PAGE)
             return
 
+        if parsed.path == "/alerts":
+            if not self._require_user_for_page():
+                return
+            self._send_html(200, ALERTS_PAGE)
+            return
+
         if parsed.path == "/api/dashboard":
             conn = db.get_connection()
             try:
@@ -3118,6 +3145,40 @@ class Handler(BaseHTTPRequestHandler):
                     "days": days,
                     "changes": db.recent_bill_changes(
                         conn, user_id, limit=12, since=db.days_ago_in_california(days)),
+                })
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/alerts/digest":
+            # The Alerts screen's in-app digest feed: the same recent
+            # changes the dashboard shows, but a longer window, and with
+            # each changed bill's client assignments attached so the page
+            # can group the feed by client (client-side). Reuses two
+            # existing db calls rather than a new query — recent_bill_changes
+            # for the feed, clients_for_bills for the grouping.
+            try:
+                days = min(max(int((qs.get("days") or ["30"])[0]), 1), 90)
+            except ValueError:
+                days = 30
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to see your alerts.")
+                if not user_id:
+                    return
+                changes = db.recent_bill_changes(
+                    conn, user_id, limit=200, since=db.days_ago_in_california(days))
+                bill_ids = list({c["bill_id"] for c in changes})
+                # clients_for_bills returns {bill_id: [{id, name, ...}]};
+                # the feed only needs the names to group by.
+                clients_by_bill = {
+                    bid: [c["name"] for c in links]
+                    for bid, links in db.clients_for_bills(conn, user_id, bill_ids).items()
+                }
+                self._send_json(200, {
+                    "days": days,
+                    "changes": changes,
+                    "clients_by_bill": clients_by_bill,
                 })
             finally:
                 conn.close()
@@ -3811,6 +3872,33 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(400, {"error": str(e)})
                     return
                 conn.commit()
+                self._send_json(200, db.list_saved_searches(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/saved-searches/toggle":
+            # On/Off from the Alerts rule list — a disabled rule stays
+            # saved but the daily job skips it (see
+            # db.list_saved_searches_for_run).
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            saved_search_id = body.get("id")
+            if not saved_search_id:
+                self._send_json(400, {"error": "Missing id."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to change an alert rule.")
+                if not user_id:
+                    return
+                if not db.set_saved_search_enabled(
+                        conn, user_id, int(saved_search_id), bool(body.get("enabled"))):
+                    self._send_json(404, {"error": "No rule with that ID."})
+                    return
                 self._send_json(200, db.list_saved_searches(conn, user_id))
             finally:
                 conn.close()

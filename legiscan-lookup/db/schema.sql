@@ -151,6 +151,12 @@ CREATE TABLE IF NOT EXISTS saved_searches (
   name        TEXT NOT NULL,
   query       TEXT NOT NULL,
   client_id   INTEGER REFERENCES clients(id),
+  -- On/Off from the Alerts screen's rule list. A disabled rule stays
+  -- saved (and its past matches stay) but the daily job skips it — see
+  -- list_saved_searches_for_run, which filters on this. Defaults on, so
+  -- every rule that predates the column keeps running. Migrated in for
+  -- existing DBs in db._migrate.
+  enabled     INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT,
   last_run_at TEXT,
   UNIQUE(user_id, name)

@@ -1,0 +1,382 @@
+
+<div class="page-head">
+  <div>
+    <h1>Alerts</h1>
+    <p class="sub">What moved across your flagged bills, and the rules that watch for more.</p>
+  </div>
+</div>
+
+<div class="settings-tabs" role="tablist" aria-label="Alerts sections">
+  <button type="button" class="settings-tab" role="tab" id="tab-digest" aria-controls="panel-digest" aria-selected="true">Daily digest</button>
+  <button type="button" class="settings-tab" role="tab" id="tab-rules" aria-controls="panel-rules" aria-selected="false" tabindex="-1">Alert rules</button>
+</div>
+
+<div id="error" role="alert" aria-live="assertive"></div>
+
+<!-- ── Daily digest ────────────────────────────────────────────────── -->
+<section class="settings-section" id="panel-digest" role="tabpanel" aria-labelledby="tab-digest">
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h2 class="title">Daily digest</h2>
+        <div class="sub">Changes on your flagged bills, grouped by client — the same feed the email covers. "Moved" always means among the bills your firm watches, never the Legislature at large.</div>
+      </div>
+    </div>
+
+    <div style="padding:0.4rem 1.15rem 0">
+      <div class="pref-label" style="margin-bottom:0.4rem">How often it's emailed</div>
+      <div class="filter-tabs" id="digest-frequency" role="group" aria-label="Delivery frequency"></div>
+    </div>
+
+    <div style="padding:0.8rem 1.15rem 0">
+      <div class="pref-label" style="margin-bottom:0.4rem">Show</div>
+      <div class="filter-tabs" id="digest-filters" role="group" aria-label="Filter by change type"></div>
+    </div>
+
+    <div id="digest-loading" role="status" class="skeleton show" style="padding:1rem 1.15rem"><span class="sr-only">Loading…</span>{{skeleton_rows}}</div>
+    <div id="digest-feed" style="padding:0.4rem 0 0.4rem"></div>
+  </div>
+</section>
+
+<!-- ── Alert rules ─────────────────────────────────────────────────── -->
+<section class="settings-section" id="panel-rules" role="tabpanel" aria-labelledby="tab-rules" hidden>
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h2 class="title">Alert rules</h2>
+        <div class="sub">Saved searches the daily refresh re-runs. A new bill that matches is offered to you — and assigned to the rule's client if you flag it. Switch a rule Off to pause it without losing it.</div>
+      </div>
+      <button type="button" id="new-rule-btn">+ New rule</button>
+    </div>
+    <div id="rules-loading" role="status" class="skeleton show" style="padding:1rem 1.15rem"><span class="sr-only">Loading…</span>{{skeleton_rows}}</div>
+    <div id="rules-list"></div>
+  </div>
+</section>
+
+<!-- New-rule modal -->
+<div class="modal-backdrop" id="rule-modal" role="dialog" aria-modal="true" aria-labelledby="rule-modal-title">
+  <div class="modal-panel">
+    <div class="modal-head">
+      <div>
+        <h2 class="title" id="rule-modal-title">New alert rule</h2>
+        <div class="sub">Give it a name and the search it should re-run every day.</div>
+      </div>
+      <button type="button" class="icon-btn" id="rule-modal-close" aria-label="Close">×</button>
+    </div>
+    <form id="rule-f">
+      <label>
+        <div class="field-label">Rule name</div>
+        <input id="rule-name" required placeholder="e.g. Wildfire liability" style="width:100%">
+      </label>
+      <label>
+        <div class="field-label">Search terms</div>
+        <input id="rule-query" required placeholder="e.g. wildfire, utility liability" style="width:100%">
+      </label>
+      <label>
+        <div class="field-label">Assign new matches to <span style="font-weight:400;color:var(--slate)">(optional)</span></div>
+        <select id="rule-client" style="width:100%"><option value="">No client</option></select>
+      </label>
+      <div class="modal-actions">
+        <button type="submit">Create rule</button>
+        <button type="button" class="secondary" id="rule-cancel">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="{{TOAST_SRC}}"></script>
+<script src="{{CONFIRM_DELETE_SRC}}"></script>
+<script>
+const errorEl = document.getElementById('error');
+function showError(msg) { errorEl.textContent = msg; errorEl.className = 'show'; }
+function clearError() { errorEl.className = ''; }
+
+/* ── Sub-tabs (Daily digest / Alert rules) ─────────────────────────── */
+const tabs = [...document.querySelectorAll('.settings-tab')];
+function activateTab(tab, focus) {
+  tabs.forEach(t => {
+    const on = t === tab;
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+    t.tabIndex = on ? 0 : -1;
+    document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+  });
+  if (focus) tab.focus();
+}
+tabs.forEach((tab, i) => {
+  tab.addEventListener('click', () => activateTab(tab));
+  tab.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    e.preventDefault();
+    const next = e.key === 'ArrowRight' ? (i + 1) % tabs.length : (i - 1 + tabs.length) % tabs.length;
+    activateTab(tabs[next], true);
+  });
+});
+if ((location.hash || '') === '#rules') activateTab(document.getElementById('tab-rules'));
+
+/* ── Daily digest ──────────────────────────────────────────────────── */
+const FREQUENCIES = [['daily', 'Every day'], ['weekdays', 'Weekdays'], ['weekly', 'Weekly'], ['off', 'Paused']];
+const CHANGE_TYPES = [
+  ['status', 'Status'], ['amendment', 'Amendments'], ['hearing', 'Hearings'], ['vote', 'Votes'],
+];
+let prefs = null;                 // the whole notification-prefs row (frequency lives here)
+let changes = [];                 // recent_bill_changes rows
+let clientsByBill = {};           // bill_id -> [client names]
+let activeTypes = new Set(CHANGE_TYPES.map(([v]) => v));  // event-type filter (all on)
+
+function renderFrequency() {
+  const cur = (prefs && prefs.frequency) || 'daily';
+  document.getElementById('digest-frequency').innerHTML = FREQUENCIES.map(([value, label]) => `
+    <button type="button" class="filter-tab ${cur === value ? 'active' : ''}" data-freq="${value}" aria-pressed="${cur === value}">${label}</button>
+  `).join('');
+}
+
+function renderFilters() {
+  document.getElementById('digest-filters').innerHTML = CHANGE_TYPES.map(([value, label]) => {
+    const n = changes.filter(c => c.change_type === value).length;
+    const on = activeTypes.has(value);
+    return `<button type="button" class="filter-tab ${on ? 'active' : ''}" data-type="${value}" aria-pressed="${on}">${label}<span class="n">${n}</span></button>`;
+  }).join('');
+}
+
+function renderFeed() {
+  const feedEl = document.getElementById('digest-feed');
+  const visible = changes.filter(c => activeTypes.has(c.change_type));
+  if (!visible.length) {
+    feedEl.innerHTML = changes.length
+      ? '<p class="empty" style="padding:1rem 1.15rem">Nothing in the types you\'ve got showing. Turn a filter back on above.</p>'
+      : '<p class="empty" style="padding:1rem 1.15rem">No changes recorded yet — this fills in as the daily refresh finds a flagged bill move.</p>';
+    return;
+  }
+  // Group by client. A change on a bill assigned to two clients shows
+  // under both; a bill with no client falls under "Unassigned".
+  const groups = new Map();
+  for (const c of visible) {
+    const names = clientsByBill[c.bill_id] && clientsByBill[c.bill_id].length
+      ? clientsByBill[c.bill_id] : ['Unassigned'];
+    for (const name of names) {
+      if (!groups.has(name)) groups.set(name, []);
+      groups.get(name).push(c);
+    }
+  }
+  const sortedNames = [...groups.keys()].sort((a, b) =>
+    a === 'Unassigned' ? 1 : b === 'Unassigned' ? -1 : a.localeCompare(b));
+  feedEl.innerHTML = sortedNames.map(name => `
+    <div class="digest-group">
+      <div class="digest-group-head">${escapeText(name)}</div>
+      ${groups.get(name).map(changeRow).join('')}
+    </div>
+  `).join('');
+}
+
+function changeRow(c) {
+  const typeLabel = (CHANGE_TYPES.find(([v]) => v === c.change_type) || [null, c.change_type])[1];
+  const when = c.detected_at ? formatDateTime(c.detected_at) : '';
+  return `
+    <a class="digest-row" href="/report?bill_id=${c.bill_id}">
+      <span class="digest-type type-${escapeText(c.change_type || '')}">${escapeText(typeLabel || '')}</span>
+      <span class="digest-body">
+        <span class="digest-bill">${escapeText(c.state || '')} ${escapeText(c.bill_number || '')}</span>
+        <span class="digest-summary">${escapeText(c.summary || c.description || '')}</span>
+      </span>
+      <span class="digest-when">${escapeText(when)}</span>
+    </a>`;
+}
+
+// formatDateTime: dates.js already ships a formatter, but to stay
+// self-contained about exactly what the feed shows, keep a tiny local
+// one that degrades to the raw string it can't parse.
+function formatDateTime(iso) {
+  const d = new Date((iso || '').replace(' ', 'T'));
+  if (isNaN(d)) return iso;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+document.getElementById('digest-frequency').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-freq]');
+  if (!btn || !prefs) return;
+  const frequency = btn.dataset.freq;
+  clearError();
+  // notification-prefs is a whole-row write, so send the row we already
+  // have with only the frequency swapped — otherwise this would blank
+  // the event types and cc list the Settings page manages.
+  try {
+    const res = await fetch('/api/notification-prefs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        frequency,
+        event_types: prefs.event_types || [],
+        include_matches: prefs.include_matches,
+        extra_recipients: (prefs.extra_recipients || []).join(', '),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not change delivery frequency');
+    prefs = data.prefs;
+    renderFrequency();
+    toast('Digest frequency updated');
+  } catch (err) { showError(err.message); }
+});
+
+document.getElementById('digest-filters').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-type]');
+  if (!btn) return;
+  const type = btn.dataset.type;
+  if (activeTypes.has(type)) activeTypes.delete(type); else activeTypes.add(type);
+  renderFilters();
+  renderFeed();
+});
+
+async function loadDigest() {
+  try {
+    const [prefsRes, digestRes] = await Promise.all([
+      fetch('/api/notification-prefs'),
+      fetch('/api/alerts/digest?days=30'),
+    ]);
+    if (prefsRes.ok) { prefs = (await prefsRes.json()).prefs; renderFrequency(); }
+    if (digestRes.ok) {
+      const data = await digestRes.json();
+      changes = data.changes || [];
+      clientsByBill = data.clients_by_bill || {};
+    }
+    renderFilters();
+    renderFeed();
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    document.getElementById('digest-loading').className = '';
+  }
+}
+
+/* ── Alert rules ───────────────────────────────────────────────────── */
+let rules = [];
+let clients = [];
+
+async function loadRules() {
+  try {
+    const [rulesRes, clientsRes] = await Promise.all([
+      fetch('/api/saved-searches'),
+      fetch('/api/clients'),
+    ]);
+    if (rulesRes.ok) rules = await rulesRes.json();
+    if (clientsRes.ok) clients = await clientsRes.json();
+    renderRules();
+    renderClientOptions();
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    document.getElementById('rules-loading').className = '';
+  }
+}
+
+function renderRules() {
+  const listEl = document.getElementById('rules-list');
+  if (!rules.length) {
+    listEl.innerHTML = '<p class="empty" style="padding:1rem 1.15rem">No rules yet. Add one and the daily refresh will watch for bills that match.</p>';
+    return;
+  }
+  listEl.innerHTML = rules.map(r => {
+    const on = Number(r.enabled) !== 0;
+    const bits = [];
+    if (r.client_name) bits.push(escapeText(r.client_name));
+    if (Number(r.new_match_count) > 0) bits.push(`${r.new_match_count} new match${r.new_match_count == 1 ? '' : 'es'}`);
+    return `
+      <div class="saved-row ${on ? '' : 'rule-off'}">
+        <div class="saved-main">
+          <div class="saved-name">${escapeText(r.name)}</div>
+          <div class="saved-meta">“${escapeText(r.query)}”${bits.length ? ' · ' + bits.join(' · ') : ''}</div>
+        </div>
+        <div class="rule-actions">
+          <button type="button" class="switch-btn" role="switch" aria-checked="${on}" data-toggle="${r.id}">${on ? 'On' : 'Off'}</button>
+          <button type="button" class="icon-btn" data-delete="${r.id}" aria-label="Delete rule" title="Delete">×</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderClientOptions() {
+  const sel = document.getElementById('rule-client');
+  sel.innerHTML = '<option value="">No client</option>' +
+    clients.map(c => `<option value="${c.id}">${escapeText(c.name)}</option>`).join('');
+}
+
+document.getElementById('rules-list').addEventListener('click', async (e) => {
+  const toggle = e.target.closest('[data-toggle]');
+  const del = e.target.closest('[data-delete]');
+  if (toggle) {
+    const id = Number(toggle.dataset.toggle);
+    const rule = rules.find(r => r.id === id);
+    const next = Number(rule.enabled) === 0;
+    clearError();
+    try {
+      const res = await fetch('/api/saved-searches/toggle', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, enabled: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not update that rule');
+      rule.enabled = next ? 1 : 0;
+      renderRules();
+      toast(next ? 'Rule switched on' : 'Rule paused');
+    } catch (err) { showError(err.message); }
+    return;
+  }
+  if (del) {
+    const id = Number(del.dataset.delete);
+    const rule = rules.find(r => r.id === id);
+    const ok = await confirmDelete('Delete rule?', `Delete “${rule ? rule.name : 'this rule'}”? Bills it already surfaced stay; it just stops running.`);
+    if (!ok) return;
+    clearError();
+    try {
+      const res = await fetch(`/api/saved-searches?id=${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not delete that rule');
+      rules = rules.filter(r => r.id !== id);
+      renderRules();
+      toast('Rule deleted');
+    } catch (err) { showError(err.message); }
+  }
+});
+
+/* New-rule modal */
+const ruleModal = document.getElementById('rule-modal');
+let releaseRuleFocus = null;
+function openRuleModal() {
+  ruleModal.classList.add('show');
+  releaseRuleFocus = (typeof trapFocus === 'function') ? trapFocus(ruleModal) : null;
+  document.getElementById('rule-name').focus();
+}
+function closeRuleModal() {
+  ruleModal.classList.remove('show');
+  if (releaseRuleFocus) { releaseRuleFocus(); releaseRuleFocus = null; }
+  document.getElementById('rule-f').reset();
+}
+document.getElementById('new-rule-btn').addEventListener('click', openRuleModal);
+document.getElementById('rule-cancel').addEventListener('click', closeRuleModal);
+document.getElementById('rule-modal-close').addEventListener('click', closeRuleModal);
+ruleModal.addEventListener('click', (e) => { if (e.target === ruleModal) closeRuleModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ruleModal.classList.contains('show')) closeRuleModal(); });
+
+document.getElementById('rule-f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  clearError();
+  const body = {
+    name: document.getElementById('rule-name').value.trim(),
+    query: document.getElementById('rule-query').value.trim(),
+    client_id: document.getElementById('rule-client').value || null,
+  };
+  try {
+    const res = await fetch('/api/saved-searches', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not create that rule');
+    closeRuleModal();
+    await loadRules();
+    toast('Rule created');
+  } catch (err) { showError(err.message); }
+});
+
+loadDigest();
+loadRules();
+</script>
