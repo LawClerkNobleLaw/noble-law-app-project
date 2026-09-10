@@ -133,6 +133,13 @@
        and one word here. --mono is unchanged; bill IDs/dates keep
        using it for now. */
     --font-sans: Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    /* Garet is the mockup's display face — the big rounded headline on
+       the landing/auth heroes, the page-head titles and the wordmark
+       (see FONT_FACES in app.py, where the two weights are wired). It's
+       headings only; body copy stays --font-sans. The stack falls
+       through to Poppins so a heading still paints if Garet hasn't
+       loaded, and both are geometric/rounded so the swap is quiet. */
+    --font-display: 'Garet', Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     --font-serif: Georgia, "Times New Roman", serif;
     --mono: ui-monospace, monospace;
     /* One definition covers both themes — .brand-mark masks this
@@ -148,7 +155,13 @@
      values, since a media query alone can't know about the toggle. */
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #000000; --ink: #ffffff; --paper: #000000; --content-bg: #000000; --surface: #0C0C0C;
+      /* Near-black rather than pure #000, matching the approved mockup
+         (--bg #08090A, panel/card --surface #0F1011, off-white ink
+         #F7F8F8). tests/test_contrast.py measures the dark ramp against
+         a pure-black ground, which is marginally stricter than this
+         one, so the ~1-unit lift here can't lower a ratio the test
+         reports — the palette stays comfortably above AA either way. */
+      --bg: #08090A; --ink: #F7F8F8; --paper: #08090A; --content-bg: #08090A; --surface: #0F1011;
       --gold: #C9B27A;
       --accent-solid: #F4EFE4; --accent-solid-text: #0A0A0A; --accent-solid-hover: #ffffff;
       --good: oklch(0.76 0.12 145); --error: oklch(0.76 0.12 25);
@@ -163,7 +176,7 @@
      it) since [data-theme="dark"] needs to win even on a light-mode
      OS, where that media query never matches at all. */
   :root[data-theme="dark"] {
-    --bg: #000000; --ink: #ffffff; --paper: #000000; --content-bg: #000000; --surface: #0C0C0C;
+    --bg: #08090A; --ink: #F7F8F8; --paper: #08090A; --content-bg: #08090A; --surface: #0F1011;
     --gold: #C9B27A;
     --accent-solid: #F4EFE4; --accent-solid-text: #0A0A0A; --accent-solid-hover: #ffffff;
     --good: oklch(0.76 0.12 145); --error: oklch(0.76 0.12 25);
@@ -226,6 +239,74 @@
   }
   ::selection { background: var(--accent-solid); color: var(--accent-solid-text); }
   .wrap { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+  /* Auth pages (login/signup) — the mockup's centered hero: dome mark,
+     a big Garet headline and a one-line subtitle stacked above a
+     narrow, borderless form that sits straight on the dark page. The
+     .card border/background is dropped here (.auth-card) so the fields
+     read as the mockup's do — dark inputs on the ground, no framed
+     panel. Everything centers except the form's own labels/inputs. */
+  .auth-wrap { max-width: 26rem; padding-top: 3.5rem; text-align: center; }
+  .auth-mark { margin: 0 auto 1.1rem; }
+  .auth-wrap h1 { font-size: 2rem; margin: 0 0 0.4rem; }
+  .auth-sub { color: var(--slate); font-size: 0.95rem; margin: 0 auto 2rem; max-width: 22rem; }
+  /* .card.auth-card, not .auth-card: .card is defined further down the
+     file, so it needs the extra class to win the border/background off. */
+  .card.auth-card { background: none; border: none; box-shadow: none; padding: 0; text-align: left; }
+  .auth-submit { width: 100%; justify-content: center; margin-top: 0.5rem; }
+  .auth-alt { color: var(--slate); font-size: 0.9rem; margin: 1.5rem 0 0; }
+  .auth-alt a { color: var(--ink); font-weight: 600; }
+  .auth-wrap #loading, .auth-wrap #error { justify-content: center; margin-top: 1rem; }
+  .auth-wrap .step-indicator { justify-content: center; flex-wrap: wrap; margin: 0 auto 1.75rem; }
+
+  /* Onboarding wizard (/onboarding) — a left vertical stepper beside the
+     current step. Two columns on desktop, stacked on narrow. */
+  .onboarding {
+    max-width: 58rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem;
+    display: grid; grid-template-columns: 17rem 1fr; gap: 2.5rem; align-items: start;
+  }
+  .onboarding-mark { display: block; margin-bottom: 1rem; }
+  .onboarding-title { font-size: 1.5rem; margin: 0 0 0.35rem; }
+  .onboarding-steps .sub { margin: 0 0 1.5rem; }
+  .ob-stepper { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+  .ob-step { display: flex; gap: 0.7rem; align-items: flex-start; padding: 0.5rem 0.6rem; border-radius: var(--radius-md); }
+  .ob-step.active { background: var(--accent-soft); }
+  .ob-num {
+    flex: none; width: 1.6rem; height: 1.6rem; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8rem; font-weight: 700; border: 1px solid var(--rule-strong); color: var(--slate);
+  }
+  .ob-step.active .ob-num { background: var(--accent-solid); color: var(--accent-solid-text); border-color: var(--accent-solid); }
+  .ob-step.done .ob-num { background: var(--good-soft); color: var(--good); border-color: var(--good); }
+  .ob-step.done .ob-num::after { content: "✓"; }
+  .ob-step.done .ob-num { font-size: 0; }
+  .ob-step.done .ob-num::after { font-size: 0.85rem; }
+  .ob-label { display: flex; flex-direction: column; line-height: 1.3; }
+  .ob-label strong { font-size: 0.9rem; font-weight: 600; }
+  .ob-step:not(.active) .ob-label strong { color: var(--slate); }
+  .ob-sub { font-size: 0.76rem; color: var(--slate); }
+  .onboarding-main { min-width: 0; }
+  .onboarding-step-title { font-family: var(--font-display); font-weight: 800; font-size: 1.4rem; letter-spacing: -0.015em; margin: 0 0 0.35rem; }
+  .onboarding-step .sub { margin-top: 0; }
+  .ob-field { display: block; margin-top: 1.1rem; }
+  .onboarding-nav { display: flex; gap: 0.75rem; margin-top: 2rem; padding-top: 1.25rem; border-top: 1px solid var(--rule); }
+  .onboarding-nav #ob-next { margin-left: auto; }
+  .ob-bill-form { display: flex; gap: 0.5rem; margin-top: 1.1rem; flex-wrap: wrap; }
+  .ob-bills { margin-top: 0.9rem; display: flex; flex-direction: column; gap: 0.5rem; }
+  .ob-bill-row {
+    display: flex; align-items: baseline; gap: 0.6rem; padding: 0.6rem 0.8rem;
+    border: 1px solid var(--rule-card); border-radius: var(--radius-md); background: var(--surface);
+  }
+  .ob-bill-row .digest-summary { flex: 1 1 auto; min-width: 0; }
+  .ob-bill-flagged { flex: none; font-size: 0.75rem; font-weight: 600; color: var(--good); }
+  .ob-summary { margin: 1rem 0 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+  .ob-summary li { font-size: 0.9rem; }
+  .ob-team-note { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--rule); }
+  @media (max-width: 720px) {
+    .onboarding { grid-template-columns: 1fr; gap: 1.5rem; }
+    .ob-stepper { flex-direction: row; overflow-x: auto; gap: 0.5rem; }
+    .ob-step .ob-label { display: none; }
+    .ob-step.active .ob-label { display: flex; }
+  }
   /* A full-width bar, same grammar as the signed-in shell's .app-topbar
      (fixed height, border-bottom, solid --paper against the page's
      --content-bg) — public pages don't get the sidebar, but the top
@@ -299,7 +380,7 @@
     -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
     -webkit-mask-position: center; mask-position: center;
   }
-  h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+  h1 { font-family: var(--font-display); font-weight: 800; letter-spacing: -0.015em; font-size: 1.5rem; margin: 0 0 0.25rem; }
   .sub { color: var(--slate); margin: 0 0 2rem; font-size: 0.92rem; }
   /* Every form label in the app used to be a .sub — the same treatment
      as page subtitles, help text and metadata — so on the client and
@@ -749,7 +830,8 @@
   .app-sidebar-backdrop.show { display: block; }
   .app-brand {
     display: flex; align-items: center; gap: 0.5rem; height: 4rem; padding: 0 1.25rem;
-    border-bottom: 1px solid var(--rule); font-weight: 600; font-size: 0.9rem; flex: none;
+    border-bottom: 1px solid var(--rule); font-family: var(--font-display); font-weight: 800;
+    font-size: 1.05rem; letter-spacing: -0.01em; flex: none;
   }
   /* No square badge — just the mark itself, colored like the rest of
      the app's text (--ink), sitting directly on --paper. Light mode:
@@ -979,9 +1061,76 @@
      (e.g. filter tabs), living inside .app-main — distinct from the
      small, generic "Overview" label in .app-topbar above it. */
   .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
-  .page-head h1 { font-size: 1.3rem; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+  .page-head h1 { font-family: var(--font-display); font-size: 1.3rem; font-weight: 800; letter-spacing: -0.015em; margin: 0; }
   .page-head .sub { font-size: 0.82rem; color: var(--slate); margin: 0.15rem 0 0; }
   .page-head .filter-tabs { margin-bottom: 0; }
+  /* Settings sub-tabs (the mockup's 4-way Settings shell on /profile).
+     An underline tablist: the active tab carries an --ink underline and
+     full-strength text, the rest sit at --slate. --rule-strong on the
+     resting underline track so the row of tabs reads as controls, not
+     decoration (the same 3:1 reasoning as every other control edge). */
+  .settings-tabs {
+    display: flex; gap: var(--space-4); border-bottom: 1px solid var(--rule);
+    margin: 0 0 1.25rem; overflow-x: auto;
+  }
+  .settings-tab {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    padding: 0.55rem 0.15rem; margin-bottom: -1px; color: var(--slate);
+    font: inherit; font-size: 0.9rem; font-weight: 600; white-space: nowrap;
+    cursor: pointer; border-radius: 0;
+  }
+  /* background:none on hover too, or the base button:hover (white fill)
+     wins the background cascade and paints near-white text on white. */
+  .settings-tab:hover { color: var(--ink); background: none; }
+  .settings-tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); background: none; }
+  .soon-badge {
+    display: inline-block; margin-left: 0.4rem; padding: 0.05rem 0.4rem;
+    border: 1px solid var(--rule-strong); border-radius: var(--radius-pill);
+    font-size: 0.62rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--slate); vertical-align: middle;
+  }
+  /* The inert 2FA/devices panels read as "not yet", not "broken". */
+  .settings-soon { opacity: 0.82; }
+  .settings-soon button[disabled] { cursor: not-allowed; }
+
+  /* ── Alerts screen ──────────────────────────────────────────────────
+     The daily-digest feed (grouped by client) and the alert-rule list. */
+  .digest-group { padding: 0.2rem 0 0.6rem; }
+  .digest-group + .digest-group { border-top: 1px solid var(--rule); }
+  .digest-group-head {
+    padding: 0.7rem 1.15rem 0.35rem; font-size: 0.72rem; font-weight: 700;
+    letter-spacing: 0.05em; text-transform: uppercase; color: var(--slate);
+  }
+  .digest-row {
+    display: flex; align-items: baseline; gap: 0.75rem; padding: 0.5rem 1.15rem;
+    color: inherit; border-radius: 0;
+  }
+  .digest-row:hover { background: var(--accent-soft); }
+  .digest-type {
+    flex: none; width: 5.5rem; font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.03em; padding-top: 0.15rem;
+  }
+  .digest-type.type-status { color: var(--info); }
+  .digest-type.type-amendment { color: var(--warn); }
+  .digest-type.type-hearing { color: var(--gold); }
+  .digest-type.type-vote { color: var(--good); }
+  .digest-body { flex: 1 1 auto; min-width: 0; }
+  .digest-bill { font-family: var(--mono); font-size: 0.82rem; font-weight: 600; color: var(--ink); margin-right: 0.5rem; }
+  .digest-summary { font-size: 0.86rem; color: var(--slate); }
+  .digest-when { flex: none; font-size: 0.75rem; color: var(--slate); white-space: nowrap; }
+
+  /* Alert-rule On/Off — a switch-shaped button rather than a checkbox,
+     so its label ("On"/"Off") reads the same closed and to a screen
+     reader (role="switch" + aria-checked carry the state). */
+  .rule-actions { display: flex; align-items: center; gap: 0.5rem; flex: none; }
+  .switch-btn {
+    min-width: 3rem; padding: 0.25rem 0.7rem; font-size: 0.78rem; font-weight: 600;
+    background: none; border: 1px solid var(--rule-strong); border-radius: var(--radius-pill);
+    color: var(--slate); cursor: pointer;
+  }
+  .switch-btn[aria-checked="true"] { background: var(--good-soft); border-color: var(--good); color: var(--good); }
+  .switch-btn:hover { border-color: var(--ink); }
+  .saved-row.rule-off .saved-name { color: var(--slate); }
   .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: var(--space-3); margin-bottom: 1rem; }
   .stat-card {
     background: var(--surface); border: 1px solid var(--rule-card); box-shadow: var(--shadow-rest);

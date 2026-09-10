@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get started — Rotunda</title>
+<link rel="stylesheet" href="{{STYLE_HREF}}">
+{{FONT_LINKS}}
+{{THEME_INIT_SCRIPT}}
+</head>
+<body>
+{{top_nav}}
+<main>
+<div class="onboarding">
+  <aside class="onboarding-steps">
+    <span class="brand-mark onboarding-mark" style="width:34px;height:34px" aria-hidden="true"></span>
+    <h1 class="onboarding-title">Set up Rotunda</h1>
+    <p class="sub">A few details and you're under the dome. You can change any of this later in Settings.</p>
+    <ol class="ob-stepper" id="ob-stepper">
+      <li class="ob-step active" data-for="1"><span class="ob-num">1</span><span class="ob-label"><strong>How you're registered</strong><span class="ob-sub">Name and filer ID</span></span></li>
+      <li class="ob-step" data-for="2"><span class="ob-num">2</span><span class="ob-label"><strong>Filing details</strong><span class="ob-sub">Reporting basis, letterhead</span></span></li>
+      <li class="ob-step" data-for="3"><span class="ob-num">3</span><span class="ob-label"><strong>Your first bills</strong><span class="ob-sub">Start a watch list</span></span></li>
+      <li class="ob-step" data-for="4"><span class="ob-num">4</span><span class="ob-label"><strong>All set</strong><span class="ob-sub">Into the dashboard</span></span></li>
+    </ol>
+  </aside>
+
+  <div class="onboarding-main">
+    <div id="error" role="alert" aria-live="assertive"></div>
+
+    <!-- Step 1 — registration -->
+    <section class="onboarding-step" data-step="1">
+      <h2 class="onboarding-step-title">How are you registered?</h2>
+      <p class="sub">Modeled on CAL-ACCESS Form 601, so it matches the state's own form. Only the name and type are required now.</p>
+      <label class="ob-field">
+        <div class="field-label">Legal name of firm or individual <span class="req" aria-hidden="true">*</span></div>
+        <input id="legal_name" autocomplete="organization" required style="width:100%">
+      </label>
+      <div class="ob-field">
+        <div class="field-label">Registering as <span class="req" aria-hidden="true">*</span></div>
+        <label style="display:inline-flex;align-items:center;gap:0.4rem;margin-right:1.2rem;font-size:0.9rem">
+          <input type="radio" name="registrant_type" value="individual" style="width:auto"> Individual lobbyist
+        </label>
+        <label style="display:inline-flex;align-items:center;gap:0.4rem;font-size:0.9rem">
+          <input type="radio" name="registrant_type" value="firm" style="width:auto"> Firm
+        </label>
+      </div>
+      <label class="ob-field">
+        <div class="field-label">California Secretary of State filer ID <span style="font-weight:400;color:var(--slate)">(optional)</span></div>
+        <input id="existing_filer_id" placeholder="e.g. 1486088" autocomplete="off" style="width:100%">
+      </label>
+    </section>
+
+    <!-- Step 2 — filing details -->
+    <section class="onboarding-step" data-step="2" hidden>
+      <h2 class="onboarding-step-title">Filing details</h2>
+      <p class="sub">These pre-fill your disclosure forms and letters. All optional — skip anything you're not sure of yet.</p>
+      <label class="ob-field">
+        <div class="field-label">Reporting basis</div>
+        <select id="reporting_basis" style="width:100%">
+          <option value="">Not sure yet</option>
+          <option value="quarterly">Quarterly</option>
+          <option value="monthly">Monthly</option>
+          <option value="annually">Annually</option>
+        </select>
+      </label>
+      <label class="ob-field">
+        <div class="field-label">Letterhead line <span style="font-weight:400;color:var(--slate)">(printed atop position letters)</span></div>
+        <input id="letterhead_line" placeholder="e.g. 1201 K Street, Suite 900, Sacramento, CA 95814" autocomplete="off" style="width:100%">
+      </label>
+    </section>
+
+    <!-- Step 3 — first bills -->
+    <section class="onboarding-step" data-step="3" hidden>
+      <h2 class="onboarding-step-title">Add your first bills</h2>
+      <p class="sub">Flag a bill by its number and Rotunda tracks it — status, hearings, amendments — from the next daily refresh on. You can add more anytime from Search.</p>
+      <form id="ob-bill-f" class="ob-bill-form">
+        <input id="ob-bill-number" placeholder="e.g. SB 122" autocomplete="off" style="flex:1;min-width:9rem">
+        <button type="submit" id="ob-bill-add">Flag bill</button>
+      </form>
+      <div id="ob-bill-loading" role="status" hidden><span class="spinner"></span> Looking it up…</div>
+      <div id="ob-bills" class="ob-bills"></div>
+      <p class="sub" style="margin-top:0.75rem">No rush — this step is optional. Continue and add bills whenever you like.</p>
+    </section>
+
+    <!-- Step 4 — all set -->
+    <section class="onboarding-step" data-step="4" hidden>
+      <h2 class="onboarding-step-title">You're all set.</h2>
+      <p class="sub">Your registration is saved and your dashboard is ready. Here's where things live:</p>
+      <ul class="ob-summary">
+        <li><strong>Flagged bills &amp; alerts</strong> — track movement and get the daily digest.</li>
+        <li><strong>Clients</strong> — take positions and prepare Form 601/615 disclosures.</li>
+        <li><strong>Letters &amp; directory</strong> — draft position letters and find who to send them to.</li>
+      </ul>
+      <p class="sub ob-team-note">Inviting teammates is coming soon — Rotunda is one seat per firm for now.</p>
+    </section>
+
+    <div class="onboarding-nav">
+      <button type="button" class="secondary" id="ob-back" hidden>← Back</button>
+      <button type="button" id="ob-next">Continue →</button>
+    </div>
+  </div>
+</div>
+</main>
+
+<script>
+const errorEl = document.getElementById('error');
+function showError(msg) { errorEl.textContent = msg; errorEl.className = 'show'; }
+function clearError() { errorEl.className = ''; }
+
+const TOTAL = 4;
+let step = 1;
+const backBtn = document.getElementById('ob-back');
+const nextBtn = document.getElementById('ob-next');
+const stepEls = [...document.querySelectorAll('.onboarding-step')];
+const stepperEls = [...document.querySelectorAll('.ob-step')];
+
+function render() {
+  stepEls.forEach(el => { el.hidden = Number(el.dataset.step) !== step; });
+  stepperEls.forEach(el => {
+    const n = Number(el.dataset.for);
+    el.classList.toggle('active', n === step);
+    el.classList.toggle('done', n < step);
+  });
+  backBtn.hidden = step === 1;
+  nextBtn.textContent = step === TOTAL ? 'Go to dashboard →' : 'Continue →';
+}
+
+backBtn.addEventListener('click', () => { clearError(); if (step > 1) { step--; render(); } });
+
+nextBtn.addEventListener('click', async () => {
+  clearError();
+  if (step === 1) {
+    const name = document.getElementById('legal_name').value.trim();
+    const type = document.querySelector('input[name="registrant_type"]:checked');
+    if (!name) { showError('Enter the legal name you register under.'); return; }
+    if (!type) { showError('Choose whether you register as an individual or a firm.'); return; }
+    step = 2; render(); return;
+  }
+  if (step === 2) {
+    // Everything the profile needs has been collected — save it now, so
+    // the account is set up even if the user stops before flagging bills.
+    if (!await saveProfile()) return;
+    step = 3; render(); return;
+  }
+  if (step === 3) { step = 4; render(); return; }
+  if (step === 4) { window.location.href = '/dashboard'; return; }
+});
+
+async function saveProfile() {
+  nextBtn.disabled = true;
+  try {
+    const res = await fetch('/api/profile', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        legal_name: document.getElementById('legal_name').value.trim(),
+        registrant_type: (document.querySelector('input[name="registrant_type"]:checked') || {}).value || '',
+        existing_filer_id: document.getElementById('existing_filer_id').value.trim(),
+        reporting_basis: document.getElementById('reporting_basis').value,
+        letterhead_line: document.getElementById('letterhead_line').value.trim(),
+        // Mailing defaults to same-as-business; the full address is
+        // optional here and can be completed later in Settings.
+        mail_same_as_bus: true,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save your details');
+    return true;
+  } catch (err) {
+    showError(err.message);
+    return false;
+  } finally {
+    nextBtn.disabled = false;
+  }
+}
+
+/* Step 3 — flag first bills by number (no client to link them to yet). */
+const flagged = [];
+const billForm = document.getElementById('ob-bill-f');
+const billLoading = document.getElementById('ob-bill-loading');
+billForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  clearError();
+  const input = document.getElementById('ob-bill-number');
+  const number = input.value.trim();
+  if (!number) return;
+  billLoading.hidden = false;
+  document.getElementById('ob-bill-add').disabled = true;
+  try {
+    const res = await fetch('/api/flag-by-number', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bill_number: number }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not flag that bill');
+    if (!flagged.some(b => b.bill_id === data.bill_id)) flagged.push(data);
+    renderBills();
+    input.value = '';
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    billLoading.hidden = true;
+    document.getElementById('ob-bill-add').disabled = false;
+  }
+});
+
+function renderBills() {
+  const el = document.getElementById('ob-bills');
+  if (!flagged.length) { el.innerHTML = ''; return; }
+  el.innerHTML = flagged.map(b => `
+    <div class="ob-bill-row">
+      <span class="digest-bill">${escapeText(b.state || '')} ${escapeText(b.bill_number || '')}</span>
+      <span class="digest-summary">${escapeText(b.title || '')}</span>
+      <span class="ob-bill-flagged">Flagged ✓</span>
+    </div>`).join('');
+}
+
+render();
+</script>
+</body>
+</html>

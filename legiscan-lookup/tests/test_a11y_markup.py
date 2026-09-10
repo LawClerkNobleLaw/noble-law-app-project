@@ -431,13 +431,17 @@ def test_no_weight_is_shipped_that_nothing_sets():
     """Poppins came down in five weights on every navigation, one of
     which (300) the stylesheet never sets. A list of weights is exactly
     the thing that stops matching reality silently — more so now that
-    each one is a file in the repo."""
-    assert set(app.POPPINS_WEIGHTS) == _weights_the_app_actually_sets()
+    each one is a file in the repo. Two families ship now (Poppins for
+    body, Garet for display headings at 800), so the invariant is that
+    every weight the app sets is shipped by ONE of them — no orphan
+    weight in the CSS, no shipped weight nothing uses."""
+    shipped = set(app.POPPINS_WEIGHTS) | set(app.GARET_FACES.values())
+    assert shipped == _weights_the_app_actually_sets()
 
 
 def test_every_declared_face_is_a_file_this_app_serves():
     faces = re.findall(r"src: url\('([^']+)'\)", app.FONT_LINKS)
-    assert len(faces) == len(app.POPPINS_WEIGHTS)
+    assert len(faces) == len(app.POPPINS_WEIGHTS) + len(app.GARET_FACES)
     for url in faces:
         name, _, version = url.lstrip("/").partition("?")
         name = name[len("static/"):]
@@ -464,9 +468,15 @@ def test_the_faces_that_are_preloaded_are_the_ones_every_page_needs():
     # spend first-paint bandwidth on files some pages never use.
     preloaded = re.findall(r'rel="preload"[^>]*poppins-(\d{3})', app.FONT_LINKS)
     assert preloaded == ["400", "600"]
+    # Garet Heavy is the above-the-fold headline on every page, so it's
+    # preloaded too; Garet Book is not (rarer).
+    preload_links = re.findall(r'<link rel="preload"[^>]*>', app.FONT_LINKS)
+    assert any("garet-heavy" in link for link in preload_links)
+    assert not any("garet-book" in link for link in preload_links)
     # crossorigin even though this is same-origin now: fonts are fetched
     # in CORS mode, and a preload without it downloads the file twice.
-    assert app.FONT_LINKS.count("crossorigin") == len(preloaded)
+    # One per preload link (two Poppins + one Garet).
+    assert app.FONT_LINKS.count("crossorigin") == app.FONT_LINKS.count('rel="preload"')
 
 
 def test_the_serif_token_names_a_font_that_is_actually_there():
@@ -644,23 +654,22 @@ def test_every_filter_control_can_be_found_again_after_a_redraw():
             assert "focusKeyAttr(" in tag, "%s: %s" % (name, tag)
 
 # ── The splash and the visitor's own choice (V3) ──────────────────────
-def test_the_splash_answers_an_explicit_light_choice():
+def test_the_landing_answers_an_explicit_light_choice():
     # The audit called this "the landing page ignores the theme system".
-    # The narrower truth: a signed-out visitor is dark everywhere in
-    # this app on purpose, so OS preference is not the input — but
-    # someone who has USED the toggle got light on /signup, /login and
-    # every page after it, and black here. One page ignoring a choice
-    # every other page honours is the whole defect.
-    assert ':root[data-theme="light"] .splash' in app.LANDING_STYLE
+    # The 2026 redesign replaced the bespoke always-dark splash with the
+    # full marketing page, which honours the theme the way every other
+    # page does: it links the shared style.css and paints itself from the
+    # theme tokens (var(--bg)/var(--ink)) rather than hardcoded colours,
+    # so an explicit light choice flips it along with the rest of the app.
+    assert app.STYLE_HREF in app.LANDING_PAGE
+    assert "body.lp { background: var(--bg); color: var(--ink); }" in app.LANDING_STYLE
 
 
-def test_the_splash_can_see_the_choice_before_it_paints():
-    # data-theme is set by THEME_INIT_SCRIPT, which this page didn't
-    # include at all — the attribute the rule above keys off would never
-    # have been there.
+def test_the_landing_can_see_the_choice_before_it_paints():
+    # data-theme is set by THEME_INIT_SCRIPT in <head>, before the body it
+    # colours — same placement as page(), so no wrong-theme flash.
     assert "data-theme" in app.LANDING_PAGE
-    # In <head>, before the body it colours — same placement as page().
-    assert app.LANDING_PAGE.index("localStorage.getItem('theme')") < app.LANDING_PAGE.index("<body>")
+    assert app.LANDING_PAGE.index("localStorage.getItem('theme')") < app.LANDING_PAGE.index("<body")
 
 
 def test_nothing_on_the_splash_is_painted_white_by_hand():

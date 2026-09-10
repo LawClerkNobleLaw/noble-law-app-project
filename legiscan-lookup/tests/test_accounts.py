@@ -217,3 +217,52 @@ def test_record_login_failure_resets_count_after_window_expires():
     app._record_login_failure("person@example.com")
     count, _ = app._login_failures["person@example.com"]
     assert count == 1
+
+
+# ── Change password (Settings → Account & security) ────────────────────
+def test_change_password_lets_the_new_password_log_in(conn):
+    user_id = accounts.create_user(conn, "person@example.com", "old-password-1")
+    accounts.change_password(conn, user_id, "old-password-1", "new-password-2")
+    assert accounts.verify_login(conn, "person@example.com", "new-password-2") == user_id
+    assert accounts.verify_login(conn, "person@example.com", "old-password-1") is None
+
+
+def test_change_password_rejects_a_wrong_current_password(conn):
+    user_id = accounts.create_user(conn, "person@example.com", "old-password-1")
+    with pytest.raises(ValueError):
+        accounts.change_password(conn, user_id, "not-the-password", "new-password-2")
+    # The password is unchanged after a rejected attempt.
+    assert accounts.verify_login(conn, "person@example.com", "old-password-1") == user_id
+
+
+def test_change_password_holds_the_new_password_to_the_signup_rule(conn):
+    user_id = accounts.create_user(conn, "person@example.com", "old-password-1")
+    with pytest.raises(ValueError):
+        accounts.change_password(conn, user_id, "old-password-1", "short")
+
+
+# ── New profile fields (Settings → Org & registration) ─────────────────
+def test_save_profile_round_trips_the_new_settings_fields(conn):
+    user_id = accounts.create_user(conn, "person@example.com", "a-real-password")
+    accounts.save_profile(conn, user_id, {
+        "legal_name": "Noble Law PC", "registrant_type": "firm",
+        "title": "Legislative Advocate", "reporting_basis": "quarterly",
+        "reg_effective_date": "2026-01-15",
+        "letterhead_line": "1201 K Street, Sacramento, CA 95814",
+    })
+    profile = accounts.get_profile(conn, user_id)
+    assert profile["title"] == "Legislative Advocate"
+    assert profile["reporting_basis"] == "quarterly"
+    assert profile["reg_effective_date"] == "2026-01-15"
+    assert profile["letterhead_line"] == "1201 K Street, Sacramento, CA 95814"
+
+
+def test_save_profile_stores_blank_new_fields_as_null(conn):
+    user_id = accounts.create_user(conn, "person@example.com", "a-real-password")
+    accounts.save_profile(conn, user_id, {
+        "legal_name": "Solo Lobbyist", "registrant_type": "individual",
+        "title": "  ", "letterhead_line": "",
+    })
+    profile = accounts.get_profile(conn, user_id)
+    assert profile["title"] is None
+    assert profile["letterhead_line"] is None

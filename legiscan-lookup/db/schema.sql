@@ -151,6 +151,12 @@ CREATE TABLE IF NOT EXISTS saved_searches (
   name        TEXT NOT NULL,
   query       TEXT NOT NULL,
   client_id   INTEGER REFERENCES clients(id),
+  -- On/Off from the Alerts screen's rule list. A disabled rule stays
+  -- saved (and its past matches stay) but the daily job skips it — see
+  -- list_saved_searches_for_run, which filters on this. Defaults on, so
+  -- every rule that predates the column keeps running. Migrated in for
+  -- existing DBs in db._migrate.
+  enabled     INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT,
   last_run_at TEXT,
   UNIQUE(user_id, name)
@@ -331,6 +337,17 @@ CREATE TABLE IF NOT EXISTS lobbyist_profiles (
   mail_addr1         TEXT, mail_city TEXT, mail_st TEXT, mail_zip4 TEXT, -- Form 601: MAIL_CITY/MAIL_ST/MAIL_ZIP4
   bus_phone          TEXT,                 -- Form 601: BUS_PHON
   existing_filer_id  TEXT,                 -- optional — CA SOS filer ID, if already registered
+  -- Added for the Settings screen (2026 redesign). None are required and
+  -- none are Form-601 filer identity: title is the registrant's own job
+  -- title, reporting_basis is how they report (e.g. quarterly), the
+  -- letterhead_line is the address block printed atop position letters,
+  -- and reg_effective_date is when this registration took effect (the
+  -- registration's own date, distinct from a position's effective_date
+  -- on bill_client_links). Migrated in for existing DBs in db._migrate.
+  title              TEXT,
+  reporting_basis    TEXT,
+  letterhead_line    TEXT,
+  reg_effective_date TEXT,
   created_at         TEXT
 );
 

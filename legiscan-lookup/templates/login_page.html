@@ -11,14 +11,16 @@
 <body>
 {{top_nav}}
 <main>
-<div class="wrap">
-  <h1>Log in</h1>
+<div class="wrap auth-wrap">
+  <span class="brand-mark auth-mark" style="width:44px;height:44px" aria-hidden="true"></span>
+  <h1>Welcome back.</h1>
+  <p class="auth-sub">Sign in to pick up where you left off under the dome.</p>
 
-  <div class="card">
+  <div class="card auth-card">
     <form id="f" style="margin:0">
       <label style="flex:1 1 100%">
         <div class="field-label">Email</div>
-        <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required style="width:100%">
+        <input id="email" type="email" placeholder="you@firm.com" autocomplete="email" required style="width:100%">
       </label>
       <label style="flex:1 1 100%">
         <div class="field-label">Password</div>
@@ -27,12 +29,14 @@
           <button type="button" id="toggle-password" class="secondary" aria-pressed="false" aria-label="Show password" style="flex:none">Show</button>
         </div>
       </label>
-      <button type="submit">Log in</button>
+      <button type="submit" class="auth-submit">Sign in</button>
     </form>
   </div>
 
   <div id="loading" role="status"><span class="spinner"></span>Logging in…</div>
   <div id="error" role="alert" aria-live="assertive"></div>
+
+  <p class="auth-alt">New to Rotunda? <a href="/signup">Create an account</a></p>
 </div>
 </main>
 

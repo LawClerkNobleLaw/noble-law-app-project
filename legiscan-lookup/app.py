@@ -316,39 +316,24 @@ SIGNED_IN_HINT_COOKIE = "signed_in_hint"
 # Sets data-theme from localStorage BEFORE first paint, so a page load
 # doesn't flash the wrong theme for a moment before JS gets around to
 # correcting it. Every page's <head> includes this, right after <style>
-# (see STYLE's own :not([data-theme="light"]) media query and
-# :root[data-theme="dark"] block, which is what this attribute actually
-# controls).
+# (see STYLE's own :root[data-theme="dark"] block, which is what this
+# attribute actually controls).
 #
-# Priority order: (1) an explicit choice from the toggle in
-# account_widget() (localStorage['theme'], set for anyone — signed in
-# or not — who's ever used it) always wins. (2) Failing that, a
-# signed-OUT visitor defaults to dark rather than following the OS's
-# light/dark preference — product decision, not a bug: this app is
-# meant to look like the mockup's always-dark marketing/auth
-# experience for anyone who hasn't signed in yet. "Signed out" here
-# means SIGNED_IN_HINT_COOKIE is absent — that cookie is set/cleared
-# alongside the real session cookie (see _signed_in_hint_cookie_header)
-# specifically because this script runs synchronously before any
-# fetch could resolve, and the real session cookie is HttpOnly (opaque
-# to JS by design). (3) Otherwise (signed in, no explicit choice),
-# leave the attribute unset entirely, so the plain OS-preference media
-# query keeps working exactly as it always has.
-#
-# One edge case worth naming: a session created before this change
-# shipped won't have SIGNED_IN_HINT_COOKIE yet, so that visitor reads
-# as "signed out" for this initial-paint guess only, until their next
-# login/logout resets it — the sidebar footer, which the server fills
-# in from the real session (see _fill_account_state), still shows them
-# as signed in regardless; this only affects which theme they see.
-THEME_INIT_SCRIPT = f"""
+# Dark is Rotunda's default identity — the whole app is designed from an
+# always-dark mockup — so this defaults EVERYONE to dark rather than
+# following the OS light/dark preference. Priority: (1) an explicit
+# choice from the toggle in account_widget() (localStorage['theme'],
+# set for anyone who's ever used it) always wins, either direction;
+# (2) otherwise, dark. A user who wants light keeps it via the toggle;
+# the light palette (STYLE's :root, and :root[data-theme="light"]) is
+# fully maintained and contrast-tested, it's just no longer the default.
+THEME_INIT_SCRIPT = """
 <script>
-(function() {{
+(function() {
   var t = localStorage.getItem('theme');
-  if (t === 'dark' || t === 'light') {{ document.documentElement.setAttribute('data-theme', t); return; }}
-  var signedIn = document.cookie.indexOf('{SIGNED_IN_HINT_COOKIE}=1') !== -1;
-  if (!signedIn) document.documentElement.setAttribute('data-theme', 'dark');
-}})();
+  if (t === 'dark' || t === 'light') { document.documentElement.setAttribute('data-theme', t); return; }
+  document.documentElement.setAttribute('data-theme', 'dark');
+})();
 </script>
 """
 
@@ -584,6 +569,16 @@ PAGE_PROGRESS_JS = _read_static_text("js/page_progress.js")
 # Poppins, self-hosted — see FONT_LINKS for why.
 POPPINS_WEIGHTS = (400, 500, 600, 700)
 POPPINS_FILES = {w: _read_static_bytes(f"fonts/poppins-{w}.woff2") for w in POPPINS_WEIGHTS}
+
+# Garet, the mockup's display face — self-hosted the same way, and used
+# only for headings/wordmark (see --font-display in style.css), never
+# body copy, so two weights cover it: Book (400) for the rare regular-
+# weight display line and Heavy (800) for the big rounded headlines the
+# mockup leans on ("everything under the dome", "Welcome back."). The
+# team confirmed the web-embedding licence and supplied these two
+# .woff2 files; body copy stays Poppins.
+GARET_FACES = {"book": 400, "heavy": 800}
+GARET_FILES = {name: _read_static_bytes(f"fonts/garet-{name}.woff2") for name in GARET_FACES}
 FOCUS_JS = _read_static_text("js/focus.js")
 SEARCH_SHORTCUT_JS = _read_static_text("js/search_shortcut.js")
 ESCAPE_TEXT_JS = _read_static_text("js/escape_text.js")
@@ -608,6 +603,7 @@ STATIC_ASSETS = {
     "js/row_menu.js": (ROW_MENU_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/page_progress.js": (PAGE_PROGRESS_JS.encode("utf-8"), JS_CONTENT_TYPE),
     **{f"fonts/poppins-{w}.woff2": (POPPINS_FILES[w], "font/woff2") for w in POPPINS_WEIGHTS},
+    **{f"fonts/garet-{name}.woff2": (GARET_FILES[name], "font/woff2") for name in GARET_FACES},
     "js/focus.js": (FOCUS_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/escape_text.js": (ESCAPE_TEXT_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/search_shortcut.js": (SEARCH_SHORTCUT_JS.encode("utf-8"), JS_CONTENT_TYPE),
@@ -664,7 +660,8 @@ POPPINS_LATIN_RANGE = (
 )
 
 FONT_FACES = "\n".join(
-    f"""@font-face {{
+    [
+        f"""@font-face {{
   font-family: 'Poppins';
   font-style: normal;
   font-weight: {weight};
@@ -672,7 +669,22 @@ FONT_FACES = "\n".join(
   src: url('{_asset_url(f"fonts/poppins-{weight}.woff2")}') format('woff2');
   unicode-range: {POPPINS_LATIN_RANGE};
 }}"""
-    for weight in POPPINS_WEIGHTS
+        for weight in POPPINS_WEIGHTS
+    ]
+    # Garet carries only headings/the wordmark, so no unicode-range: it's
+    # never the fallback for a stray glyph the way body Poppins is, and
+    # our own headline text is latin. font-display: swap so a headline
+    # paints in the fallback (Poppins) immediately rather than blocking.
+    + [
+        f"""@font-face {{
+  font-family: 'Garet';
+  font-style: normal;
+  font-weight: {weight};
+  font-display: swap;
+  src: url('{_asset_url(f"fonts/garet-{name}.woff2")}') format('woff2');
+}}"""
+        for name, weight in GARET_FACES.items()
+    ]
 )
 
 # 400 and 600 preloaded, the other two not: those are body copy and the
@@ -685,6 +697,13 @@ FONT_LINKS = "\n".join(
         f'<link rel="preload" as="font" type="font/woff2" '
         f'href="{_asset_url(f"fonts/poppins-{weight}.woff2")}" crossorigin>'
         for weight in (400, 600)
+    ]
+    # Garet Heavy is the above-the-fold headline on every page (page-head
+    # title, wordmark), so it's preloaded alongside body Poppins; Book is
+    # rarer and left to load on demand.
+    + [
+        f'<link rel="preload" as="font" type="font/woff2" '
+        f'href="{_asset_url("fonts/garet-heavy.woff2")}" crossorigin>'
     ]
     + ["<style>", FONT_FACES, "</style>"]
 )
@@ -827,6 +846,11 @@ SHELL_NAV_ITEMS = [
           '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
           '<path d="M2 1v12M2 2h8l-2 2.5L10 7H2" stroke-linejoin="round"/></svg>'),
      ]),
+    ("Alerts",
+     '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
+     '<path d="M7 1.5a3.5 3.5 0 00-3.5 3.5c0 3-1.5 4-1.5 4h10s-1.5-1-1.5-4A3.5 3.5 0 007 1.5z" stroke-linejoin="round"/>'
+     '<path d="M5.8 12a1.4 1.4 0 002.4 0" stroke-linecap="round"/></svg>',
+     "/alerts"),
     ("Lobbying Activity",
      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">'
      '<path d="M2 13V6l5-4 5 4v7" stroke-linejoin="round"/><path d="M5.5 13V8h3v5"/></svg>',
@@ -960,7 +984,7 @@ def app_shell(current, body):
           <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
             <circle cx="7" cy="4.5" r="2.2"/><path d="M2.5 12c0-2.2 2-4 4.5-4s4.5 1.8 4.5 4" stroke-linecap="round"/>
           </svg>
-          Profile
+          Settings
         </a></li>
       </ul>
     </nav>
@@ -1117,76 +1141,129 @@ def page(title, path, body):
 # its own (see SIGNUP_PAGE) — this splash doesn't need its own chrome
 # to keep those reachable.
 LANDING_STYLE = """
-  /* --splash-ink as three comma-separated channels, not a colour, so
-     the rgba() veils below can be written once: every faint line, dot,
-     ring and glow on this screen is the ink at some low alpha. */
-  .splash {
-    --splash-bg: #000; --splash-ink: 255, 255, 255; --splash-warm: #F4EFE4;
-    position: relative; overflow: hidden; min-height: 100svh;
-    background: var(--splash-bg); color: rgb(var(--splash-ink));
-    display: flex; flex-direction: column;
+  /* The public marketing page (2026 redesign). It links the app's own
+     style.css, so every color/radius/font token is already in scope and
+     already flips per theme; this only adds the landing's own layout,
+     and defaults to the app's dark identity like everything else. The
+     old atmospheric splash lived here as its own --splash-* palette;
+     this replaces it with the full product page (nav, why-band, six
+     capability pillars, compliance, FAQ) the mockup calls for. */
+  body.lp { background: var(--bg); color: var(--ink); }
+  .lp main { display: block; }
+  .lp a { color: inherit; text-decoration: none; }
+  .lp section { max-width: 62rem; margin: 0 auto; padding: 5rem 1.5rem; }
+
+  /* Nav */
+  .lp-nav {
+    position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 1.5rem;
+    padding: 0.9rem 1.5rem; border-bottom: 1px solid var(--rule);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(8px);
   }
-  /* Only an explicit choice, never prefers-color-scheme: a signed-out
-     visitor is dark everywhere in this app by design. */
-  :root[data-theme="light"] .splash {
-    --splash-bg: #FAF8F3; --splash-ink: 17, 17, 17; --splash-warm: #4A3F2A;
+  .lp-brand { display: inline-flex; align-items: center; gap: 0.5rem; font-family: var(--font-display); font-weight: 800; font-size: 1.05rem; letter-spacing: -0.01em; }
+  .lp-nav-links { display: flex; gap: 1.4rem; margin: 0 auto; font-size: 0.9rem; }
+  .lp-nav-links a { color: var(--slate); }
+  .lp-nav-links a:hover { color: var(--ink); }
+  .lp-nav-cta { display: flex; align-items: center; gap: 1rem; }
+  .lp-signin { font-size: 0.9rem; color: var(--slate); }
+  .lp-signin:hover { color: var(--ink); }
+  .lp-getstarted {
+    display: inline-flex; align-items: center; background: var(--accent-solid); color: var(--accent-solid-text);
+    font-weight: 600; font-size: 0.9rem; padding: 0.5rem 1.1rem; border-radius: var(--radius-pill);
   }
-  .splash a { color: rgb(var(--splash-ink)); }
-  .splash a:hover { color: var(--splash-warm); }
-  .splash ::selection { background: rgb(var(--splash-ink)); color: var(--splash-bg); }
-  /* Four faint decorative layers, all pointer-events:none and purely
-     cosmetic — a dotted-grid swatch in two corners, three concentric
-     ring outlines bleeding off the top-left/bottom-right, and one soft
-     radial glow low-center. Pixel values ported directly from the
-     mockup rather than converted to rem, since these are one-off
-     decorative shapes tied to this exact screen, not reused anywhere
-     else that would benefit from rem's user-font-size scaling. */
-  .splash-dots {
-    position: absolute; pointer-events: none;
-    background-image: radial-gradient(rgba(var(--splash-ink), 0.2) 2px, transparent 2.2px);
-    background-size: 33px 33px;
+  .lp-getstarted:hover { background: var(--accent-solid-hover); }
+
+  /* Hero */
+  .lp-hero { position: relative; text-align: center; padding: 5.5rem 1.5rem 4.5rem; overflow: hidden; }
+  .lp-glow {
+    position: absolute; top: -10%; left: 50%; transform: translateX(-50%);
+    width: min(720px, 90vw); height: 520px; pointer-events: none; z-index: 0;
+    background: radial-gradient(closest-side, color-mix(in srgb, var(--gold) 22%, transparent), transparent);
+    opacity: 0.5;
   }
-  .splash-dots.tl { top: -8px; left: 0; width: 264px; height: 194px; background-position: 22px 22px; }
-  .splash-dots.br { bottom: -10px; right: -10px; width: 372px; height: 190px; }
-  .splash-ring { position: absolute; border-radius: 50%; pointer-events: none; }
-  .splash-ring.r1 { top: -17vmax; left: -15vmax; width: 40vmax; height: 40vmax; max-width: 560px; max-height: 560px; border: 1px solid rgba(var(--splash-ink), 0.28); }
-  .splash-ring.r2 { top: -10vmax; left: -26vmax; width: 32vmax; height: 32vmax; max-width: 450px; max-height: 450px; border: 1px solid rgba(var(--splash-ink), 0.22); }
-  .splash-ring.r3 { bottom: -22vmax; right: -10vmax; width: 47vmax; height: 47vmax; max-width: 660px; max-height: 660px; border: 1px solid rgba(var(--splash-ink), 0.26); }
-  .splash-glow {
-    position: absolute; bottom: -190px; left: 50%; transform: translateX(-50%); width: 460px; height: 330px;
-    border-radius: 50%; background: radial-gradient(closest-side, rgba(var(--splash-ink), 0.2), rgba(var(--splash-ink), 0)); pointer-events: none;
-  }
-  .splash-topline { position: relative; padding: clamp(28px, 5vh, 56px) clamp(28px, 4vw, 56px) 0; flex: none; }
-  .splash-topline div { height: 1px; background: rgba(var(--splash-ink), 0.6); }
-  .splash-main {
-    position: relative; flex: 1; display: flex; flex-direction: column; align-items: center;
-    justify-content: center; padding: clamp(16px, 4vh, 40px) 24px 0; text-align: center;
-  }
-  .splash-word {
-    margin: 0; font-size: clamp(34px, 4.6vw, 62px); font-weight: 700; letter-spacing: 0.3em;
-    line-height: 1; text-indent: 0.3em;
-  }
-  .splash-mark {
-    display: inline-block; width: clamp(140px, 18vw, 250px); height: clamp(140px, 18vw, 250px);
-    margin: clamp(14px, 2.6vh, 24px) 0 0; background-color: rgb(var(--splash-ink));
+  /* Lift the real content above the glow — but NOT the glow itself, or
+     it stops being absolutely positioned and takes 520px of layout,
+     shoving the title below the fold. */
+  .lp-hero > *:not(.lp-glow) { position: relative; z-index: 1; }
+  .lp-hero-mark {
+    display: inline-block; width: clamp(72px, 12vw, 110px); height: clamp(72px, 12vw, 110px);
+    margin-bottom: 1.5rem; background-color: var(--ink);
     -webkit-mask-image: var(--brand-mark); mask-image: var(--brand-mark);
-    -webkit-mask-size: contain; mask-size: contain;
-    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+    -webkit-mask-size: contain; mask-size: contain; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
     -webkit-mask-position: center; mask-position: center;
   }
-  .splash-tagline {
-    margin: clamp(12px, 2.2vh, 20px) 0 0; font-size: clamp(11px, 1.05vw, 14px); font-weight: 400;
-    letter-spacing: 0.22em; text-transform: uppercase; color: rgba(var(--splash-ink), 0.9);
+  .lp-hero-title {
+    font-family: var(--font-display); font-weight: 800; letter-spacing: -0.025em; line-height: 1.02;
+    font-size: clamp(2.6rem, 8vw, 5rem); margin: 0 auto 1.2rem; max-width: 16ch;
   }
-  .splash-cta {
-    position: relative; flex: none; display: flex; flex-direction: column; align-items: center; gap: 10px;
-    padding: clamp(20px, 4vh, 40px) 24px clamp(32px, 8vh, 72px);
+  .lp-hero-sub { color: var(--slate); font-size: clamp(1rem, 2.2vw, 1.2rem); max-width: 40rem; margin: 0 auto 2rem; }
+  .lp-hero-cta { font-size: 1rem; padding: 0.7rem 1.6rem; }
+  .lp-hero-note { color: var(--slate); font-size: 0.85rem; max-width: 36rem; margin: 2.5rem auto 0; opacity: 0.85; }
+
+  /* Section furniture */
+  .lp-eyebrow { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); margin-bottom: 0.9rem; }
+  .lp-section-title { font-family: var(--font-display); font-weight: 800; letter-spacing: -0.02em; font-size: clamp(1.6rem, 4vw, 2.4rem); line-height: 1.1; margin: 0 0 1rem; }
+  .lp-lead { color: var(--slate); font-size: 1.02rem; max-width: 44rem; margin: 0 0 2rem; }
+
+  /* Why — Today vs With Rotunda */
+  .lp-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+  .lp-compare-col { border: 1px solid var(--rule-card); border-radius: var(--radius-lg); padding: 1.5rem; background: var(--surface); }
+  .lp-compare-col--rotunda { border-color: color-mix(in srgb, var(--gold) 45%, transparent); }
+  .lp-compare-head { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--slate); margin-bottom: 1rem; }
+  .lp-compare-col--rotunda .lp-compare-head { color: var(--gold); }
+  .lp-compare-col ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+  .lp-compare-col li { font-size: 0.92rem; padding-left: 1.4rem; position: relative; }
+  .lp-compare-col li::before { content: "·"; position: absolute; left: 0.4rem; color: var(--slate); }
+  .lp-compare-col--rotunda li::before { content: "→"; color: var(--gold); }
+
+  /* What it does — pillar grid */
+  .lp-pillars { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 1.25rem; }
+  .lp-pillar { border: 1px solid var(--rule-card); border-radius: var(--radius-lg); padding: 1.6rem; background: var(--surface); }
+  .lp-pillar-num { font-family: var(--mono); font-size: 0.8rem; color: var(--gold); margin-bottom: 0.8rem; }
+  .lp-pillar h3 { font-family: var(--font-display); font-weight: 800; font-size: 1.1rem; margin: 0 0 0.5rem; }
+  .lp-pillar p { color: var(--slate); font-size: 0.9rem; margin: 0; line-height: 1.55; }
+
+  .lp-extra { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1.25rem; margin-top: 1.25rem; }
+  .lp-extra-card { border: 1px solid var(--rule); border-radius: var(--radius-lg); padding: 1.4rem; }
+  .lp-extra-card h4 { margin: 0 0 0.4rem; font-size: 0.98rem; }
+  .lp-extra-card p { color: var(--slate); font-size: 0.88rem; margin: 0; line-height: 1.5; }
+
+  /* Compliance */
+  .lp-forms { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+  .lp-form-card { border: 1px solid var(--rule-card); border-radius: var(--radius-lg); padding: 1.6rem; background: var(--surface); }
+  .lp-form-card--soon { opacity: 0.82; }
+  .lp-form-num { font-family: var(--font-display); font-weight: 800; font-size: 1.6rem; color: var(--gold); margin-bottom: 0.5rem; }
+  .lp-form-card h4 { margin: 0 0 0.5rem; font-size: 1.02rem; }
+  .lp-form-card p { color: var(--slate); font-size: 0.9rem; margin: 0; line-height: 1.55; }
+  .lp-soon { display: inline-block; margin-left: 0.2rem; font-weight: 600; color: var(--gold); }
+  .lp-fineprint { color: var(--slate); font-size: 0.85rem; margin-top: 1.5rem; max-width: 46rem; }
+
+  /* FAQ */
+  .lp-faq-list { display: flex; flex-direction: column; gap: 0.6rem; max-width: 46rem; }
+  .lp-faq-list details { border: 1px solid var(--rule); border-radius: var(--radius-md); padding: 0.9rem 1.15rem; background: var(--surface); }
+  .lp-faq-list summary { cursor: pointer; font-weight: 600; font-size: 0.98rem; list-style: none; display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+  .lp-faq-list summary::-webkit-details-marker { display: none; }
+  .lp-faq-list summary::after { content: "+"; color: var(--slate); font-size: 1.2rem; line-height: 1; }
+  .lp-faq-list details[open] summary::after { content: "\\2212"; }
+  .lp-faq-list details p { color: var(--slate); font-size: 0.92rem; margin: 0.8rem 0 0; line-height: 1.6; }
+
+  /* CTA + footer */
+  .lp-cta { text-align: center; }
+  .lp-cta-title { font-family: var(--font-display); font-weight: 800; letter-spacing: -0.02em; font-size: clamp(1.8rem, 5vw, 2.8rem); margin: 0 0 1rem; }
+  .lp-cta .lp-lead { margin-left: auto; margin-right: auto; }
+  .lp-cta-actions { display: flex; gap: 1rem; justify-content: center; align-items: center; }
+  .lp-footer {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+    max-width: 62rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top: 1px solid var(--rule);
   }
-  .splash-cta a { font-size: 19px; font-weight: 400; letter-spacing: 0.01em; padding: 4px 8px; }
-  .splash-chevrons { display: flex; flex-direction: column; align-items: center; animation: splash-chevron 1.9s ease-in-out infinite; }
-  .splash-chevrons svg:last-child { margin-top: -3px; }
-  @keyframes splash-chevron { 0%, 100% { transform: translateY(0); opacity: 0.75; } 50% { transform: translateY(5px); opacity: 1; } }
-  @media (prefers-reduced-motion: reduce) { .splash-chevrons { animation: none; } }
+  .lp-footer .lp-brand { font-size: 0.95rem; }
+  .lp-footer-note { color: var(--slate); font-size: 0.82rem; }
+
+  @media (max-width: 720px) {
+    .lp-nav-links { display: none; }
+    .lp section { padding: 3.5rem 1.25rem; }
+    .lp-compare, .lp-forms { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { .lp-nav { backdrop-filter: none; } }
 """
 
 LANDING_PAGE = _render_template(
@@ -1340,13 +1417,28 @@ PROFILE_PAGE = _render_template(
 )
 
 
+# The first-run wizard (2026 redesign): Create Account → /onboarding →
+# dashboard. Steps 1–2 write the profile (a lighter path into the same
+# /api/profile the full registration form uses; the complete CAL-ACCESS
+# address is fillable later in Settings), step 3 flags first bills via
+# /api/flag-by-number, step 4 finishes. Team invites are called out as
+# coming-soon, since the app is single-seat (see db.ORG_SCOPE).
+ONBOARDING_PAGE = _render_template(
+    "onboarding_page.html",
+    STYLE_HREF=STYLE_HREF,
+    FONT_LINKS=FONT_LINKS,
+    THEME_INIT_SCRIPT=THEME_INIT_SCRIPT,
+    top_nav=top_nav('/onboarding', left_extra='<a href="/dashboard">Skip for now →</a>'),
+)
+
+
 PROFILE_BODY = _render_template(
     "profile_body.html",
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
     skeleton_panels=_skeleton_panel(rows=4, row_widths=(28, 44)),
 )
 
-PROFILE_VIEW_PAGE = page("Your profile — Rotunda", "/profile", PROFILE_BODY)
+PROFILE_VIEW_PAGE = page("Settings — Rotunda", "/profile", PROFILE_BODY)
 
 
 # The signed-in landing page (see the "/" route, which sends a logged-in
@@ -1363,6 +1455,22 @@ DASHBOARD_BODY = _render_template(
 )
 
 DASHBOARD_PAGE = page("Dashboard — Rotunda", "/dashboard", DASHBOARD_BODY)
+
+
+# Alerts (2026 redesign): two views on one page — the in-app daily-digest
+# feed (db.recent_bill_changes, grouped by client) and the alert-rule list
+# (saved searches, with an On/Off that db.list_saved_searches_for_run
+# honours). Nothing here is new data: the digest is /api/recent-changes'
+# longer sibling and the rules are the same saved searches the search page
+# already manages.
+ALERTS_BODY = _render_template(
+    "alerts_body.html",
+    TOAST_SRC=TOAST_SRC,
+    CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
+    skeleton_rows=_skeleton_rows(4, (30, 50)),
+)
+
+ALERTS_PAGE = page("Alerts — Rotunda", "/alerts", ALERTS_BODY)
 
 
 FLAGGED_BODY = _render_template(
@@ -2453,6 +2561,22 @@ class Handler(BaseHTTPRequestHandler):
             self._send_html(200, PROFILE_PAGE)
             return
 
+        if parsed.path == "/onboarding":
+            conn = db.get_connection()
+            try:
+                user_id = self._current_user_id(conn)
+            finally:
+                conn.close()
+            if not user_id:
+                # Same as /signup/profile: no session means send them to
+                # sign up rather than a wizard with nothing to save against.
+                self.send_response(302)
+                self.send_header("Location", "/signup")
+                self.end_headers()
+                return
+            self._send_html(200, ONBOARDING_PAGE)
+            return
+
         if parsed.path == "/profile":
             if not self._require_user_for_page():
                 return
@@ -2464,6 +2588,12 @@ class Handler(BaseHTTPRequestHandler):
             if not self._require_user_for_page():
                 return
             self._send_html(200, DASHBOARD_PAGE)
+            return
+
+        if parsed.path == "/alerts":
+            if not self._require_user_for_page():
+                return
+            self._send_html(200, ALERTS_PAGE)
             return
 
         if parsed.path == "/api/dashboard":
@@ -3104,6 +3234,40 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        if parsed.path == "/api/alerts/digest":
+            # The Alerts screen's in-app digest feed: the same recent
+            # changes the dashboard shows, but a longer window, and with
+            # each changed bill's client assignments attached so the page
+            # can group the feed by client (client-side). Reuses two
+            # existing db calls rather than a new query — recent_bill_changes
+            # for the feed, clients_for_bills for the grouping.
+            try:
+                days = min(max(int((qs.get("days") or ["30"])[0]), 1), 90)
+            except ValueError:
+                days = 30
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to see your alerts.")
+                if not user_id:
+                    return
+                changes = db.recent_bill_changes(
+                    conn, user_id, limit=200, since=db.days_ago_in_california(days))
+                bill_ids = list({c["bill_id"] for c in changes})
+                # clients_for_bills returns {bill_id: [{id, name, ...}]};
+                # the feed only needs the names to group by.
+                clients_by_bill = {
+                    bid: [c["name"] for c in links]
+                    for bid, links in db.clients_for_bills(conn, user_id, bill_ids).items()
+                }
+                self._send_json(200, {
+                    "days": days,
+                    "changes": changes,
+                    "clients_by_bill": clients_by_bill,
+                })
+            finally:
+                conn.close()
+            return
+
         if parsed.path == "/api/saved-searches":
             conn = db.get_connection()
             try:
@@ -3513,6 +3677,29 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        if parsed.path == "/api/password":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to change your password.")
+                if not user_id:
+                    return
+                try:
+                    accounts.change_password(
+                        conn, user_id,
+                        body.get("current_password"), body.get("new_password"))
+                except ValueError as err:
+                    self._send_json(400, {"error": str(err)})
+                    return
+                self._send_json(200, {"status": "changed"})
+            finally:
+                conn.close()
+            return
+
         if parsed.path == "/api/notification-prefs":
             try:
                 body = self._read_json_body()
@@ -3598,6 +3785,45 @@ class Handler(BaseHTTPRequestHandler):
                 db.flag_bill(conn, user_id, bill_id)
                 conn.commit()
                 self._send_json(200, {"status": "flagged"})
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/flag-by-number":
+            # Flag a bill from its number alone, with no client to link it
+            # to — the onboarding wizard's "add your first bills" step.
+            # Same resolve-then-flag as /api/client-bills above, minus the
+            # client link; reuses lookup_bill so a bare number ("SB122")
+            # becomes the right LegiScan bill.
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            bill_number = (body.get("bill_number") or "").strip()
+            if not bill_number:
+                self._send_json(400, {"error": "Enter a bill number."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to flag bills.")
+                if not user_id:
+                    return
+                try:
+                    bill = lookup_bill(bill_number)
+                except Exception:
+                    traceback.print_exc()
+                    self._send_json(502, {"error": "Couldn't reach LegiScan right now. Try again in a moment."})
+                    return
+                db.upsert_bill(conn, bill)
+                db.flag_bill(conn, user_id, bill["id"])
+                conn.commit()
+                self._send_json(200, {
+                    "bill_id": bill["id"],
+                    "state": bill.get("state"),
+                    "bill_number": bill.get("bill_number"),
+                    "title": bill.get("title"),
+                })
             finally:
                 conn.close()
             return
@@ -3769,6 +3995,33 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(400, {"error": str(e)})
                     return
                 conn.commit()
+                self._send_json(200, db.list_saved_searches(conn, user_id))
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/saved-searches/toggle":
+            # On/Off from the Alerts rule list — a disabled rule stays
+            # saved but the daily job skips it (see
+            # db.list_saved_searches_for_run).
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            saved_search_id = body.get("id")
+            if not saved_search_id:
+                self._send_json(400, {"error": "Missing id."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to change an alert rule.")
+                if not user_id:
+                    return
+                if not db.set_saved_search_enabled(
+                        conn, user_id, int(saved_search_id), bool(body.get("enabled"))):
+                    self._send_json(404, {"error": "No rule with that ID."})
+                    return
                 self._send_json(200, db.list_saved_searches(conn, user_id))
             finally:
                 conn.close()

@@ -11,14 +11,15 @@
 <body>
 {{top_nav}}
 <main>
-<div class="wrap">
+<div class="wrap auth-wrap">
+  <span class="brand-mark auth-mark" style="width:44px;height:44px" aria-hidden="true"></span>
   <h1>Create your account</h1>
   <div class="step-indicator">
     <span class="step-dot filled"></span><span class="step-dot"></span>
-    <span class="sub">Step 1 of 2 — after this, you'll fill in your CAL-ACCESS-style registration details.</span>
+    <span class="sub">First, your login — then a short setup to get you under the dome.</span>
   </div>
 
-  <div class="card">
+  <div class="card auth-card">
     <p class="sub req-legend"><span class="req" aria-hidden="true">*</span> Both fields are required.</p>
     <form id="f" style="margin:0">
       <label style="flex:1 1 100%">
@@ -33,12 +34,14 @@
         </div>
         <div class="sub" id="password-hint" style="margin:0.3rem 0 0;font-size:0.78rem">8+ characters</div>
       </label>
-      <button type="submit">Continue →</button>
+      <button type="submit" class="auth-submit">Continue →</button>
     </form>
   </div>
 
   <div id="loading" role="status"><span class="spinner"></span>Creating account…</div>
   <div id="error" role="alert" aria-live="assertive"></div>
+
+  <p class="auth-alt">Already have an account? <a href="/login">Sign in</a></p>
 </div>
 </main>
 
@@ -105,7 +108,7 @@ form.addEventListener('submit', async (e) => {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not create account');
-    window.location.href = '/signup/profile';
+    window.location.href = '/onboarding';
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';

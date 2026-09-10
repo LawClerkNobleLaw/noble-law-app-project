@@ -163,15 +163,19 @@ def save_profile(conn, user_id, fields):
         """INSERT INTO lobbyist_profiles
              (user_id, legal_name, registrant_type, bus_addr1, bus_city, bus_st, bus_zip4,
               mail_same_as_bus, mail_addr1, mail_city, mail_st, mail_zip4,
-              bus_phone, existing_filer_id, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
+              bus_phone, existing_filer_id,
+              title, reporting_basis, letterhead_line, reg_effective_date, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
            ON CONFLICT(user_id) DO UPDATE SET
              legal_name=excluded.legal_name, registrant_type=excluded.registrant_type,
              bus_addr1=excluded.bus_addr1, bus_city=excluded.bus_city,
              bus_st=excluded.bus_st, bus_zip4=excluded.bus_zip4,
              mail_same_as_bus=excluded.mail_same_as_bus, mail_addr1=excluded.mail_addr1,
              mail_city=excluded.mail_city, mail_st=excluded.mail_st, mail_zip4=excluded.mail_zip4,
-             bus_phone=excluded.bus_phone, existing_filer_id=excluded.existing_filer_id""",
+             bus_phone=excluded.bus_phone, existing_filer_id=excluded.existing_filer_id,
+             title=excluded.title, reporting_basis=excluded.reporting_basis,
+             letterhead_line=excluded.letterhead_line,
+             reg_effective_date=excluded.reg_effective_date""",
         (
             user_id, fields.get("legal_name"), fields.get("registrant_type"),
             fields.get("bus_addr1"), fields.get("bus_city"), fields.get("bus_st"), fields.get("bus_zip4"),
@@ -181,6 +185,10 @@ def save_profile(conn, user_id, fields):
             None if mail_same else fields.get("mail_st"),
             None if mail_same else fields.get("mail_zip4"),
             fields.get("bus_phone"), fields.get("existing_filer_id") or None,
+            (fields.get("title") or "").strip() or None,
+            (fields.get("reporting_basis") or "").strip() or None,
+            (fields.get("letterhead_line") or "").strip() or None,
+            (fields.get("reg_effective_date") or "").strip() or None,
         ),
     )
     # The registrant's legal name is the firm's name as they gave it to
@@ -200,3 +208,26 @@ def save_profile(conn, user_id, fields):
 def get_profile(conn, user_id):
     row = conn.execute("SELECT * FROM lobbyist_profiles WHERE user_id = ?", (user_id,)).fetchone()
     return dict(row) if row else None
+
+
+def change_password(conn, user_id, current_password, new_password):
+    """Changes a signed-in user's password. Raises ValueError with a
+    message safe to show (wrong current password, or a new one that's too
+    short) rather than a raw DB error. The current password is verified
+    with the same constant-time compare login uses, so this can't be used
+    to probe an account whose session was hijacked without also knowing
+    the old password. The new-password rule is create_user's, kept in step
+    on purpose — a change path that's laxer than sign-up is a back door
+    around the sign-up rule."""
+    row = conn.execute("SELECT password_hash FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not row:
+        raise ValueError("Account not found.")
+    if not _verify_password(current_password or "", row["password_hash"]):
+        raise ValueError("That current password isn't right.")
+    if not new_password or len(new_password) < 8:
+        raise ValueError("New password must be at least 8 characters.")
+    conn.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        (_hash_password(new_password), user_id),
+    )
+    conn.commit()

@@ -186,3 +186,38 @@ def test_matches_stay_unreported_until_the_mail_actually_goes(conn):
 
     assert summary["not_configured"] == 1
     assert db.list_saved_searches(conn, user_id)[0]["new_match_count"] == 1
+
+
+# ── On/Off toggle (Alerts rule list) ───────────────────────────────────
+def test_a_saved_search_is_enabled_by_default(conn):
+    user_id = insert_user(conn)
+    db.create_saved_search(conn, user_id, "AI bills", "ai")
+    row = db.list_saved_searches(conn, user_id)[0]
+    assert row["enabled"] == 1
+
+
+def test_disabling_a_search_drops_it_from_the_daily_run(conn):
+    user_id = insert_user(conn)
+    search_id = db.create_saved_search(conn, user_id, "AI bills", "ai")
+    assert any(s["id"] == search_id for s in db.list_saved_searches_for_run(conn))
+    assert db.set_saved_search_enabled(conn, user_id, search_id, False) is True
+    # Gone from the job's list, but still present (and now marked off) in
+    # the user-facing list — paused, not deleted.
+    assert all(s["id"] != search_id for s in db.list_saved_searches_for_run(conn))
+    assert db.list_saved_searches(conn, user_id)[0]["enabled"] == 0
+
+
+def test_re_enabling_brings_a_search_back_into_the_run(conn):
+    user_id = insert_user(conn)
+    search_id = db.create_saved_search(conn, user_id, "AI bills", "ai")
+    db.set_saved_search_enabled(conn, user_id, search_id, False)
+    db.set_saved_search_enabled(conn, user_id, search_id, True)
+    assert any(s["id"] == search_id for s in db.list_saved_searches_for_run(conn))
+
+
+def test_toggling_a_search_that_is_not_yours_changes_nothing(conn):
+    mine = insert_user(conn)
+    theirs = insert_user(conn, email="other@example.com")
+    search_id = db.create_saved_search(conn, theirs, "Their rule", "ai")
+    assert db.set_saved_search_enabled(conn, mine, search_id, False) is False
+    assert any(s["id"] == search_id for s in db.list_saved_searches_for_run(conn))
