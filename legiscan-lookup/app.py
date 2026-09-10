@@ -1141,76 +1141,129 @@ def page(title, path, body):
 # its own (see SIGNUP_PAGE) — this splash doesn't need its own chrome
 # to keep those reachable.
 LANDING_STYLE = """
-  /* --splash-ink as three comma-separated channels, not a colour, so
-     the rgba() veils below can be written once: every faint line, dot,
-     ring and glow on this screen is the ink at some low alpha. */
-  .splash {
-    --splash-bg: #000; --splash-ink: 255, 255, 255; --splash-warm: #F4EFE4;
-    position: relative; overflow: hidden; min-height: 100svh;
-    background: var(--splash-bg); color: rgb(var(--splash-ink));
-    display: flex; flex-direction: column;
+  /* The public marketing page (2026 redesign). It links the app's own
+     style.css, so every color/radius/font token is already in scope and
+     already flips per theme; this only adds the landing's own layout,
+     and defaults to the app's dark identity like everything else. The
+     old atmospheric splash lived here as its own --splash-* palette;
+     this replaces it with the full product page (nav, why-band, six
+     capability pillars, compliance, FAQ) the mockup calls for. */
+  body.lp { background: var(--bg); color: var(--ink); }
+  .lp main { display: block; }
+  .lp a { color: inherit; text-decoration: none; }
+  .lp section { max-width: 62rem; margin: 0 auto; padding: 5rem 1.5rem; }
+
+  /* Nav */
+  .lp-nav {
+    position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 1.5rem;
+    padding: 0.9rem 1.5rem; border-bottom: 1px solid var(--rule);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(8px);
   }
-  /* Only an explicit choice, never prefers-color-scheme: a signed-out
-     visitor is dark everywhere in this app by design. */
-  :root[data-theme="light"] .splash {
-    --splash-bg: #FAF8F3; --splash-ink: 17, 17, 17; --splash-warm: #4A3F2A;
+  .lp-brand { display: inline-flex; align-items: center; gap: 0.5rem; font-family: var(--font-display); font-weight: 800; font-size: 1.05rem; letter-spacing: -0.01em; }
+  .lp-nav-links { display: flex; gap: 1.4rem; margin: 0 auto; font-size: 0.9rem; }
+  .lp-nav-links a { color: var(--slate); }
+  .lp-nav-links a:hover { color: var(--ink); }
+  .lp-nav-cta { display: flex; align-items: center; gap: 1rem; }
+  .lp-signin { font-size: 0.9rem; color: var(--slate); }
+  .lp-signin:hover { color: var(--ink); }
+  .lp-getstarted {
+    display: inline-flex; align-items: center; background: var(--accent-solid); color: var(--accent-solid-text);
+    font-weight: 600; font-size: 0.9rem; padding: 0.5rem 1.1rem; border-radius: var(--radius-pill);
   }
-  .splash a { color: rgb(var(--splash-ink)); }
-  .splash a:hover { color: var(--splash-warm); }
-  .splash ::selection { background: rgb(var(--splash-ink)); color: var(--splash-bg); }
-  /* Four faint decorative layers, all pointer-events:none and purely
-     cosmetic — a dotted-grid swatch in two corners, three concentric
-     ring outlines bleeding off the top-left/bottom-right, and one soft
-     radial glow low-center. Pixel values ported directly from the
-     mockup rather than converted to rem, since these are one-off
-     decorative shapes tied to this exact screen, not reused anywhere
-     else that would benefit from rem's user-font-size scaling. */
-  .splash-dots {
-    position: absolute; pointer-events: none;
-    background-image: radial-gradient(rgba(var(--splash-ink), 0.2) 2px, transparent 2.2px);
-    background-size: 33px 33px;
+  .lp-getstarted:hover { background: var(--accent-solid-hover); }
+
+  /* Hero */
+  .lp-hero { position: relative; text-align: center; padding: 5.5rem 1.5rem 4.5rem; overflow: hidden; }
+  .lp-glow {
+    position: absolute; top: -10%; left: 50%; transform: translateX(-50%);
+    width: min(720px, 90vw); height: 520px; pointer-events: none; z-index: 0;
+    background: radial-gradient(closest-side, color-mix(in srgb, var(--gold) 22%, transparent), transparent);
+    opacity: 0.5;
   }
-  .splash-dots.tl { top: -8px; left: 0; width: 264px; height: 194px; background-position: 22px 22px; }
-  .splash-dots.br { bottom: -10px; right: -10px; width: 372px; height: 190px; }
-  .splash-ring { position: absolute; border-radius: 50%; pointer-events: none; }
-  .splash-ring.r1 { top: -17vmax; left: -15vmax; width: 40vmax; height: 40vmax; max-width: 560px; max-height: 560px; border: 1px solid rgba(var(--splash-ink), 0.28); }
-  .splash-ring.r2 { top: -10vmax; left: -26vmax; width: 32vmax; height: 32vmax; max-width: 450px; max-height: 450px; border: 1px solid rgba(var(--splash-ink), 0.22); }
-  .splash-ring.r3 { bottom: -22vmax; right: -10vmax; width: 47vmax; height: 47vmax; max-width: 660px; max-height: 660px; border: 1px solid rgba(var(--splash-ink), 0.26); }
-  .splash-glow {
-    position: absolute; bottom: -190px; left: 50%; transform: translateX(-50%); width: 460px; height: 330px;
-    border-radius: 50%; background: radial-gradient(closest-side, rgba(var(--splash-ink), 0.2), rgba(var(--splash-ink), 0)); pointer-events: none;
-  }
-  .splash-topline { position: relative; padding: clamp(28px, 5vh, 56px) clamp(28px, 4vw, 56px) 0; flex: none; }
-  .splash-topline div { height: 1px; background: rgba(var(--splash-ink), 0.6); }
-  .splash-main {
-    position: relative; flex: 1; display: flex; flex-direction: column; align-items: center;
-    justify-content: center; padding: clamp(16px, 4vh, 40px) 24px 0; text-align: center;
-  }
-  .splash-word {
-    margin: 0; font-size: clamp(34px, 4.6vw, 62px); font-weight: 700; letter-spacing: 0.3em;
-    line-height: 1; text-indent: 0.3em;
-  }
-  .splash-mark {
-    display: inline-block; width: clamp(140px, 18vw, 250px); height: clamp(140px, 18vw, 250px);
-    margin: clamp(14px, 2.6vh, 24px) 0 0; background-color: rgb(var(--splash-ink));
+  /* Lift the real content above the glow — but NOT the glow itself, or
+     it stops being absolutely positioned and takes 520px of layout,
+     shoving the title below the fold. */
+  .lp-hero > *:not(.lp-glow) { position: relative; z-index: 1; }
+  .lp-hero-mark {
+    display: inline-block; width: clamp(72px, 12vw, 110px); height: clamp(72px, 12vw, 110px);
+    margin-bottom: 1.5rem; background-color: var(--ink);
     -webkit-mask-image: var(--brand-mark); mask-image: var(--brand-mark);
-    -webkit-mask-size: contain; mask-size: contain;
-    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+    -webkit-mask-size: contain; mask-size: contain; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
     -webkit-mask-position: center; mask-position: center;
   }
-  .splash-tagline {
-    margin: clamp(12px, 2.2vh, 20px) 0 0; font-size: clamp(11px, 1.05vw, 14px); font-weight: 400;
-    letter-spacing: 0.22em; text-transform: uppercase; color: rgba(var(--splash-ink), 0.9);
+  .lp-hero-title {
+    font-family: var(--font-display); font-weight: 800; letter-spacing: -0.025em; line-height: 1.02;
+    font-size: clamp(2.6rem, 8vw, 5rem); margin: 0 auto 1.2rem; max-width: 16ch;
   }
-  .splash-cta {
-    position: relative; flex: none; display: flex; flex-direction: column; align-items: center; gap: 10px;
-    padding: clamp(20px, 4vh, 40px) 24px clamp(32px, 8vh, 72px);
+  .lp-hero-sub { color: var(--slate); font-size: clamp(1rem, 2.2vw, 1.2rem); max-width: 40rem; margin: 0 auto 2rem; }
+  .lp-hero-cta { font-size: 1rem; padding: 0.7rem 1.6rem; }
+  .lp-hero-note { color: var(--slate); font-size: 0.85rem; max-width: 36rem; margin: 2.5rem auto 0; opacity: 0.85; }
+
+  /* Section furniture */
+  .lp-eyebrow { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); margin-bottom: 0.9rem; }
+  .lp-section-title { font-family: var(--font-display); font-weight: 800; letter-spacing: -0.02em; font-size: clamp(1.6rem, 4vw, 2.4rem); line-height: 1.1; margin: 0 0 1rem; }
+  .lp-lead { color: var(--slate); font-size: 1.02rem; max-width: 44rem; margin: 0 0 2rem; }
+
+  /* Why — Today vs With Rotunda */
+  .lp-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+  .lp-compare-col { border: 1px solid var(--rule-card); border-radius: var(--radius-lg); padding: 1.5rem; background: var(--surface); }
+  .lp-compare-col--rotunda { border-color: color-mix(in srgb, var(--gold) 45%, transparent); }
+  .lp-compare-head { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--slate); margin-bottom: 1rem; }
+  .lp-compare-col--rotunda .lp-compare-head { color: var(--gold); }
+  .lp-compare-col ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+  .lp-compare-col li { font-size: 0.92rem; padding-left: 1.4rem; position: relative; }
+  .lp-compare-col li::before { content: "·"; position: absolute; left: 0.4rem; color: var(--slate); }
+  .lp-compare-col--rotunda li::before { content: "→"; color: var(--gold); }
+
+  /* What it does — pillar grid */
+  .lp-pillars { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 1.25rem; }
+  .lp-pillar { border: 1px solid var(--rule-card); border-radius: var(--radius-lg); padding: 1.6rem; background: var(--surface); }
+  .lp-pillar-num { font-family: var(--mono); font-size: 0.8rem; color: var(--gold); margin-bottom: 0.8rem; }
+  .lp-pillar h3 { font-family: var(--font-display); font-weight: 800; font-size: 1.1rem; margin: 0 0 0.5rem; }
+  .lp-pillar p { color: var(--slate); font-size: 0.9rem; margin: 0; line-height: 1.55; }
+
+  .lp-extra { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1.25rem; margin-top: 1.25rem; }
+  .lp-extra-card { border: 1px solid var(--rule); border-radius: var(--radius-lg); padding: 1.4rem; }
+  .lp-extra-card h4 { margin: 0 0 0.4rem; font-size: 0.98rem; }
+  .lp-extra-card p { color: var(--slate); font-size: 0.88rem; margin: 0; line-height: 1.5; }
+
+  /* Compliance */
+  .lp-forms { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+  .lp-form-card { border: 1px solid var(--rule-card); border-radius: var(--radius-lg); padding: 1.6rem; background: var(--surface); }
+  .lp-form-card--soon { opacity: 0.82; }
+  .lp-form-num { font-family: var(--font-display); font-weight: 800; font-size: 1.6rem; color: var(--gold); margin-bottom: 0.5rem; }
+  .lp-form-card h4 { margin: 0 0 0.5rem; font-size: 1.02rem; }
+  .lp-form-card p { color: var(--slate); font-size: 0.9rem; margin: 0; line-height: 1.55; }
+  .lp-soon { display: inline-block; margin-left: 0.2rem; font-weight: 600; color: var(--gold); }
+  .lp-fineprint { color: var(--slate); font-size: 0.85rem; margin-top: 1.5rem; max-width: 46rem; }
+
+  /* FAQ */
+  .lp-faq-list { display: flex; flex-direction: column; gap: 0.6rem; max-width: 46rem; }
+  .lp-faq-list details { border: 1px solid var(--rule); border-radius: var(--radius-md); padding: 0.9rem 1.15rem; background: var(--surface); }
+  .lp-faq-list summary { cursor: pointer; font-weight: 600; font-size: 0.98rem; list-style: none; display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+  .lp-faq-list summary::-webkit-details-marker { display: none; }
+  .lp-faq-list summary::after { content: "+"; color: var(--slate); font-size: 1.2rem; line-height: 1; }
+  .lp-faq-list details[open] summary::after { content: "\\2212"; }
+  .lp-faq-list details p { color: var(--slate); font-size: 0.92rem; margin: 0.8rem 0 0; line-height: 1.6; }
+
+  /* CTA + footer */
+  .lp-cta { text-align: center; }
+  .lp-cta-title { font-family: var(--font-display); font-weight: 800; letter-spacing: -0.02em; font-size: clamp(1.8rem, 5vw, 2.8rem); margin: 0 0 1rem; }
+  .lp-cta .lp-lead { margin-left: auto; margin-right: auto; }
+  .lp-cta-actions { display: flex; gap: 1rem; justify-content: center; align-items: center; }
+  .lp-footer {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+    max-width: 62rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top: 1px solid var(--rule);
   }
-  .splash-cta a { font-size: 19px; font-weight: 400; letter-spacing: 0.01em; padding: 4px 8px; }
-  .splash-chevrons { display: flex; flex-direction: column; align-items: center; animation: splash-chevron 1.9s ease-in-out infinite; }
-  .splash-chevrons svg:last-child { margin-top: -3px; }
-  @keyframes splash-chevron { 0%, 100% { transform: translateY(0); opacity: 0.75; } 50% { transform: translateY(5px); opacity: 1; } }
-  @media (prefers-reduced-motion: reduce) { .splash-chevrons { animation: none; } }
+  .lp-footer .lp-brand { font-size: 0.95rem; }
+  .lp-footer-note { color: var(--slate); font-size: 0.82rem; }
+
+  @media (max-width: 720px) {
+    .lp-nav-links { display: none; }
+    .lp section { padding: 3.5rem 1.25rem; }
+    .lp-compare, .lp-forms { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { .lp-nav { backdrop-filter: none; } }
 """
 
 LANDING_PAGE = _render_template(
