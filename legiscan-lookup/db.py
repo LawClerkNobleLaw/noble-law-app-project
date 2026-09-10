@@ -169,6 +169,14 @@ def _migrate(conn):
     user_cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
     if "org_id" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN org_id INTEGER REFERENCES organizations(id)")
+
+    # Settings screen (2026 redesign) added four optional profile columns;
+    # see schema.sql's lobbyist_profiles for what each holds.
+    profile_cols = {row["name"] for row in conn.execute("PRAGMA table_info(lobbyist_profiles)")}
+    for col in ("title", "reporting_basis", "letterhead_line", "reg_effective_date"):
+        if col not in profile_cols:
+            conn.execute(f"ALTER TABLE lobbyist_profiles ADD COLUMN {col} TEXT")
+
     _backfill_organizations(conn)
     _migrate_bill_views(conn)
     _migrate_calaccess_dates(conn)

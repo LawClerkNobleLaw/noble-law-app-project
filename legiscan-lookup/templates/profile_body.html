@@ -1,87 +1,196 @@
 
 <div class="page-head">
   <div>
-    <h1>Your Profile</h1>
-    <p class="sub">Your CAL-ACCESS registration details — used to pre-fill disclosure forms.</p>
+    <h1>Settings</h1>
+    <p class="sub">Your profile, registration, notifications and account security.</p>
   </div>
 </div>
+
+<div class="settings-tabs" role="tablist" aria-label="Settings sections">
+  <button type="button" class="settings-tab" role="tab" id="tab-profile" aria-controls="panel-profile" aria-selected="true">Profile</button>
+  <button type="button" class="settings-tab" role="tab" id="tab-org" aria-controls="panel-org" aria-selected="false" tabindex="-1">Org &amp; registration</button>
+  <button type="button" class="settings-tab" role="tab" id="tab-notifications" aria-controls="panel-notifications" aria-selected="false" tabindex="-1">Notifications</button>
+  <button type="button" class="settings-tab" role="tab" id="tab-account" aria-controls="panel-account" aria-selected="false" tabindex="-1">Account &amp; security</button>
+</div>
+
 <div id="loading" role="status" class="skeleton show"><span class="sr-only">Loading…</span>{{skeleton_panels}}</div>
 <div id="error" role="alert" aria-live="assertive"></div>
-<div id="content"></div>
 
-<div class="panel" style="margin-top:1rem" id="roster-panel" hidden>
-  <div class="panel-head">
-    <div>
-      <h2 class="title">Lobbyists at this firm</h2>
-      <div class="sub">Listed on Part I of every Form 601 you prepare from here.</div>
+<!-- ── Profile ─────────────────────────────────────────────────────── -->
+<section class="settings-section" id="panel-profile" role="tabpanel" aria-labelledby="tab-profile">
+  <div id="profile-content"></div>
+</section>
+
+<!-- ── Org & registration ──────────────────────────────────────────── -->
+<section class="settings-section" id="panel-org" role="tabpanel" aria-labelledby="tab-org" hidden>
+  <div id="org-content"></div>
+
+  <div class="panel" style="margin-top:1rem" id="roster-panel" hidden>
+    <div class="panel-head">
+      <div>
+        <h2 class="title">Lobbyists at this firm</h2>
+        <div class="sub">Listed on Part I of every Form 601 you prepare from here.</div>
+      </div>
+    </div>
+    <div id="roster"></div>
+    <div style="padding:0.8rem 1.15rem">
+      <form id="add-lobbyist-f">
+        <label for="lobbyist-name" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Lobbyist name</label>
+        <input id="lobbyist-name" placeholder="Full legal name" required style="flex:1;min-width:10rem">
+        <label for="lobbyist-cert" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Certification ID</label>
+        <input id="lobbyist-cert" placeholder="Certification ID (optional)" style="flex:1;min-width:8rem">
+        <button type="submit">Add</button>
+      </form>
     </div>
   </div>
-  <div id="roster"></div>
-  <div style="padding:0.8rem 1.15rem">
-    <form id="add-lobbyist-f">
-      <label for="lobbyist-name" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Lobbyist name</label>
-      <input id="lobbyist-name" placeholder="Full legal name" required style="flex:1;min-width:10rem">
-      <label for="lobbyist-cert" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Certification ID</label>
-      <input id="lobbyist-cert" placeholder="Certification ID (optional)" style="flex:1;min-width:8rem">
-      <button type="submit">Add</button>
+</section>
+
+<!-- ── Notifications ───────────────────────────────────────────────── -->
+<section class="settings-section" id="panel-notifications" role="tabpanel" aria-labelledby="tab-notifications" hidden>
+  <div class="panel" id="notifications">
+    <div class="panel-head">
+      <div>
+        <h2 class="title">Notifications</h2>
+        <div class="sub">What the daily digest email covers, how often it goes out, and who else gets it.</div>
+      </div>
+    </div>
+    <form id="prefs-f">
+      <div class="pref-group">
+        <div class="pref-label">How often</div>
+        <div class="pref-radios" id="pref-frequency"></div>
+      </div>
+
+      <div class="pref-group">
+        <div class="pref-label">What counts as news</div>
+        <div class="pref-checks" id="pref-events"></div>
+        <p class="pref-hint">
+          Unchecking all four leaves the flagged-bill half of the email empty. That is not the
+          same as turning the digest off — new bills matching your saved searches can still arrive.
+        </p>
+      </div>
+
+      <div class="pref-group">
+        <div class="pref-label">Who else gets it</div>
+        <label for="pref-recipients" class="pref-check-text">Additional recipients</label>
+        <input id="pref-recipients" type="text" placeholder="assistant@firm.com, associate@firm.com"
+               autocomplete="off" style="margin-top:0.35rem">
+        <p class="pref-hint">
+          Up to five addresses, separated by commas. They are copied on the same email you get,
+          so a reply reaches everyone — not sent their own separate digest.
+        </p>
+      </div>
+
+      <div class="pref-group">
+        <div class="pref-label">Muted bills</div>
+        <div id="pref-mutes"></div>
+        <p class="pref-hint">
+          Muting stops the email about one bill. The bill stays flagged, stays on your flagged
+          list, and keeps its action report. Mute or unmute a bill from its report page.
+        </p>
+      </div>
+
+      <div class="card-actions" style="padding:1rem 1.15rem;align-items:center">
+        <button type="submit" id="prefs-save">Save notification settings</button>
+        <span class="pref-saved" id="prefs-saved" hidden>Saved</span>
+      </div>
     </form>
   </div>
-</div>
+</section>
 
-<div class="panel" style="margin-top:1rem" id="notifications">
-  <div class="panel-head">
-    <div>
-      <h2 class="title">Notifications</h2>
-      <div class="sub">What the daily digest email covers, how often it goes out, and who else gets it.</div>
+<!-- ── Account & security ──────────────────────────────────────────── -->
+<section class="settings-section" id="panel-account" role="tabpanel" aria-labelledby="tab-account" hidden>
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h2 class="title">Password</h2>
+        <div class="sub">Change the password you sign in with. You'll need your current one.</div>
+      </div>
+    </div>
+    <form id="password-f">
+      <label style="flex:1 1 100%">
+        <div class="field-label">Current password</div>
+        <input id="current_password" type="password" autocomplete="current-password" required style="width:100%">
+      </label>
+      <label style="flex:1 1 100%">
+        <div class="field-label">New password</div>
+        <input id="new_password" type="password" autocomplete="new-password" required minlength="8" style="width:100%">
+        <div class="sub" style="margin:0.3rem 0 0;font-size:0.78rem">8+ characters</div>
+      </label>
+      <div class="card-actions" style="padding:1rem 0 0;align-items:center">
+        <button type="submit" id="password-save">Change password</button>
+        <span class="pref-saved" id="password-saved" hidden>Password changed</span>
+      </div>
+    </form>
+  </div>
+
+  <!-- Two-factor and signed-in devices are intentionally inert: the app
+       has no TOTP or device-session infrastructure yet (see the redesign
+       scoping notes). Shown so the section is complete, disabled so it
+       can't pretend to work. -->
+  <div class="panel settings-soon" style="margin-top:1rem">
+    <div class="panel-head">
+      <div>
+        <h2 class="title">Two-factor authentication <span class="soon-badge">Coming soon</span></h2>
+        <div class="sub">Add a one-time code from an authenticator app on top of your password.</div>
+      </div>
+    </div>
+    <div style="padding:0.4rem 1.15rem 1.15rem">
+      <button type="button" disabled>Set up two-factor</button>
     </div>
   </div>
-  <form id="prefs-f">
-    <div class="pref-group">
-      <div class="pref-label">How often</div>
-      <div class="pref-radios" id="pref-frequency"></div>
-    </div>
 
-    <div class="pref-group">
-      <div class="pref-label">What counts as news</div>
-      <div class="pref-checks" id="pref-events"></div>
-      <p class="pref-hint">
-        Unchecking all four leaves the flagged-bill half of the email empty. That is not the
-        same as turning the digest off — new bills matching your saved searches can still arrive.
-      </p>
+  <div class="panel settings-soon" style="margin-top:1rem">
+    <div class="panel-head">
+      <div>
+        <h2 class="title">Signed-in devices <span class="soon-badge">Coming soon</span></h2>
+        <div class="sub">See where you're signed in and sign out sessions you don't recognize.</div>
+      </div>
     </div>
-
-    <div class="pref-group">
-      <div class="pref-label">Who else gets it</div>
-      <label for="pref-recipients" class="pref-check-text">Additional recipients</label>
-      <input id="pref-recipients" type="text" placeholder="assistant@firm.com, associate@firm.com"
-             autocomplete="off" style="margin-top:0.35rem">
-      <p class="pref-hint">
-        Up to five addresses, separated by commas. They are copied on the same email you get,
-        so a reply reaches everyone — not sent their own separate digest.
-      </p>
+    <div style="padding:0.4rem 1.15rem 1.15rem">
+      <p class="empty" style="padding:0">Device history isn't tracked yet.</p>
     </div>
-
-    <div class="pref-group">
-      <div class="pref-label">Muted bills</div>
-      <div id="pref-mutes"></div>
-      <p class="pref-hint">
-        Muting stops the email about one bill. The bill stays flagged, stays on your flagged
-        list, and keeps its action report. Mute or unmute a bill from its report page.
-      </p>
-    </div>
-
-    <div class="card-actions" style="padding:1rem 1.15rem;align-items:center">
-      <button type="submit" id="prefs-save">Save notification settings</button>
-      <span class="pref-saved" id="prefs-saved" hidden>Saved</span>
-    </div>
-  </form>
-</div>
+  </div>
+</section>
 
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script>
-const contentEl = document.getElementById('content');
+const contentEl = document.getElementById('profile-content');
+const orgEl = document.getElementById('org-content');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
+
+/* ── Sub-tabs ───────────────────────────────────────────────────────
+ *
+ * A tablist over four panels — the mockup's Settings shape. Panels use
+ * [hidden] (never display:none in script) so a screen reader tracks the
+ * active one. The digest email links to /profile#notifications, so an
+ * incoming #notifications / #panel-notifications hash opens that tab.
+ */
+const tabs = [...document.querySelectorAll('.settings-tab')];
+function activateTab(tab, focus) {
+  tabs.forEach(t => {
+    const on = t === tab;
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+    t.tabIndex = on ? 0 : -1;
+    document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+  });
+  if (focus) tab.focus();
+}
+tabs.forEach((tab, i) => {
+  tab.addEventListener('click', () => activateTab(tab));
+  tab.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    e.preventDefault();
+    const next = e.key === 'ArrowRight' ? (i + 1) % tabs.length : (i - 1 + tabs.length) % tabs.length;
+    activateTab(tabs[next], true);
+  });
+});
+(function openTabFromHash() {
+  const h = (location.hash || '').replace('#', '');
+  if (h === 'notifications' || h === 'panel-notifications') {
+    activateTab(document.getElementById('tab-notifications'));
+  }
+})();
 
 function row(label, value) {
   if (!value) return '';
@@ -102,6 +211,8 @@ function formatPhone(raw) {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 }
 
+const REPORTING_LABELS = { quarterly: 'Quarterly', monthly: 'Monthly', annually: 'Annually' };
+
 async function load() {
   try {
     const [meRes, profileRes] = await Promise.all([fetch('/api/me'), fetch('/api/profile')]);
@@ -109,20 +220,22 @@ async function load() {
     const { profile } = await profileRes.json();
 
     if (!profile) {
-      contentEl.innerHTML = `
+      const prompt = `
         <div class="panel" style="padding:1.5rem">
           <p class="empty">You haven't filled in your registration details yet.</p>
           <button type="button" onclick="window.location.href='/signup/profile'" style="margin-top:0.8rem">Add registration details →</button>
-        </div>
-      `;
+        </div>`;
+      contentEl.innerHTML = `
+        <div class="card">
+          <div class="bill-id">${me.email || ''}</div>
+          <div class="bill-title">Your account</div>
+        </div>` + prompt;
+      orgEl.innerHTML = prompt;
       loadingEl.className = '';
       return;
     }
 
-    const mailing = profile.mail_same_as_bus
-      ? 'Same as business address'
-      : [profile.mail_addr1, profile.mail_city, profile.mail_st, profile.mail_zip4].filter(Boolean).join(', ');
-
+    // Profile tab — who you are and how to reach you.
     contentEl.innerHTML = `
       <div class="card">
         <div class="bill-id">${me.email || ''}</div>
@@ -130,18 +243,39 @@ async function load() {
         <span class="tag">${profile.registrant_type === 'firm' ? 'Firm' : 'Individual lobbyist'}</span>
       </div>
       <div class="panel" style="margin-top:1rem">
-        <div class="panel-head"><h2 class="title">Registration details</h2></div>
+        <div class="panel-head"><h2 class="title">Contact</h2></div>
         <div style="padding:0 1.15rem">
-          ${row('Business address', [profile.bus_addr1, profile.bus_city, profile.bus_st, profile.bus_zip4].filter(Boolean).join(', '))}
-          ${row('Mailing address', mailing)}
+          ${row('Name', profile.legal_name)}
+          ${row('Title', profile.title)}
+          ${row('Email', me.email)}
           ${row('Phone', formatPhone(profile.bus_phone))}
-          ${row('CA SOS filer ID', profile.existing_filer_id)}
         </div>
         <div class="card-actions" style="padding:1rem 1.15rem">
-          <button type="button" class="secondary" onclick="window.location.href='/signup/profile'">Edit →</button>
+          <button type="button" class="secondary" onclick="window.location.href='/signup/profile'">Edit registration →</button>
         </div>
-      </div>
-    `;
+      </div>`;
+
+    // Org & registration tab — the CAL-ACCESS record itself.
+    const mailing = profile.mail_same_as_bus
+      ? 'Same as business address'
+      : [profile.mail_addr1, profile.mail_city, profile.mail_st, profile.mail_zip4].filter(Boolean).join(', ');
+    orgEl.innerHTML = `
+      <div class="panel">
+        <div class="panel-head"><h2 class="title">Registration details</h2></div>
+        <div style="padding:0 1.15rem">
+          ${row('Legal name', profile.legal_name)}
+          ${row('Registering as', profile.registrant_type === 'firm' ? 'Firm' : 'Individual lobbyist')}
+          ${row('Business address', [profile.bus_addr1, profile.bus_city, profile.bus_st, profile.bus_zip4].filter(Boolean).join(', '))}
+          ${row('Mailing address', mailing)}
+          ${row('CA SOS filer ID', profile.existing_filer_id)}
+          ${row('Reporting basis', REPORTING_LABELS[profile.reporting_basis] || '')}
+          ${row('Registration effective', profile.reg_effective_date)}
+          ${row('Letterhead line', profile.letterhead_line)}
+        </div>
+        <div class="card-actions" style="padding:1rem 1.15rem">
+          <button type="button" class="secondary" onclick="window.location.href='/signup/profile'">Edit registration →</button>
+        </div>
+      </div>`;
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';
@@ -246,7 +380,7 @@ async function removeLobbyist(id) {
  *
  * The panel carries id="notifications" because every digest email links
  * to /profile#notifications. That anchor is the only route a cc'd
- * assistant has to these controls.
+ * assistant has to these controls (openTabFromHash above opens the tab).
  */
 const FREQUENCIES = [
   ['daily', 'Every day', 'One email each morning, covering what moved overnight.'],
@@ -365,6 +499,39 @@ async function unmuteBill(billId) {
     errorEl.className = 'show';
   }
 }
+
+/* ── Change password ───────────────────────────────────────────────────
+ *
+ * The one real control in Account & security. Posts to /api/password,
+ * which verifies the current password server-side (accounts.change_password)
+ * before accepting the new one. The two-factor and device panels above
+ * are deliberately inert until that infrastructure exists.
+ */
+document.getElementById('password-f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorEl.className = '';
+  document.getElementById('password-saved').hidden = true;
+  const btn = document.getElementById('password-save');
+  const curEl = document.getElementById('current_password');
+  const newEl = document.getElementById('new_password');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_password: curEl.value, new_password: newEl.value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not change your password');
+    curEl.value = ''; newEl.value = '';
+    document.getElementById('password-saved').hidden = false;
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.className = 'show';
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 load();
 loadRoster();

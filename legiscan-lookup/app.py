@@ -979,7 +979,7 @@ def app_shell(current, body):
           <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
             <circle cx="7" cy="4.5" r="2.2"/><path d="M2.5 12c0-2.2 2-4 4.5-4s4.5 1.8 4.5 4" stroke-linecap="round"/>
           </svg>
-          Profile
+          Settings
         </a></li>
       </ul>
     </nav>
@@ -1365,7 +1365,7 @@ PROFILE_BODY = _render_template(
     skeleton_panels=_skeleton_panel(rows=4, row_widths=(28, 44)),
 )
 
-PROFILE_VIEW_PAGE = page("Your profile — Rotunda", "/profile", PROFILE_BODY)
+PROFILE_VIEW_PAGE = page("Settings — Rotunda", "/profile", PROFILE_BODY)
 
 
 # The signed-in landing page (see the "/" route, which sends a logged-in
@@ -3528,6 +3528,29 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 accounts.save_profile(conn, user_id, body)
                 self._send_json(200, {"status": "saved"})
+            finally:
+                conn.close()
+            return
+
+        if parsed.path == "/api/password":
+            try:
+                body = self._read_json_body()
+            except (ValueError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to change your password.")
+                if not user_id:
+                    return
+                try:
+                    accounts.change_password(
+                        conn, user_id,
+                        body.get("current_password"), body.get("new_password"))
+                except ValueError as err:
+                    self._send_json(400, {"error": str(err)})
+                    return
+                self._send_json(200, {"status": "changed"})
             finally:
                 conn.close()
             return

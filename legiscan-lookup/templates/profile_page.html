@@ -26,6 +26,11 @@
       <input id="legal_name" required autocomplete="organization" style="width:100%">
     </label>
 
+    <label style="flex:1 1 100%">
+      <div class="field-label">Your title <span style="font-weight:400;color:var(--slate)">(optional)</span></div>
+      <input id="title" placeholder="e.g. Managing Partner, Legislative Advocate" autocomplete="organization-title" style="width:100%">
+    </label>
+
     <div style="flex:1 1 100%">
       <div class="field-label">Registering as <span class="req" aria-hidden="true">*</span></div>
       <label style="display:inline-flex;align-items:center;gap:0.4rem;margin-right:1.2rem;font-size:0.9rem">
@@ -99,6 +104,24 @@
       <input id="existing_filer_id" placeholder="e.g. 1486088" autocomplete="off" style="width:100%">
     </label>
 
+    <label style="flex:2 1 14rem">
+      <div class="field-label">Reporting basis <span style="font-weight:400;color:var(--slate)">(optional)</span></div>
+      <select id="reporting_basis" style="width:100%">
+        <option value="">Not sure yet</option>
+        <option value="quarterly">Quarterly</option>
+        <option value="monthly">Monthly</option>
+        <option value="annually">Annually</option>
+      </select>
+    </label>
+    <label style="flex:1 1 10rem">
+      <div class="field-label">Registration effective date <span style="font-weight:400;color:var(--slate)">(optional)</span></div>
+      <input id="reg_effective_date" type="date" style="width:100%">
+    </label>
+    <label style="flex:1 1 100%">
+      <div class="field-label">Letterhead line <span style="font-weight:400;color:var(--slate)">(optional — printed atop position letters)</span></div>
+      <input id="letterhead_line" placeholder="e.g. 1201 K Street, Suite 900, Sacramento, CA 95814" autocomplete="off" style="width:100%">
+    </label>
+
     <button type="submit" style="margin-top:1rem">Save and finish →</button>
   </form>
   </div>
@@ -143,6 +166,10 @@ mailSame.addEventListener('change', () => {
     document.getElementById('mail_zip4').value = profile.mail_zip4 || '';
     document.getElementById('bus_phone').value = profile.bus_phone || '';
     document.getElementById('existing_filer_id').value = profile.existing_filer_id || '';
+    document.getElementById('title').value = profile.title || '';
+    document.getElementById('reporting_basis').value = profile.reporting_basis || '';
+    document.getElementById('reg_effective_date').value = profile.reg_effective_date || '';
+    document.getElementById('letterhead_line').value = profile.letterhead_line || '';
     form.querySelector('button[type="submit"]').textContent = 'Save changes';
     document.querySelector('h1').textContent = 'Edit your registration details';
     document.querySelector('.sub').textContent =
@@ -199,6 +226,10 @@ form.addEventListener('submit', async (e) => {
         mail_zip4: document.getElementById('mail_zip4').value.trim(),
         bus_phone: document.getElementById('bus_phone').value.trim(),
         existing_filer_id: document.getElementById('existing_filer_id').value.trim(),
+        title: document.getElementById('title').value.trim(),
+        reporting_basis: document.getElementById('reporting_basis').value,
+        reg_effective_date: document.getElementById('reg_effective_date').value,
+        letterhead_line: document.getElementById('letterhead_line').value.trim(),
       }),
     });
     const data = await res.json();

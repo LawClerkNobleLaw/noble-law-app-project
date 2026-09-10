@@ -1014,6 +1014,34 @@
   .page-head h1 { font-family: var(--font-display); font-size: 1.3rem; font-weight: 800; letter-spacing: -0.015em; margin: 0; }
   .page-head .sub { font-size: 0.82rem; color: var(--slate); margin: 0.15rem 0 0; }
   .page-head .filter-tabs { margin-bottom: 0; }
+  /* Settings sub-tabs (the mockup's 4-way Settings shell on /profile).
+     An underline tablist: the active tab carries an --ink underline and
+     full-strength text, the rest sit at --slate. --rule-strong on the
+     resting underline track so the row of tabs reads as controls, not
+     decoration (the same 3:1 reasoning as every other control edge). */
+  .settings-tabs {
+    display: flex; gap: var(--space-4); border-bottom: 1px solid var(--rule);
+    margin: 0 0 1.25rem; overflow-x: auto;
+  }
+  .settings-tab {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    padding: 0.55rem 0.15rem; margin-bottom: -1px; color: var(--slate);
+    font: inherit; font-size: 0.9rem; font-weight: 600; white-space: nowrap;
+    cursor: pointer; border-radius: 0;
+  }
+  /* background:none on hover too, or the base button:hover (white fill)
+     wins the background cascade and paints near-white text on white. */
+  .settings-tab:hover { color: var(--ink); background: none; }
+  .settings-tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); background: none; }
+  .soon-badge {
+    display: inline-block; margin-left: 0.4rem; padding: 0.05rem 0.4rem;
+    border: 1px solid var(--rule-strong); border-radius: var(--radius-pill);
+    font-size: 0.62rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--slate); vertical-align: middle;
+  }
+  /* The inert 2FA/devices panels read as "not yet", not "broken". */
+  .settings-soon { opacity: 0.82; }
+  .settings-soon button[disabled] { cursor: not-allowed; }
   .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: var(--space-3); margin-bottom: 1rem; }
   .stat-card {
     background: var(--surface); border: 1px solid var(--rule-card); box-shadow: var(--shadow-rest);
