@@ -237,6 +237,62 @@ def test_a_disabled_filter_tab_is_still_legible(css):
     assert "var(--slate)" in match.group(1)
 
 
+# ── opacity that stacks on top of muted text ───────────────────────────
+# --slate clears AA on its own (test above), but a rule that then layers
+# `opacity` on a --slate or --ink element multiplies the alpha, and the
+# product is what the eye reads. Two rules did this and fell under 4.5:1.
+
+def test_the_edit_affordance_is_not_dimmed_below_aa(css):
+    """.clients-summary-edit was --slate *and* opacity: 0.55 — an
+    effective ~0.36 alpha, 2.31:1 in light. The reveal is a slate->ink
+    colour shift now, so the resting state is plain --slate (5.76:1 /
+    8.01:1) with no opacity multiplying it down."""
+    match = re.search(r"\.clients-summary-edit \{([^}]*)\}", css)
+    assert match, "the .clients-summary-edit rule moved — re-check its contrast"
+    assert "opacity" not in match.group(1), \
+        ".clients-summary-edit dims --slate with opacity again — that stacks below AA"
+    assert "var(--slate)" in match.group(1)
+
+
+def test_a_stale_directory_row_is_still_readable(css, dark_block, light_block):
+    """.stale-row td dims a whole row of --ink to show it's stale, but
+    the row is still directory data the user reads. The dim floor is the
+    binding light-mode case at 4.5:1."""
+    match = re.search(r"\.stale-row td \{[^}]*opacity:\s*([\d.]+)", css)
+    assert match, "the .stale-row opacity moved — re-check its contrast"
+    alpha = float(match.group(1))
+    for name, theme in _themes(css, dark_block, light_block).items():
+        for ground_name in ("bg", "surface"):
+            ground = theme[ground_name]
+            ratio = contrast(_composite(theme["ink"], alpha, ground), ground)
+            assert ratio >= AA_TEXT, f".stale-row on --{ground_name} ({name}) is {ratio:.2f}:1"
+
+
+# ── focus that a keyboard user can actually see ────────────────────────
+
+def test_the_topbar_search_shows_a_focus_ring(css):
+    """.search-box input clears its own outline, so tabbing into the
+    topbar search left no focus indicator until the ring moved onto the
+    wrapper. WCAG 2.4.7."""
+    match = re.search(r"\.search-box:focus-within \{([^}]*)\}", css)
+    assert match, ".search-box has no :focus-within rule — its input's outline:none leaves no focus indicator"
+    assert "outline" in match.group(1) and "none" not in match.group(1)
+
+
+# ── a control the eye reads without a visible label ────────────────────
+
+def test_the_bill_client_select_has_an_accessible_name(css):
+    """The per-bill client-assignment <select> is generated in JS with
+    only a placeholder option, which is not an accessible name — axe
+    flagged it select-name (critical). It carries an aria-label now."""
+    path = os.path.join(os.path.dirname(STYLE_PATH), "..", "static", "js", "bill_clients.js")
+    with open(os.path.normpath(path)) as f:
+        js = f.read()
+    match = re.search(r'<select class="add-client-select"([^>]*)>', js)
+    assert match, "the add-client-select markup moved — re-check its accessible name"
+    assert "aria-label=" in match.group(1), "add-client-select lost its aria-label"
+
+
 # ── meaning that does not depend on colour ─────────────────────────────
 
 def test_every_position_carries_a_glyph_as_well_as_a_colour(css):
