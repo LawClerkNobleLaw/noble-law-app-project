@@ -35,11 +35,18 @@ const resultsEl = document.getElementById('results');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
 
-form.addEventListener('submit', async (e) => {
+form.addEventListener('submit', (e) => {
   e.preventDefault();
   const q = document.getElementById('q').value.trim();
-  if (!q) return;
+  if (q) runSearch(q);
+});
 
+// The search goes in the URL so a result is shareable and the Back
+// button works — the same discipline /lookup follows (see LOOKUP_BODY's
+// syncUrl). The query is the only state here: this search has no filters
+// or sort to carry, so `?q=` is the whole of it.
+async function runSearch(q) {
+  history.replaceState(null, '', `${location.pathname}?q=${encodeURIComponent(q)}`);
   errorEl.className = ''; loadingEl.className = 'skeleton show';
   form.querySelector('button').disabled = true;
 
@@ -55,7 +62,7 @@ form.addEventListener('submit', async (e) => {
     loadingEl.className = 'skeleton';
     form.querySelector('button').disabled = false;
   }
-});
+}
 
 function detailUrl(r) {
   const params = r.id ? `id=${encodeURIComponent(r.id)}` : `name=${encodeURIComponent(r.name)}`;
@@ -167,6 +174,15 @@ function renderResults(rows, truncated) {
     </div>
     ${truncated ? '<p class="sub" style="margin-top:0.75rem">Showing the first 50 matches — narrow your search if you don\'t see what you\'re looking for.</p>' : ''}
   `;
+}
+
+// Restore a shared or reloaded search: fill the box and run it, so the
+// URL is the view here too. Runs last, once every function above is
+// defined.
+const initialQuery = (new URLSearchParams(window.location.search).get('q') || '').trim();
+if (initialQuery) {
+  document.getElementById('q').value = initialQuery;
+  runSearch(initialQuery);
 }
 
 </script>
