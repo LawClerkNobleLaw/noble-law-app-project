@@ -41,6 +41,7 @@
   </div>
 </div>
 
+<script src="{{TOAST_SRC}}"></script>
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script src="{{ROW_MENU_SRC}}"></script>
 <script>
@@ -224,6 +225,7 @@ async function removeFiling(id) {
       throw new Error(data.error || 'Could not delete this filing');
     }
     load();
+    showToast('Draft removed.');
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';

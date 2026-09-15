@@ -82,7 +82,7 @@ function billClientCellHtml(billId, options) {
       <div class="client-chip">
         <a href="/clients/detail?id=${c.id}">${escapeText(titleCaseName(c.name))}</a>
         ${positionSelectHtml(billId, c)}
-        <button type="button" class="icon-btn" onclick="unassignClient(${billId}, ${c.id}, this)" aria-label="Remove client from this bill" title="Remove client" style="height:1.5rem;width:1.5rem;color:var(--slate)">×</button>
+        <button type="button" class="icon-btn" onclick="unassignClient(${billId}, ${c.id}, this)" aria-label="Remove client from this bill" style="height:1.5rem;width:1.5rem;color:var(--slate)">×</button>
       </div>
       ${showEffectiveDate ? effectiveDateHtml(billId, c) : ''}
     </div>
@@ -293,6 +293,7 @@ async function unassignClient(billId, clientId, btnEl) {
       throw new Error(data.error || 'Could not remove assignment');
     }
     billClientsHooks.onChanged();
+    showToast(`${name} removed from ${bill}.`);
   } catch (err) {
     btnEl.disabled = false;
     billClientsHooks.onError(err.message);

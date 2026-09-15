@@ -1704,6 +1704,30 @@
   }
   @keyframes toast-in { from { transform: translateY(0.5rem); opacity: 0; } to { transform: none; opacity: 1; } }
 
+  /* Floating label for icon-only controls (tooltip.js), shown on hover
+     and on keyboard focus. position:fixed off <body> so a table cell's
+     overflow wrapper can't clip it (same reason .toast lives there);
+     z-index clears the modal backdrop (100) so the Close × inside a
+     dialog gets one too, and stays under the page-progress bar (200).
+     Same dark-on-light chip as .toast — one carries confirmation, the
+     other a name — so they read as one family. pointer-events:none so
+     it never sits between the cursor and the button it describes. */
+  .app-tooltip {
+    position: fixed; top: 0; left: 0; z-index: 150; pointer-events: none;
+    max-width: 16rem; white-space: nowrap;
+    background: var(--ink); color: var(--surface);
+    padding: 0.28rem 0.5rem; border-radius: var(--radius-sm);
+    font-size: 0.72rem; font-weight: 600; line-height: 1.3;
+    box-shadow: 0 6px 18px -8px rgba(0,0,0,0.5);
+    opacity: 0; transform: translateY(0.15rem);
+  }
+  .app-tooltip.show { opacity: 1; transform: none; }
+  .app-tooltip.below { transform: translateY(-0.15rem); }
+  .app-tooltip.below.show { transform: none; }
+  @media (prefers-reduced-motion: no-preference) {
+    .app-tooltip { transition: opacity .1s ease, transform .1s ease; }
+  }
+
   /* ── Search results ──
      The results table stopped being a read-only list: it now carries a
      per-row flag control, a selection checkbox, and what the user has

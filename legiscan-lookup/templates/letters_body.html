@@ -28,6 +28,7 @@
   <div id="list"></div>
 </div>
 
+<script src="{{TOAST_SRC}}"></script>
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script src="{{POSITION_HISTORY_SRC}}"></script>
 <script src="{{TITLE_CASE_SRC}}"></script>
@@ -96,7 +97,7 @@ function render(letters) {
           <td class="date">${fmtStamp(l.updated_at)}</td>
           <td style="text-align:right;white-space:nowrap">
             <a class="secondary" href="/draft/letters/edit?id=${l.id}">Open</a>
-            <button type="button" class="icon-btn" onclick="removeLetter(${l.id})" aria-label="Delete letter" title="Delete">×</button>
+            <button type="button" class="icon-btn" onclick="removeLetter(${l.id})" aria-label="Delete letter">×</button>
           </td>
         </tr>
       `).join('')}
@@ -142,6 +143,7 @@ async function removeLetter(letterId) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not delete that letter');
     render(data);
+    showToast('Letter deleted.');
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';

@@ -1206,7 +1206,7 @@ function renderSavedSearches() {
         ${sv.new_match_count ? `<span class="unread-dot" title="${sv.new_match_count} new since you last looked"><span class="sr-only">${sv.new_match_count} new since you last looked. </span>${sv.new_match_count}</span>` : ''}
         <div class="saved-meta">${escapeText(sv.query)}${sv.client_name ? ` · for ${escapeText(sv.client_name)}` : ''}</div>
       </div>
-      <button type="button" class="icon-btn" onclick="deleteSavedSearch(${sv.id})" aria-label="Delete saved search" title="Delete">×</button>
+      <button type="button" class="icon-btn" onclick="deleteSavedSearch(${sv.id})" aria-label="Delete saved search">×</button>
     </div>
   `).join('');
 }
@@ -1243,6 +1243,7 @@ async function deleteSavedSearch(id) {
     if (!res.ok) throw new Error(list.error || 'Could not delete that saved search');
     savedSearches = list;
     renderSavedSearches();
+    showToast(saved ? `“${saved.name}” deleted.` : 'Saved search deleted.');
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';

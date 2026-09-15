@@ -150,3 +150,31 @@ function showToast(message, options) {
   });
   startTimer();
 }
+
+/* A success toast that has to survive a navigation. Deleting a client
+ * from its own /clients/<id> page, or a draft from its review page,
+ * removes the thing and then leaves — there's no page left to toast on,
+ * so the confirmation would be lost exactly where the action was most
+ * final. Stash it; the destination (/clients, /disclosures) shows it on
+ * arrival. sessionStorage rather than a query param, so nothing about a
+ * deletion is written into a URL or the history the way privacy asks.
+ */
+function showToastAfterNav(message) {
+  try { sessionStorage.setItem('rotunda-pending-toast', message); } catch (_) {}
+}
+
+function flushPendingToast() {
+  let message = null;
+  try {
+    message = sessionStorage.getItem('rotunda-pending-toast');
+    if (message) sessionStorage.removeItem('rotunda-pending-toast');
+  } catch (_) {}
+  if (message) showToast(message);
+}
+
+// Same body-exists reasoning as liveRegion() above.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', flushPendingToast);
+} else {
+  flushPendingToast();
+}

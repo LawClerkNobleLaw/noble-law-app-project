@@ -584,6 +584,7 @@ FOCUS_JS = _read_static_text("js/focus.js")
 SEARCH_SHORTCUT_JS = _read_static_text("js/search_shortcut.js")
 ESCAPE_TEXT_JS = _read_static_text("js/escape_text.js")
 DATES_JS = _read_static_text("js/dates.js")
+TOOLTIP_JS = _read_static_text("js/tooltip.js")
 
 
 # Every file the /static/ route will serve, name -> (bytes, content type),
@@ -610,6 +611,7 @@ STATIC_ASSETS = {
     "js/escape_text.js": (ESCAPE_TEXT_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/search_shortcut.js": (SEARCH_SHORTCUT_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/dates.js": (DATES_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/tooltip.js": (TOOLTIP_JS.encode("utf-8"), JS_CONTENT_TYPE),
 }
 
 STYLE_HREF = _asset_url("style.css")
@@ -714,6 +716,7 @@ FOCUS_SRC = _asset_url("js/focus.js")
 SEARCH_SHORTCUT_SRC = _asset_url("js/search_shortcut.js")
 ESCAPE_TEXT_SRC = _asset_url("js/escape_text.js")
 DATES_SRC = _asset_url("js/dates.js")
+TOOLTIP_SRC = _asset_url("js/tooltip.js")
 
 TOP_BRAND = """<a href="/" class="top-brand">
   <span class="brand-mark" style="width:17px;height:17px"></span>
@@ -1114,6 +1117,7 @@ def page(title, path, body):
 <script src="{ESCAPE_TEXT_SRC}"></script>
 <script src="{DATES_SRC}"></script>
 <script src="{FOCUS_SRC}"></script>
+<script src="{TOOLTIP_SRC}"></script>
 <script src="{SEARCH_SHORTCUT_SRC}"></script>
 {app_shell(path, body)}
 </body>
@@ -1455,6 +1459,7 @@ ONBOARDING_PAGE = _render_template(
 PROFILE_BODY = _render_template(
     "profile_body.html",
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
+    TOAST_SRC=TOAST_SRC,
     skeleton_panels=_skeleton_panel(rows=4, row_widths=(28, 44)),
 )
 
@@ -1577,6 +1582,7 @@ CLIENTS_BODY = _render_template(
     TITLE_CASE_SRC=TITLE_CASE_SRC,
     ROW_MENU_SRC=ROW_MENU_SRC,
     ROW_NAV_SRC=ROW_NAV_SRC,
+    TOAST_SRC=TOAST_SRC,
 )
 
 CLIENTS_PAGE = page("Clients — Rotunda", "/clients", CLIENTS_BODY)
@@ -1655,6 +1661,7 @@ LETTERS_BODY = _render_template(
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
     POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
     TITLE_CASE_SRC=TITLE_CASE_SRC,
+    TOAST_SRC=TOAST_SRC,
 )
 
 LETTERS_PAGE = page("Letters — Rotunda", "/draft/letters", LETTERS_BODY)
@@ -1679,6 +1686,7 @@ DISCLOSURES_BODY = _render_template(
     skeleton_rows=_skeleton_rows(4, (26, 14, 16, 14, 6)),
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
     ROW_MENU_SRC=ROW_MENU_SRC,
+    TOAST_SRC=TOAST_SRC,
 )
 
 DISCLOSURES_PAGE = page("Disclosure Forms — Rotunda", "/disclosures", DISCLOSURES_BODY)
@@ -1692,6 +1700,7 @@ DISCLOSURE_REVIEW_BODY = _render_template(
     # means an action, never a page's first content") untrue by one.
     skeleton_panels=_skeleton_panel(rows=5, row_widths=(24, 40)),
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
+    TOAST_SRC=TOAST_SRC,
 )
 
 DISCLOSURE_REVIEW_PAGE = page("Review Disclosure Form — Rotunda", "/disclosures", DISCLOSURE_REVIEW_BODY)
