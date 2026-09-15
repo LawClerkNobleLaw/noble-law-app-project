@@ -211,7 +211,7 @@ def test_suggestions_are_capped():
 # ── Through the database ────────────────────────────────────────────
 
 def _set_up(conn, hearing_description=None, sponsor=None):
-    user_id = accounts.create_user(conn, "a@firm.com", "a-long-enough-passphrase-1")
+    user_id = accounts.create_user(conn, "a@firm.com", "TestPassword123!")
     conn.execute("INSERT INTO bills (id, state, bill_number) VALUES (99, 'CA', 'SB 1')")
     if hearing_description:
         conn.execute(
@@ -246,7 +246,7 @@ def test_routing_for_bill_reads_the_latest_hearing(conn):
 def test_routing_says_when_there_is_no_directory_at_all(conn):
     """Distinct from "no suggestions": a firm that hasn't imported a
     sheet needs telling that, not telling there's nobody to write to."""
-    user_id = accounts.create_user(conn, "a@firm.com", "a-long-enough-passphrase-1")
+    user_id = accounts.create_user(conn, "a@firm.com", "TestPassword123!")
     conn.execute("INSERT INTO bills (id, state, bill_number) VALUES (99, 'CA', 'SB 1')")
     result = db.routing_for_bill(conn, user_id, 99)
     assert result["have_directory"] is False
@@ -270,7 +270,7 @@ def test_routing_only_sees_this_firms_directory(conn):
     """Same boundary as the directory itself — one firm's imported sheet
     must not route another firm's letters."""
     _set_up(conn, "Assembly Appropriations Hearing")
-    other = accounts.create_user(conn, "b@other.com", "a-long-enough-passphrase-2")
+    other = accounts.create_user(conn, "b@other.com", "TestPassword123!")
     result = db.routing_for_bill(conn, other, 99)
     assert result["have_directory"] is False
     assert result["suggestions"] == []

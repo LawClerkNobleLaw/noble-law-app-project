@@ -70,19 +70,19 @@ def test_valid_email_rejects_missing_at_or_domain_dot():
 # ── create_user / verify_login ─────────────────────────────────────
 
 def test_create_user_then_verify_login_succeeds(conn):
-    user_id = accounts.create_user(conn, "New.User@Example.com", "a-real-password")
-    assert accounts.verify_login(conn, "new.user@example.com", "a-real-password") == user_id
+    user_id = accounts.create_user(conn, "New.User@Example.com", "TestPassword123!")
+    assert accounts.verify_login(conn, "new.user@example.com", "TestPassword123!") == user_id
 
 
 def test_create_user_lowercases_and_trims_email(conn):
-    accounts.create_user(conn, "  Person@Example.com  ", "a-real-password")
+    accounts.create_user(conn, "  Person@Example.com  ", "TestPassword123!")
     row = conn.execute("SELECT email FROM users").fetchone()
     assert row["email"] == "person@example.com"
 
 
 def test_create_user_rejects_invalid_email(conn):
     with pytest.raises(ValueError):
-        accounts.create_user(conn, "not-an-email", "a-real-password")
+        accounts.create_user(conn, "not-an-email", "TestPassword123!")
 
 
 def test_create_user_rejects_short_password(conn):
@@ -90,14 +90,51 @@ def test_create_user_rejects_short_password(conn):
         accounts.create_user(conn, "person@example.com", "short")
 
 
-def test_create_user_rejects_duplicate_email(conn):
-    accounts.create_user(conn, "person@example.com", "a-real-password")
+# ── The 8-4 rule: 8+ chars and all four character classes ──────────────
+# password_problem is the single source of truth; create_user and
+# change_password both defer to it (see accounts.PASSWORD_RULE).
+
+def test_password_problem_accepts_a_compliant_password():
+    assert accounts.password_problem("TestPassword123!") is None
+
+
+@pytest.mark.parametrize("weak", [
+    "Short1!",          # only 7 characters
+    "testpassword123!",  # no uppercase
+    "TESTPASSWORD123!",  # no lowercase
+    "TestPassword!!!!",  # no digit
+    "TestPassword1234",  # no special character
+    "",                  # empty
+    None,                # missing
+])
+def test_password_problem_rejects_passwords_missing_a_class(weak):
+    assert accounts.password_problem(weak) == accounts.PASSWORD_RULE
+
+
+def test_create_user_rejects_a_password_missing_a_character_class(conn):
+    # Long enough, but no digit and no symbol — the length-only rule would
+    # have let this through.
     with pytest.raises(ValueError):
-        accounts.create_user(conn, "person@example.com", "a-different-password")
+        accounts.create_user(conn, "person@example.com", "justletters")
+
+
+def test_change_password_enforces_the_full_84_rule(conn):
+    user_id = accounts.create_user(conn, "person@example.com", "OldPassword123!")
+    with pytest.raises(ValueError):
+        # 8+ characters but no uppercase, digit, or symbol.
+        accounts.change_password(conn, user_id, "OldPassword123!", "justletters")
+    # The original password still works after the rejected change.
+    assert accounts.verify_login(conn, "person@example.com", "OldPassword123!") == user_id
+
+
+def test_create_user_rejects_duplicate_email(conn):
+    accounts.create_user(conn, "person@example.com", "TestPassword123!")
+    with pytest.raises(ValueError):
+        accounts.create_user(conn, "person@example.com", "Different123!")
 
 
 def test_verify_login_fails_with_wrong_password(conn):
-    accounts.create_user(conn, "person@example.com", "a-real-password")
+    accounts.create_user(conn, "person@example.com", "TestPassword123!")
     assert accounts.verify_login(conn, "person@example.com", "wrong-password") is None
 
 
@@ -116,7 +153,7 @@ def test_verify_login_fails_for_nonexistent_email_without_raising(conn):
 # ── Sessions ────────────────────────────────────────────────────────
 
 def test_create_session_then_look_it_up(conn):
-    user_id = accounts.create_user(conn, "person@example.com", "a-real-password")
+    user_id = accounts.create_user(conn, "person@example.com", "TestPassword123!")
     token = accounts.create_session(conn, user_id)
     assert accounts.user_id_for_session(conn, token) == user_id
 
@@ -131,7 +168,7 @@ def test_user_id_for_session_rejects_empty_or_none_token(conn):
 
 
 def test_user_id_for_session_rejects_expired_session(conn):
-    user_id = accounts.create_user(conn, "person@example.com", "a-real-password")
+    user_id = accounts.create_user(conn, "person@example.com", "TestPassword123!")
     token = accounts.create_session(conn, user_id)
     # Back-date the row past SESSION_TTL_DAYS instead of waiting real
     # days or mocking datetime.now() everywhere — created_at is a
@@ -146,7 +183,7 @@ def test_user_id_for_session_rejects_expired_session(conn):
 
 
 def test_destroy_session_invalidates_the_token(conn):
-    user_id = accounts.create_user(conn, "person@example.com", "a-real-password")
+    user_id = accounts.create_user(conn, "person@example.com", "TestPassword123!")
     token = accounts.create_session(conn, user_id)
     accounts.destroy_session(conn, token)
     assert accounts.user_id_for_session(conn, token) is None
@@ -221,29 +258,29 @@ def test_record_login_failure_resets_count_after_window_expires():
 
 # ── Change password (Settings → Account & security) ────────────────────
 def test_change_password_lets_the_new_password_log_in(conn):
-    user_id = accounts.create_user(conn, "person@example.com", "old-password-1")
-    accounts.change_password(conn, user_id, "old-password-1", "new-password-2")
-    assert accounts.verify_login(conn, "person@example.com", "new-password-2") == user_id
-    assert accounts.verify_login(conn, "person@example.com", "old-password-1") is None
+    user_id = accounts.create_user(conn, "person@example.com", "OldPassword123!")
+    accounts.change_password(conn, user_id, "OldPassword123!", "NewPassword456!")
+    assert accounts.verify_login(conn, "person@example.com", "NewPassword456!") == user_id
+    assert accounts.verify_login(conn, "person@example.com", "OldPassword123!") is None
 
 
 def test_change_password_rejects_a_wrong_current_password(conn):
-    user_id = accounts.create_user(conn, "person@example.com", "old-password-1")
+    user_id = accounts.create_user(conn, "person@example.com", "OldPassword123!")
     with pytest.raises(ValueError):
-        accounts.change_password(conn, user_id, "not-the-password", "new-password-2")
+        accounts.change_password(conn, user_id, "not-the-password", "NewPassword456!")
     # The password is unchanged after a rejected attempt.
-    assert accounts.verify_login(conn, "person@example.com", "old-password-1") == user_id
+    assert accounts.verify_login(conn, "person@example.com", "OldPassword123!") == user_id
 
 
 def test_change_password_holds_the_new_password_to_the_signup_rule(conn):
-    user_id = accounts.create_user(conn, "person@example.com", "old-password-1")
+    user_id = accounts.create_user(conn, "person@example.com", "OldPassword123!")
     with pytest.raises(ValueError):
-        accounts.change_password(conn, user_id, "old-password-1", "short")
+        accounts.change_password(conn, user_id, "OldPassword123!", "short")
 
 
 # ── New profile fields (Settings → Org & registration) ─────────────────
 def test_save_profile_round_trips_the_new_settings_fields(conn):
-    user_id = accounts.create_user(conn, "person@example.com", "a-real-password")
+    user_id = accounts.create_user(conn, "person@example.com", "TestPassword123!")
     accounts.save_profile(conn, user_id, {
         "legal_name": "Noble Law PC", "registrant_type": "firm",
         "title": "Legislative Advocate", "reporting_basis": "quarterly",
@@ -258,7 +295,7 @@ def test_save_profile_round_trips_the_new_settings_fields(conn):
 
 
 def test_save_profile_stores_blank_new_fields_as_null(conn):
-    user_id = accounts.create_user(conn, "person@example.com", "a-real-password")
+    user_id = accounts.create_user(conn, "person@example.com", "TestPassword123!")
     accounts.save_profile(conn, user_id, {
         "legal_name": "Solo Lobbyist", "registrant_type": "individual",
         "title": "  ", "letterhead_line": "",

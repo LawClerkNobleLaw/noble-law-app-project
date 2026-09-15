@@ -147,7 +147,7 @@ def test_the_digest_reaches_every_seat_at_the_firm(conn):
 def test_every_new_account_gets_a_firm(conn):
     import accounts
 
-    user_id = accounts.create_user(conn, "solo@example.com", "a-long-enough-password")
+    user_id = accounts.create_user(conn, "solo@example.com", "TestPassword123!")
 
     assert db.org_id_for_user(conn, user_id) is not None
 

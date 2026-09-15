@@ -32,7 +32,7 @@
           <input id="password" type="password" autocomplete="new-password" required minlength="8" style="width:100%">
           <button type="button" id="toggle-password" class="secondary" aria-pressed="false" aria-label="Show password" style="flex:none">Show</button>
         </div>
-        <div class="sub" id="password-hint" style="margin:0.3rem 0 0;font-size:0.78rem">8+ characters</div>
+        <div class="sub" id="password-hint" style="margin:0.3rem 0 0;font-size:0.78rem">8+ characters, with an uppercase letter, a lowercase letter, a number, and a special character</div>
       </label>
       <button type="submit" class="auth-submit">Continue →</button>
     </form>
@@ -60,11 +60,13 @@ togglePasswordBtn.addEventListener('click', () => {
 });
 /* U5: the hint resolves as you type.
  *
- * "8+ characters" was static text, and the only enforcement was
- * minlength plus a server round trip — so the one flow every user
- * completes exactly once could end in a rejected submit for a rule
- * that was on screen the whole time. The message stays word-for-word
- * what the server says; only its state changes.
+ * The rule is the "8-4 rule": 8+ characters and all four character
+ * classes. The only server-side enforcement is accounts.password_problem
+ * plus a round trip, so — as with the old length-only hint — the one flow
+ * every user completes exactly once could otherwise end in a rejected
+ * submit for a rule that was on screen the whole time. Each requirement is
+ * checked live and the still-missing ones are named; the server rejects
+ * with the same rule (accounts.PASSWORD_RULE) if a user submits early.
  *
  * aria-live is deliberately absent: the hint is already the input's
  * description, and announcing on every keystroke would talk over the
@@ -72,20 +74,26 @@ togglePasswordBtn.addEventListener('click', () => {
  * server's identical sentence if they submit early anyway.
  */
 const passwordHint = document.getElementById('password-hint');
-const MIN_PASSWORD = 8;
+const PASSWORD_CHECKS = [
+  [v => v.length >= 8, '8+ characters'],
+  [v => /[A-Z]/.test(v), 'an uppercase letter'],
+  [v => /[a-z]/.test(v), 'a lowercase letter'],
+  [v => /[0-9]/.test(v), 'a number'],
+  [v => /[^A-Za-z0-9]/.test(v), 'a special character'],
+];
 passwordInput.setAttribute('aria-describedby', 'password-hint');
 passwordInput.addEventListener('input', () => {
-  const len = passwordInput.value.length;
-  if (!len) {
+  const v = passwordInput.value;
+  if (!v) {
     passwordHint.className = 'sub';
-    passwordHint.textContent = '8+ characters';
+    passwordHint.textContent = '8+ characters, with an uppercase letter, a lowercase letter, a number, and a special character';
     return;
   }
-  const ok = len >= MIN_PASSWORD;
-  passwordHint.className = ok ? 'sub hint-met' : 'sub hint-unmet';
-  passwordHint.textContent = ok
-    ? '✓ 8+ characters'
-    : `${MIN_PASSWORD - len} more character${MIN_PASSWORD - len === 1 ? '' : 's'} to go`;
+  const missing = PASSWORD_CHECKS.filter(([test]) => !test(v)).map(([, label]) => label);
+  passwordHint.className = missing.length ? 'sub hint-unmet' : 'sub hint-met';
+  passwordHint.textContent = missing.length
+    ? `Still needs: ${missing.join(', ')}`
+    : '✓ Meets all requirements';
 });
 
 const form = document.getElementById('f');
