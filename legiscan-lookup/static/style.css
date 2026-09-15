@@ -1185,6 +1185,19 @@
     flex: 1 1 100%; margin: 0; font-size: 0.72rem; text-align: right; max-width: 34rem;
     margin-left: auto;
   }
+  /* On a phone or small tablet the title and its control cluster can't
+     share a row: justify-content:space-between squeezes the heading into
+     a two-line sliver on the left while the controls crowd the right
+     (worst on Flagged bills, whose cluster is search + sort + group +
+     export). Stack them instead — title on its own full-width line,
+     controls in their own wrap-row beneath — the same move the ≤700px
+     .search-box rule already assumes by giving the filter box a full
+     row. The hint drops its desktop right-alignment since it now leads a
+     full-width line rather than trailing the controls. */
+  @media (max-width: 768px) {
+    .panel-head { flex-direction: column; align-items: stretch; }
+    .panel-head .control-hint { text-align: left; margin-left: 0; }
+  }
   .panel-link {
     height: 1.75rem; display: flex; align-items: center; gap: var(--space-1); border-radius: var(--radius-md);
     border: 1px solid var(--rule); background: var(--accent-soft); color: var(--slate);
