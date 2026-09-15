@@ -64,14 +64,42 @@ def valid_email(email):
     return bool(email) and bool(EMAIL_RE.match(email))
 
 
+# The "8-4 rule": at least 8 characters, and all four character classes —
+# an uppercase letter, a lowercase letter, a digit, and a non-alphanumeric
+# symbol. Enforced at every point a password is *set* (create_user and
+# change_password), and deliberately NOT at verify_login: an existing account
+# must keep being able to sign in with whatever it was created with, so
+# tightening the rule can never lock a current user out of their own account.
+# Both write paths share this one function so a change path can't quietly
+# drift laxer than sign-up (see change_password's docstring).
+PASSWORD_RULE = (
+    "Password must be at least 8 characters and include an uppercase letter, "
+    "a lowercase letter, a number, and a special character."
+)
+
+
+def password_problem(password):
+    """Returns None if `password` satisfies the 8-4 rule, otherwise a message
+    safe to show the user describing the requirement it fails."""
+    password = password or ""
+    if (len(password) < 8
+            or not re.search(r"[A-Z]", password)
+            or not re.search(r"[a-z]", password)
+            or not re.search(r"[0-9]", password)
+            or not re.search(r"[^A-Za-z0-9]", password)):
+        return PASSWORD_RULE
+    return None
+
+
 def create_user(conn, email, password):
     """Raises ValueError with a message safe to show the user (bad
     input, or email already registered) rather than a raw DB error."""
     email = (email or "").strip().lower()
     if not valid_email(email):
         raise ValueError("Enter a valid email address.")
-    if not password or len(password) < 8:
-        raise ValueError("Password must be at least 8 characters.")
+    problem = password_problem(password)
+    if problem:
+        raise ValueError(problem)
     existing = conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone()
     if existing:
         raise ValueError("An account with that email already exists.")
@@ -224,8 +252,9 @@ def change_password(conn, user_id, current_password, new_password):
         raise ValueError("Account not found.")
     if not _verify_password(current_password or "", row["password_hash"]):
         raise ValueError("That current password isn't right.")
-    if not new_password or len(new_password) < 8:
-        raise ValueError("New password must be at least 8 characters.")
+    problem = password_problem(new_password)
+    if problem:
+        raise ValueError(problem)
     conn.execute(
         "UPDATE users SET password_hash = ? WHERE id = ?",
         (_hash_password(new_password), user_id),

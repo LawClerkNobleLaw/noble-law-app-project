@@ -178,7 +178,7 @@ def test_days_until_a_nonsense_date_is_none():
 # ── Storage ─────────────────────────────────────────────────────────
 
 def _user(conn, email="a@firm.com"):
-    return accounts.create_user(conn, email, "a-long-enough-passphrase-1")
+    return accounts.create_user(conn, email, "TestPassword123!")
 
 
 ROWS = [

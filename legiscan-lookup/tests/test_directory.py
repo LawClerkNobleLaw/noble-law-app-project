@@ -308,9 +308,9 @@ def test_update_staff_ignores_fields_it_does_not_own(conn):
 # ── The boundary: whose directory is it ─────────────────────────────
 
 def _two_firms(conn):
-    firm_a = accounts.create_user(conn, "a@firm-a.com", "a-long-enough-passphrase-1")
-    firm_b = accounts.create_user(conn, "b@firm-b.com", "a-long-enough-passphrase-2")
-    colleague = accounts.create_user(conn, "c@firm-a.com", "a-long-enough-passphrase-3")
+    firm_a = accounts.create_user(conn, "a@firm-a.com", "TestPassword123!")
+    firm_b = accounts.create_user(conn, "b@firm-b.com", "TestPassword123!")
+    colleague = accounts.create_user(conn, "c@firm-a.com", "TestPassword123!")
     conn.execute(
         "UPDATE users SET org_id = (SELECT org_id FROM users WHERE id = ?) WHERE id = ?",
         (firm_a, colleague),
