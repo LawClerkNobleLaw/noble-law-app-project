@@ -602,6 +602,13 @@
   #loading { display: none; align-items: center; gap: 0.5rem; color: var(--slate); font-size: 0.9rem; }
   #loading.show { display: flex; }
   #loading.skeleton.show { display: block; }
+  /* Skeleton containers that can't share the #loading id — the Alerts
+     page has two (digest-loading / rules-loading) — still need the same
+     show/hide convention. Without these, clearing the class only strips
+     `show` while the div stays a visible block full of placeholder bars,
+     leaving skeletons stranded above the loaded content. */
+  .skeleton { display: none; }
+  .skeleton.show { display: block; }
   .spinner {
     display: inline-block; width: 0.9rem; height: 0.9rem; border-radius: 50%; flex: none;
     border: 2px solid var(--rule); border-top-color: var(--slate); animation: spin 0.6s linear infinite;
@@ -1189,6 +1196,15 @@
   .panel th { padding: var(--space-2) var(--space-4); }
   .panel td { padding: 0.75rem var(--space-4); }
   .panel tbody tr:hover { background: var(--content-bg); }
+  /* Whole-row navigation (see row_nav.js): the bill-search and client
+     rows are one big click target that opens the detail page. The pointer
+     and hover say the row is live; the keyboard focus highlight fires on
+     :has(a:focus-visible) so it shows for Tab-into-the-row (the primary
+     cell's real <a>) but not for a mouse click, matching the app's other
+     :focus-visible affordances. The row's own <a> keeps its outline for
+     the precise indicator; this tints the rest of the row with it. */
+  tr.link-row { cursor: pointer; }
+  tr.link-row:has(a:focus-visible) { background: var(--accent-soft); }
   /* Organization Search's "+ N other filing variants" disclosure — a
      native <details> rather than a JS-driven toggle, and nothing in it
      is actually hidden data, just collapsed by default (see
@@ -1740,6 +1756,15 @@
   }
   .search-modes-tabs { display: flex; gap: var(--space-2); flex-wrap: wrap; }
   .search-modes .filter-tab { font-size: 0.78rem; padding: 0.2rem 0.6rem; }
+  /* A mode with an empty index. aria-disabled rather than the disabled
+     attribute (so the title tooltip still fires on hover, which is how
+     the "why" is explained); this mirrors the .filter-tab[disabled]
+     look — faded, flat, not-allowed cursor — without the attribute. */
+  .search-modes .filter-tab.is-unavailable {
+    cursor: not-allowed; color: var(--slate);
+    background: transparent; border-color: var(--rule); opacity: 0.7;
+  }
+  .search-modes .filter-tab.is-unavailable:hover { border-color: var(--rule); }
   /* The search form is the last thing in this card, so `form`'s own
      2rem page margin would hang below the card's padding. Scoped to the
      form that follows these tabs — every other card in the app keeps

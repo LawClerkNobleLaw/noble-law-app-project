@@ -90,6 +90,7 @@
 <div id="results"></div>
 
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
+<script src="{{ROW_NAV_SRC}}"></script>
 <script src="{{BILL_STATUS_SRC}}"></script>
 <script src="{{TOAST_SRC}}"></script>
 <script src="{{POSITION_HISTORY_SRC}}"></script>
@@ -97,6 +98,11 @@
 <script>
 const form = document.getElementById('f');
 const resultsEl = document.getElementById('results');
+// The whole results table is one big click target: a row click opens the
+// bill, except on the checkbox and Flag button, which keep their own jobs
+// (see row_nav.js). Bound once on the container — renderRowsNow() replaces
+// its innerHTML on every search, filter and sort, but not the element.
+enableRowNavigation(resultsEl);
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
 let currentQuery = '';
@@ -779,7 +785,7 @@ function renderRowsNow() {
   const reportHref = (billId) => `/report?bill_id=${billId}&from_label=Search&from_href=${backHref}`;
 
   const rowsHtml = rows.map(r => `
-    <tr class="${r.flagged ? 'tracked-row' : ''}">
+    <tr class="link-row${r.flagged ? ' tracked-row' : ''}" data-href="${reportHref(r.bill_id)}">
       <td class="pick-cell">
         ${signedIn && !r.flagged
           ? `<input type="checkbox" aria-label="Select ${escapeText(r.bill_number)}" ${focusKeyAttr('pick', r.bill_id)} ${selectedBillIds.has(r.bill_id) ? 'checked' : ''} onchange="toggleSelected(${r.bill_id}, this.checked)">`
@@ -880,19 +886,51 @@ const SESSION_BILL_ESTIMATE = 4243;
 const SEARCH_MODES = [['summary', 'Title & summary'], ['text', 'Full bill text'],
                       ['section', 'Code section']];
 
+// A mode whose index holds nothing can only ever return an empty
+// search, so it is shown disabled with the reason on hover rather than
+// as an enabled tab that silently finds nothing.
+function modeUnavailableReason(value) {
+  if (value === 'text') return 'Not available yet — no bills have been indexed for full-text search.';
+  if (value === 'section') return 'Not available yet — no bills have been indexed for their code citations.';
+  return '';
+}
+
 function modeTabsHtml() {
   return SEARCH_MODES.map(([value, label]) => {
     const held = modeCoverage(value);
-    // The number is the count of bills the index can speak for, which
-    // is a different kind of number from the result counts on the
-    // filter tabs below — hence the words in the tooltip. Absent
-    // entirely until /api/corpus answers, rather than shown as a 0 that
-    // would read as "this mode is broken".
-    const coverage = held === null ? '' :
-      `<span class="n" title="${held.toLocaleString()} bill${held === 1 ? '' : 's'} indexed — about ${
-        Math.max(1, Math.round((held / SESSION_BILL_ESTIMATE) * 100))}% of the session">${held.toLocaleString()}</span>`;
-    return `<button type="button" class="filter-tab${searchMode === value ? ' active' : ''}"
-       aria-pressed="${searchMode === value}" ${focusKeyAttr('mode', value)}
+
+    // held === 0: /api/corpus answered and the index is empty. Searching
+    // this mode can only return nothing, so disable the tab and say why
+    // on hover instead of showing a bare "0" that reads as broken.
+    // aria-disabled (not the disabled attribute) keeps the tab hoverable
+    // so its title tooltip still appears.
+    if (held === 0) {
+      const why = modeUnavailableReason(value);
+      return `<button type="button" class="filter-tab is-unavailable"
+         aria-disabled="true" title="${escapeText(why)}"
+         aria-label="${escapeText(label + '. ' + why)}" ${focusKeyAttr('mode', value)}
+         onclick="return false">${label}</button>`;
+    }
+
+    // held > 0: a coverage count — how many bills this mode can search —
+    // which is a different kind of number from the result counts on the
+    // filter tabs below, hence "indexed" in the tooltip and aria label.
+    // Absent until /api/corpus answers (held === null), so no placeholder
+    // ever flashes. The visible number is aria-hidden because a bare
+    // "40" spoken aloud is meaningless; the button's aria-label carries
+    // the words.
+    const active = searchMode === value;
+    let coverage = '';
+    let ariaLabel = '';
+    if (held !== null) {
+      const bills = `${held.toLocaleString()} bill${held === 1 ? '' : 's'} indexed`;
+      const pct = Math.max(1, Math.round((held / SESSION_BILL_ESTIMATE) * 100));
+      const desc = `${bills} — about ${pct}% of the session, searchable in this mode`;
+      coverage = `<span class="n" title="${escapeText(desc)}" aria-hidden="true">${held.toLocaleString()}</span>`;
+      ariaLabel = ` aria-label="${escapeText(label + '. ' + desc)}"`;
+    }
+    return `<button type="button" class="filter-tab${active ? ' active' : ''}"
+       aria-pressed="${active}"${ariaLabel} ${focusKeyAttr('mode', value)}
        onclick="setSearchMode('${value}')">${label}${coverage}</button>`;
   }).join('');
 }
