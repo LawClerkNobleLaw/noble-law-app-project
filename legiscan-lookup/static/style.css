@@ -1740,6 +1740,15 @@
   }
   .search-modes-tabs { display: flex; gap: var(--space-2); flex-wrap: wrap; }
   .search-modes .filter-tab { font-size: 0.78rem; padding: 0.2rem 0.6rem; }
+  /* A mode with an empty index. aria-disabled rather than the disabled
+     attribute (so the title tooltip still fires on hover, which is how
+     the "why" is explained); this mirrors the .filter-tab[disabled]
+     look — faded, flat, not-allowed cursor — without the attribute. */
+  .search-modes .filter-tab.is-unavailable {
+    cursor: not-allowed; color: var(--slate);
+    background: transparent; border-color: var(--rule); opacity: 0.7;
+  }
+  .search-modes .filter-tab.is-unavailable:hover { border-color: var(--rule); }
   /* The search form is the last thing in this card, so `form`'s own
      2rem page margin would hang below the card's padding. Scoped to the
      form that follows these tabs — every other card in the app keeps
