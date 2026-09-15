@@ -120,6 +120,7 @@
   </div>
 </div>
 
+<script src="{{TOAST_SRC}}"></script>
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script src="{{TITLE_CASE_SRC}}"></script>
 <script src="{{ROW_MENU_SRC}}"></script>
@@ -408,6 +409,7 @@ async function removeClient(id) {
       throw new Error(data.error || 'Could not remove client');
     }
     load();
+    showToast(`${titleCaseName(name)} removed.`);
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';

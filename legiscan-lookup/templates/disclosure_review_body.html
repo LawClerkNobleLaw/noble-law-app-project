@@ -4,6 +4,7 @@
 <div id="loading" role="status" class="skeleton show"><span class="sr-only">Loading…</span>{{skeleton_panels}}</div>
 <div id="content"></div>
 
+<script src="{{TOAST_SRC}}"></script>
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script>
 
@@ -175,6 +176,7 @@ async function removeFiling() {
       const data = await res.json();
       throw new Error(data.error || 'Could not delete this filing');
     }
+    showToastAfterNav('Draft removed.');
     window.location.href = '/disclosures';
   } catch (err) {
     showError(err.message);
@@ -349,7 +351,7 @@ function clientsSectionHtml() {
     // them — a reviewer checking the generated form against this screen
     // is matching row 7 to row 7.
     const removeBtn = client
-      ? `<button type="button" class="icon-btn" title="Remove ${escapeText(client.name)} from this form"
+      ? `<button type="button" class="icon-btn"
            aria-label="Remove ${escapeText(client.name)} from this form" onclick="removeClientRow(${client.id})">×</button>`
       : '';
     const fieldsHtml = ROW_KEYS.map(k => fieldInputHtml(

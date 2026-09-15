@@ -540,7 +540,7 @@ function savedViewsHtml() {
                onclick="openSavedView(${v.id})">${escapeText(v.name)}</button>
        <button type="button" class="icon-btn" ${focusKeyAttr('view-delete', v.id)}
                onclick="removeSavedView(${v.id})"
-               aria-label="Delete the view ${escapeText(v.name)}" title="Delete this view">×</button>
+               aria-label="Delete the view ${escapeText(v.name)}">×</button>
      </span>`).join('');
   const save = activeFilterCount() || searchQuery() || groupByClient
     ? `<button type="button" class="secondary filter-clear" ${focusKeyAttr('save-view')}
@@ -593,6 +593,7 @@ async function removeSavedView(viewId) {
     if (!res.ok) throw new Error(list.error || 'Could not delete that view');
     savedViews = list;
     renderRail();
+    showToast(view ? `View “${view.name}” deleted.` : 'View deleted.');
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';

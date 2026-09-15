@@ -152,6 +152,7 @@
   </div>
 </section>
 
+<script src="{{TOAST_SRC}}"></script>
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script>
 const contentEl = document.getElementById('profile-content');
@@ -319,7 +320,7 @@ function renderRoster() {
         <div style="font-size:0.9rem;font-weight:600">${escapeText(l.name)}</div>
         ${l.cert_id ? `<div class="saved-meta">Certification ${escapeText(l.cert_id)}</div>` : ''}
       </div>
-      <button type="button" class="icon-btn" onclick="removeLobbyist(${l.id})" aria-label="Remove lobbyist" title="Remove">×</button>
+      <button type="button" class="icon-btn" onclick="removeLobbyist(${l.id})" aria-label="Remove lobbyist">×</button>
     </div>
   `).join('');
 }
@@ -360,6 +361,7 @@ async function removeLobbyist(id) {
     if (!res.ok) throw new Error(list.error || 'Could not remove that lobbyist');
     roster = list;
     renderRoster();
+    showToast(`${person ? person.name : 'Lobbyist'} removed.`);
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';

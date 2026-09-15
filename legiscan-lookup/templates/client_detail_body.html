@@ -230,7 +230,7 @@ function renderContacts() {
       </div>
       ${p.is_primary ? '' : `<button type="button" class="secondary" onclick="makePrimary(${p.id})">Make primary</button>`}
       <button type="button" class="icon-btn" onclick="removeContact(${p.id})"
-              aria-label="Remove ${escapeText(p.name)}" title="Remove contact">×</button>
+              aria-label="Remove ${escapeText(p.name)}">×</button>
     </div>
   `).join('');
 }
@@ -288,6 +288,7 @@ async function removeContact(contactId) {
     if (!res.ok) throw new Error(list.error || 'Could not remove that contact');
     contacts = list;
     renderContacts();
+    showToast(`${person ? person.name : 'Contact'} removed.`);
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.className = 'show';
@@ -377,6 +378,7 @@ async function removeClient() {
       const data = await res.json();
       throw new Error(data.error || 'Could not remove client');
     }
+    showToastAfterNav(`${currentClientName} removed.`);
     window.location.href = '/clients';
   } catch (err) {
     errorEl.textContent = err.message;
