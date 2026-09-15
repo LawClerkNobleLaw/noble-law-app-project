@@ -677,10 +677,16 @@
   .client-position { display: inline-flex; align-items: center; gap: 0.35rem; }
   .client-position-name { font-size: 0.82rem; font-weight: 600; color: var(--ink); }
   .client-position-empty { font-size: 0.82rem; color: var(--slate); }
-  .clients-summary-edit { flex: none; color: var(--slate); font-size: 0.85rem; opacity: 0.55; }
+  /* The reveal is a colour shift (slate -> ink), not an opacity fade.
+     opacity: 0.55 over an already-translucent --slate multiplied to an
+     effective ~0.36 alpha, which measured 2.31:1 in light / 3.09:1 in
+     dark — below AA for text the reader is meant to act on. --slate at
+     rest is 5.76:1 / 8.01:1 and still visibly recedes from the --ink it
+     becomes on hover. See tests/test_contrast.py. */
+  .clients-summary-edit { flex: none; color: var(--slate); font-size: 0.85rem; }
   .clients-summary:hover .clients-summary-edit,
   .clients-summary:focus-visible .clients-summary-edit,
-  .clients-summary[aria-expanded="true"] .clients-summary-edit { opacity: 1; }
+  .clients-summary[aria-expanded="true"] .clients-summary-edit { color: var(--ink); }
   /* Anchored, fixed-position editor — below .modal-backdrop's z-index so
      the "+ Add new client" quick-add modal it can open sits above it,
      and above the row menus/account menu (z-index 20) it can sit over. */
@@ -1043,6 +1049,11 @@
     width: 100%; font-family: inherit;
   }
   .search-box input::placeholder { color: var(--slate); }
+  /* The inner input clears its own outline (above), so the focus ring
+     has to live on the wrapper — without this, tabbing into the topbar
+     search left no visible focus indicator at all. Same gold ring, same
+     offset as the global :focus-visible rule. */
+  .search-box:focus-within { outline: 2px solid var(--gold); outline-offset: 2px; }
   /* color belongs here and not only on the svg child below: button's
      own base rule paints text var(--accent-solid-text), which in dark
      mode is near-black — so an .icon-btn holding a text glyph rather
@@ -2003,7 +2014,11 @@
   /* A contact somebody has reported as wrong. Dimmed rather than
      hidden: it is still the only number anyone has, and the person
      dialling it should see both that it exists and that it's suspect. */
-  .stale-row td { opacity: 0.55; }
+  /* 0.55 dimmed the row's --ink to 4.10:1 in light mode — under AA for
+     directory data that's stale but still meant to be read. 0.65 lands
+     at 5.76:1 light / 8.01:1 dark and still reads as de-emphasised.
+     Measured in tests/test_contrast.py. */
+  .stale-row td { opacity: 0.65; }
   .stale-note { color: var(--warn); font-style: italic; }
   /* Which staffer the search actually hit. The office is shown whole
      for context, so without this a search for "water" lists four names

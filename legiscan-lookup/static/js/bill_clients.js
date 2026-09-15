@@ -93,7 +93,7 @@ function billClientCellHtml(billId, options) {
   const placeholder = allClients.length ? (available.length ? '+ Add client' : 'All clients assigned') : 'No clients yet…';
   return `
     <div>${chips}</div>
-    <select class="add-client-select" onchange="handleClientCellSelect(${billId}, this)" style="margin-top:0.2rem">
+    <select class="add-client-select" aria-label="Assign a client to this bill" onchange="handleClientCellSelect(${billId}, this)" style="margin-top:0.2rem">
       <option value="">${placeholder}</option>
       ${clientOptionsHtml(available)}
     </select>
