@@ -1,26 +1,26 @@
-/* One keystroke to a search box, from anywhere in the shell.
+/* Keystrokes into search, from anywhere in the shell.
  *
  * There was a global search box in the topbar once, and it was removed
- * as redundant: /lookup is one click away in the sidebar and does the
- * same job better, so a second always-visible box competing with it was
- * furniture. That reasoning still holds, and this doesn't undo it —
- * what was missing wasn't a box, it was a way in that doesn't cost a
- * trip to the mouse. The topbar affordance here is a LINK shaped like a
- * search field (see app_shell), not an input: it navigates, it can be
- * middle-clicked, and it works with this file blocked.
+ * as redundant with /lookup. That reasoning still holds: the topbar
+ * affordance (see app_shell) is a LINK shaped like a search field, not
+ * an input — it navigates, it can be middle-clicked, and it works with
+ * this file blocked. What was missing wasn't a box, it was a way in that
+ * doesn't cost a trip to the mouse.
  *
- * Two bindings, both what people already have in their fingers:
+ * Two bindings, and they mean two different scopes on purpose, so the
+ * question "where do I search bills from here?" has one answer on every
+ * page:
  *
- *   ⌘K / Ctrl-K  — works even while typing, since it is modified and
- *                  can't be mistaken for text.
- *   /            — only when the caret is not in a field, or it would
- *                  eat the slash out of "Health and Safety 39617.2".
- *
- * Where it lands is the page's own search box if the page has one,
- * because "search from here" means this page's search on a page that
- * searches something — /lobbying searches lobbying disclosures and
- * /directory searches Capitol staff, and sending either of those to
- * /lookup would be the shortcut arguing with the page.
+ *   ⌘K / Ctrl-K  — the GLOBAL bill search, from every page. On /lookup
+ *                  that box is right here, so focus it; anywhere else
+ *                  (including /lobbying and /directory, which have their
+ *                  own scoped boxes) go to it. Works even while typing,
+ *                  since it is modified and can't be mistaken for text.
+ *   /            — "search THIS page": the page's own scoped box if it
+ *                  has one (/lobbying disclosures, /directory staff,
+ *                  /flagged bills), else the global search as a fallback.
+ *                  Only when the caret is not already in a field, or it
+ *                  would eat the slash out of "Health and Safety 39617.2".
  *
  * The selectors are listed here rather than marked with an attribute in
  * each template on purpose: four templates edited for one keybinding is
@@ -28,9 +28,20 @@
  * this list is one line to extend when a fifth search page appears.
  */
 const PAGE_SEARCH_SELECTOR = '#q, #flagged-search';
+/* The global bill search only lives on /lookup; its box there is #q.
+ * Gated on the path because #q is also the id of the *scoped* box on
+ * /lobbying and /directory, and ⌘K must not mistake one of those for the
+ * global search. */
+const GLOBAL_SEARCH_PATH = '/lookup';
 
 function pageSearchBox() {
   return document.querySelector(PAGE_SEARCH_SELECTOR);
+}
+
+function globalSearchBox() {
+  return window.location.pathname === GLOBAL_SEARCH_PATH
+    ? document.querySelector('#q')
+    : null;
 }
 
 /* A shortcut that steals "/" mid-sentence is worse than no shortcut.
@@ -42,21 +53,30 @@ function isTypingIn(el) {
   return ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
 }
 
+// Focus and select, not just focus: the fast second search is a different
+// question, and having to clear the last one first is the friction these
+// shortcuts exist to remove.
+function focusSearch(box) {
+  box.focus();
+  box.select();
+}
+
 document.addEventListener('keydown', (e) => {
   const commandK = (e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'k';
   const slash = e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingIn(document.activeElement);
   if (!commandK && !slash) return;
-  const box = pageSearchBox();
-  if (box) {
-    e.preventDefault();
-    box.focus();
-    // Selected, not just focused: the fast second search is a different
-    // question, and having to clear the last one first is the friction
-    // this shortcut exists to remove.
-    box.select();
+  e.preventDefault();
+
+  if (commandK) {
+    const global = globalSearchBox();
+    if (global) { focusSearch(global); return; }
+    window.location.href = '/lookup';
     return;
   }
-  e.preventDefault();
+
+  // slash: this page's own search, or the global one if it has none.
+  const box = pageSearchBox();
+  if (box) { focusSearch(box); return; }
   window.location.href = '/lookup';
 });
 
