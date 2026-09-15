@@ -123,6 +123,7 @@
 <script src="{{CONFIRM_DELETE_SRC}}"></script>
 <script src="{{TITLE_CASE_SRC}}"></script>
 <script src="{{ROW_MENU_SRC}}"></script>
+<script src="{{ROW_NAV_SRC}}"></script>
 <script>
 // bus_phone is stored exactly as typed, with no format enforced on
 // entry — this only reformats a clean 10-digit US number for display,
@@ -141,6 +142,10 @@ const formCard = document.getElementById('form-card');
 const errorEl = document.getElementById('error');
 const loadingEl = document.getElementById('loading');
 const listEl = document.getElementById('list');
+// Whole client row opens the client — except the Edit button and the row
+// menu, which keep their own jobs (see row_nav.js). Bound once; render()
+// replaces the tbody but not this container.
+enableRowNavigation(listEl);
 const statsEl = document.getElementById('stats');
 const addBtn = document.getElementById('add-client-btn');
 const cancelBtn = document.getElementById('cancel-client-btn');
@@ -440,7 +445,7 @@ function render(rows) {
       <thead><tr><th scope="col">Name</th><th scope="col">Business address</th><th scope="col">Industry / interests</th><th scope="col">Filer ID</th><th scope="col"></th></tr></thead>
       <tbody>
       ${rows.map(c => `
-        <tr>
+        <tr class="link-row" data-href="/clients/detail?id=${c.id}">
           <td><a href="/clients/detail?id=${c.id}">${escapeText(titleCaseName(c.name))}</a></td>
           <td>${escapeText([[c.bus_addr1, c.bus_city, c.bus_st, c.bus_zip4].filter(Boolean).join(', '), formatPhone(c.bus_phone)].filter(Boolean).join(' · '))}</td>
           <td>${escapeText(c.interests || '')}</td>

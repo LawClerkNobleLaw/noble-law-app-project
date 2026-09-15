@@ -564,6 +564,7 @@ CLIENT_QUICKADD_JS = _read_static_text("js/client_quickadd.js")
 CONFIRM_DELETE_JS = _read_static_text("js/confirm_delete.js")
 TITLE_CASE_JS = _read_static_text("js/title_case.js")
 ROW_MENU_JS = _read_static_text("js/row_menu.js")
+ROW_NAV_JS = _read_static_text("js/row_nav.js")
 PAGE_PROGRESS_JS = _read_static_text("js/page_progress.js")
 
 # Poppins, self-hosted — see FONT_LINKS for why.
@@ -601,6 +602,7 @@ STATIC_ASSETS = {
     "js/confirm_delete.js": (CONFIRM_DELETE_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/title_case.js": (TITLE_CASE_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/row_menu.js": (ROW_MENU_JS.encode("utf-8"), JS_CONTENT_TYPE),
+    "js/row_nav.js": (ROW_NAV_JS.encode("utf-8"), JS_CONTENT_TYPE),
     "js/page_progress.js": (PAGE_PROGRESS_JS.encode("utf-8"), JS_CONTENT_TYPE),
     **{f"fonts/poppins-{w}.woff2": (POPPINS_FILES[w], "font/woff2") for w in POPPINS_WEIGHTS},
     **{f"fonts/garet-{name}.woff2": (GARET_FILES[name], "font/woff2") for name in GARET_FACES},
@@ -621,6 +623,7 @@ CLIENT_QUICKADD_SRC = _asset_url("js/client_quickadd.js")
 CONFIRM_DELETE_SRC = _asset_url("js/confirm_delete.js")
 TITLE_CASE_SRC = _asset_url("js/title_case.js")
 ROW_MENU_SRC = _asset_url("js/row_menu.js")
+ROW_NAV_SRC = _asset_url("js/row_nav.js")
 PAGE_PROGRESS_SRC = _asset_url("js/page_progress.js")
 
 # Poppins is the body/UI typeface (--font-sans in STYLE), served from
@@ -1330,6 +1333,7 @@ LOOKUP_BODY = _render_template(
     BILL_STATUS_SRC=BILL_STATUS_SRC,
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
     POSITION_HISTORY_SRC=POSITION_HISTORY_SRC,
+    ROW_NAV_SRC=ROW_NAV_SRC,
     TITLE_CASE_SRC=TITLE_CASE_SRC,
     TOAST_SRC=TOAST_SRC,
     top_nav=''.join(('<div class="skeleton-row">\n      <div class="skeleton-bar" style="width:10%"></div>\n      <div class="skeleton-bar" style="width:45%"></div>\n      <div class="skeleton-bar" style="width:14%"></div>\n      <div class="skeleton-bar" style="width:12%"></div>\n    </div>' for _ in range(3))),
@@ -1565,6 +1569,7 @@ CLIENTS_BODY = _render_template(
     CONFIRM_DELETE_SRC=CONFIRM_DELETE_SRC,
     TITLE_CASE_SRC=TITLE_CASE_SRC,
     ROW_MENU_SRC=ROW_MENU_SRC,
+    ROW_NAV_SRC=ROW_NAV_SRC,
 )
 
 CLIENTS_PAGE = page("Clients — Rotunda", "/clients", CLIENTS_BODY)
