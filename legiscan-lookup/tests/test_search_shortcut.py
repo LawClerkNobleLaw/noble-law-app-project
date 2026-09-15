@@ -38,11 +38,20 @@ def test_it_names_the_keystroke():
     assert "<kbd>" in app.app_shell("/flagged", "<p>body</p>")
 
 
-def test_the_pages_that_already_have_a_search_box_do_not_get_it():
-    """Pointing at /lookup from /lookup is the chrome arguing with the
-    page. /lobbying and /directory search their own things."""
-    for path in ("/lookup", "/lobbying", "/directory"):
-        assert 'class="topbar-search"' not in app.app_shell(path, "<p>body</p>")
+def test_scoped_search_pages_still_get_the_global_affordance():
+    """The global "Search bills" affordance is a different scope than a
+    page's own box, so hiding it wherever a page had any search of its
+    own left visitors on /directory asking "where do I search bills from
+    here?". It now sits in the same spot on those pages too, alongside
+    the page's own scoped box."""
+    for path in ("/lobbying", "/directory"):
+        assert 'class="topbar-search"' in app.app_shell(path, "<p>body</p>")
+
+
+def test_lookup_itself_does_not_get_it():
+    """/lookup *is* the global bill search, so a topbar link back to it
+    would be a dead link-to-self (⌘K still focuses its box there)."""
+    assert 'class="topbar-search"' not in app.app_shell("/lookup", "<p>body</p>")
 
 
 # ── The keystroke itself ────────────────────────────────────────────
@@ -67,3 +76,15 @@ def test_slash_is_ignored_while_the_caret_is_in_a_field():
 
 def test_the_key_hint_is_corrected_off_the_mac_default():
     assert "'Ctrl K'" in app.SEARCH_SHORTCUT_JS
+
+
+def test_command_k_is_the_global_search_gated_on_the_lookup_path():
+    """⌘K means the global bill search from every page. Its box only
+    lives on /lookup, and #q is *also* the id of the scoped box on
+    /lobbying and /directory — so the global path must gate it, or ⌘K
+    would mistake a scoped box for the global search."""
+    js = app.SEARCH_SHORTCUT_JS
+    assert "GLOBAL_SEARCH_PATH = '/lookup'" in js
+    assert "window.location.pathname === GLOBAL_SEARCH_PATH" in js
+    # commandK falls back to navigating to the global search page.
+    assert "if (commandK)" in js
