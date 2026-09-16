@@ -3984,11 +3984,16 @@ class Handler(BaseHTTPRequestHandler):
                 # ahead of a hearing names. get_bill_report already
                 # filters these to date >= today and orders them.
                 hearing = (report.get("upcoming_hearings") or [None])[0]
+                # The code sections the bill touches, derived at ingest and
+                # read verbatim (no API call) — the factual lead of the
+                # draft's argument paragraph. See letter_drafts.build_seed.
+                sections = db.sections_for_bills(conn, [report["bill_id"]]).get(report["bill_id"], [])
                 seed = letter_drafts.build_seed(
                     report, client,
                     position=(client or {}).get("position"),
                     hearing=hearing,
                     profile=accounts.get_profile(conn, user_id),
+                    sections=sections,
                 )
                 letter_id = db.create_letter(conn, user_id, {
                     "bill_id": report["bill_id"],
