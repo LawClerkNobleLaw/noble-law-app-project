@@ -17,15 +17,16 @@
 <div class="panel">
   <div class="panel-head">
     <div>
-      <h2 class="title">Flagged Bills</h2>
-      <!-- role="status": filtering is the core interaction on this page
-           and its entire outcome used to be invisible to a screen
-           reader — the count lived only inside the rail's per-facet
-           .n spans. Server-rendered and empty rather than created
-           alongside its first message, for the same reason toast.js
-           keeps a standing region. It's also the only place on screen
-           that says how many rows survived the filters. -->
-      <div class="sub"><span id="result-count" role="status"></span></div>
+      <!-- The panel title is the live result count, not a second
+           "Flagged Bills" (the page-head h1 and the sidebar already
+           say that). role="status": filtering is the core interaction
+           on this page and its entire outcome used to be invisible to
+           a screen reader — the count lived only inside the rail's
+           per-facet .n spans. Server-rendered with a static fallback
+           rather than created alongside its first message, for the same
+           reason toast.js keeps a standing region. It's also the only
+           place on screen that says how many rows survived the filters. -->
+      <h2 class="title" id="result-count" role="status">Flagged Bills</h2>
       <div class="sub" id="freshness"></div>
     </div>
     <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
@@ -729,7 +730,7 @@ function renderResultCount(shown) {
   const el = document.getElementById('result-count');
   if (!el) return;
   const total = currentRows.length;
-  if (!total) { el.textContent = ''; return; }
+  if (!total) { el.textContent = 'Flagged Bills'; return; }
   el.textContent = shown === total
     ? `${total} bill${total === 1 ? '' : 's'}`
     : `${shown} of ${total} bills`;
