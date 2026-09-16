@@ -151,6 +151,14 @@ def _migrate(conn):
     if "amend_by_date" not in bill_cols:
         conn.execute("ALTER TABLE bills ADD COLUMN amend_by_date TEXT")
 
+    # Per-legislator roll-call work added people_id to sponsors so a
+    # sponsor joins to their own ballot and to legislators (the
+    # roll_call_votes and legislators tables are new, so schema.sql's
+    # IF NOT EXISTS handles them; only this column needs backfilling).
+    sponsor_cols = {row["name"] for row in conn.execute("PRAGMA table_info(bill_sponsors)")}
+    if "people_id" not in sponsor_cols:
+        conn.execute("ALTER TABLE bill_sponsors ADD COLUMN people_id INTEGER")
+
     flagged_cols = {row["name"] for row in conn.execute("PRAGMA table_info(flagged_bills)")}
     if "notes" not in flagged_cols:
         conn.execute("ALTER TABLE flagged_bills ADD COLUMN notes TEXT")
@@ -455,8 +463,9 @@ def upsert_bill(conn, bill):
     )
     conn.execute("DELETE FROM bill_sponsors WHERE bill_id = ?", (bill["id"],))
     conn.executemany(
-        "INSERT INTO bill_sponsors (bill_id, name, party, role) VALUES (?,?,?,?)",
-        [(bill["id"], s.get("name"), s.get("party"), s.get("role")) for s in bill.get("sponsors", [])],
+        "INSERT INTO bill_sponsors (bill_id, people_id, name, party, role) VALUES (?,?,?,?,?)",
+        [(bill["id"], s.get("people_id"), s.get("name"), s.get("party"), s.get("role"))
+         for s in bill.get("sponsors", [])],
     )
     conn.execute("DELETE FROM bill_status_history WHERE bill_id = ?", (bill["id"],))
     conn.executemany(
@@ -1256,11 +1265,13 @@ def _bill_position_verdict(status_label, position):
     """How a bill's outcome lines up with one of the firm's own positions
     on it — 'with_us', 'against_us', 'pending' (still moving), or None
     for 'watch' (not a stance that can win or lose). P2-25's fix for real:
-    the audit asked for "their vote against your client's position" —
-    but LegiScan's votes table is a chamber-level tally, never a
-    per-legislator ballot (see this function's caller), so there is no
-    honest "their vote" to compare. This compares the BILL's own outcome
-    instead, which the app already has.
+    the audit asked for "their vote against your client's position", and
+    this compares the BILL's own outcome against the position — a
+    deliberate, always-available signal, independent of whether any
+    individual roll call has been recorded yet. (Per-legislator ballots
+    are now stored separately — see roll_call_detail — but a member's own
+    vote is a different question from whether the bill went the firm's
+    way, which is what this verdict answers.)
 
     LegiScan's status is a small closed vocabulary (see STATUS_LABELS in
     legiscan_client.py) — passed/failed/vetoed are the only terminal
@@ -1287,22 +1298,20 @@ def list_sponsor_vote_rollup(conn, user_id):
     bill_sponsors + votes + bill_client_links, all already stored by the
     daily refresh job or entered by the firm — no new LegiScan call.
 
-    Grouped by sponsor NAME as stored in bill_sponsors (which doesn't
-    carry LegiScan's people_id — shape_bill() never captured it, see
-    legiscan_client.py), so two different sponsors who happen to share
-    an identical name string would be merged here. Accepted as an
-    unlikely edge case for one user's own handful of flagged bills
-    rather than a reason to add a people_id column and re-backfill.
+    Grouped by sponsor NAME as stored in bill_sponsors, so two different
+    sponsors who happen to share an identical name string would be merged
+    here. bill_sponsors now carries LegiScan's people_id (see
+    upsert_bill), so this could group by that instead; it still groups by
+    name because the display is by name and the collision is an unlikely
+    edge case for one user's own handful of flagged bills.
 
-    Important: this is NOT each legislator's personal ballot. LegiScan's
-    votes table (and the Votes panel on /lookup and /report) is a
-    chamber-level roll-call tally — yea/nay/nv/absent counts — not a
-    record of which way any individual voted. That level of detail
-    exists on LegiScan's side (getRollCall, confirmed live to return
-    each vote keyed by people_id) but this app has never called it;
-    doing so would be a new integration, not reuse of what's already
-    stored, so it's deliberately out of scope here. See
-    _bill_position_verdict for what this builds instead."""
+    Scope: this rollup summarizes at the chamber-tally level — the
+    yea/nay/nv/absent counts in the `votes` table — not each
+    legislator's own ballot. The per-member detail (getRollCall, keyed by
+    people_id) IS now fetched and stored — see sync_member_votes in
+    refresh_watchlist.py and roll_call_detail() below — but that's the
+    read a whip-count view uses; this function stays a per-sponsor
+    outcome rollup. See _bill_position_verdict for what it builds."""
     sponsor_rows = conn.execute(
         f"""SELECT s.name, s.party, s.role, s.bill_id, b.state, b.bill_number, b.title, b.status_label
            FROM bill_sponsors s
@@ -1350,6 +1359,112 @@ def list_sponsor_vote_rollup(conn, user_id):
     for s in result:
         s["bill_count"] = len(s["bills"])
     return result
+
+
+# ── Per-legislator roll-call detail and member metadata ─────────────
+#
+# The "who voted how" layer under the chamber tallies in `votes`. Both
+# tables are a public, org-unscoped, permanent cache (see schema.sql):
+# a recorded roll call never changes, so these functions are written to
+# store-once and read cheaply, and the ingest side (refresh_watchlist)
+# only ever fetches roll calls this store doesn't already have.
+
+
+def roll_calls_with_detail(conn, roll_call_ids):
+    """Of the given roll_call_ids, which already have per-member detail
+    stored — so ingest can fetch only the misses. Empty input, empty
+    set; roll calls are immutable, so a hit never needs re-fetching."""
+    ids = [i for i in roll_call_ids if i is not None]
+    if not ids:
+        return set()
+    placeholders = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"SELECT DISTINCT roll_call_id FROM roll_call_votes WHERE roll_call_id IN ({placeholders})",
+        ids,
+    ).fetchall()
+    return {r["roll_call_id"] for r in rows}
+
+
+def store_roll_call_votes(conn, roll_call_id, votes):
+    """Store the individual ballots for one roll call (from
+    legiscan_client.get_roll_call). Replaces any existing rows for this
+    roll_call_id so a re-fetch is idempotent, though the cache means one
+    is rarely needed. Ballots with no people_id are skipped — it's the
+    other half of the primary key."""
+    conn.execute("DELETE FROM roll_call_votes WHERE roll_call_id = ?", (roll_call_id,))
+    conn.executemany(
+        """INSERT INTO roll_call_votes (roll_call_id, people_id, vote_id, vote_text)
+           VALUES (?,?,?,?)""",
+        [
+            (roll_call_id, v.get("people_id"), v.get("vote_id"), v.get("vote_text"))
+            for v in votes
+            if v.get("people_id") is not None
+        ],
+    )
+
+
+def store_legiscan_members(conn, people, session_id):
+    """Upsert a session's member roster (from
+    legiscan_client.get_session_people), stamping synced_at so
+    legiscan_members_fresh() can decide when the roster is worth
+    re-pulling. Keyed by people_id, which is stable across sessions, so a
+    member who reappears is updated in place rather than duplicated.
+
+    Writes the LegiScan roll-call roster (legiscan_members), NOT the
+    org-scoped `legislators` directory table — see schema.sql for why
+    those are separate."""
+    conn.executemany(
+        """INSERT INTO legiscan_members (people_id, name, party, role, district, chamber, session_id, synced_at)
+           VALUES (?,?,?,?,?,?,?, datetime('now'))
+           ON CONFLICT(people_id) DO UPDATE SET
+             name=excluded.name, party=excluded.party, role=excluded.role,
+             district=excluded.district, chamber=excluded.chamber,
+             session_id=excluded.session_id, synced_at=excluded.synced_at""",
+        [
+            (p.get("people_id"), p.get("name"), p.get("party"), p.get("role"),
+             p.get("district"), p.get("chamber"), session_id)
+            for p in people
+            if p.get("people_id") is not None
+        ],
+    )
+
+
+def legiscan_members_fresh(conn, session_id, within_days=7):
+    """Whether this session's roster was synced within the last
+    `within_days` — the guard that keeps getSessionPeople to about one
+    call per session per week instead of one per bill per refresh. False
+    for a session never synced."""
+    row = conn.execute(
+        """SELECT MAX(synced_at) AS last FROM legiscan_members WHERE session_id = ?""",
+        (session_id,),
+    ).fetchone()
+    if not row or not row["last"]:
+        return False
+    cutoff = conn.execute(
+        "SELECT datetime('now', ?) AS c", (f"-{int(within_days)} days",)
+    ).fetchone()["c"]
+    return row["last"] >= cutoff
+
+
+def roll_call_detail(conn, roll_call_id):
+    """Every member's ballot on one roll call, each resolved to a named
+    member via legiscan_members — the read the whip-count view is built
+    on. A ballot whose people_id isn't in legiscan_members yet still
+    appears (name None), so a roll call is never silently short a vote.
+    Ordered yea → nay → other, then by name, so the two sides read as
+    blocks."""
+    rows = conn.execute(
+        """SELECT rcv.people_id, rcv.vote_text, rcv.vote_id,
+                  m.name, m.party, m.chamber, m.district
+           FROM roll_call_votes rcv
+           LEFT JOIN legiscan_members m ON m.people_id = rcv.people_id
+           WHERE rcv.roll_call_id = ?
+           ORDER BY CASE rcv.vote_text
+                      WHEN 'Yea' THEN 1 WHEN 'Nay' THEN 2 ELSE 3 END,
+                    m.name""",
+        (roll_call_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ── The Legislature's deadline calendar (see deadlines.py) ─────────

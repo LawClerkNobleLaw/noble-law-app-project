@@ -61,6 +61,10 @@ def shape_bill(bill):
         "state": bill.get("state"),
         "bill_number": bill.get("bill_number"),
         "session_label": (bill.get("session") or {}).get("session_name"),
+        # LegiScan's own session id, kept only in-memory for the daily
+        # job — it's how ingest knows which session's people to refresh
+        # (see get_session_people). Not stored on the bills row.
+        "session_id": (bill.get("session") or {}).get("session_id"),
         "title": bill.get("title"),
         "description": bill.get("description"),
         "status_code": bill.get("status"),
@@ -69,7 +73,11 @@ def shape_bill(bill):
         "url": bill.get("url"),
         "change_hash": bill.get("change_hash"),
         "sponsors": [
-            {"name": s.get("name"), "party": s.get("party"), "role": s.get("role")}
+            # people_id is LegiScan's stable per-legislator key — kept so
+            # a sponsor can be joined to their own roll-call ballot and to
+            # the legislators metadata table, which name alone can't do.
+            {"people_id": s.get("people_id"), "name": s.get("name"),
+             "party": s.get("party"), "role": s.get("role")}
             for s in bill.get("sponsors", [])
         ],
         "history": [
@@ -161,6 +169,93 @@ def lookup_bill(bill_number):
     match = max(candidates, key=lambda v: int(v.get("relevance") or 0))
 
     return get_bill_detail(match["bill_id"])
+
+
+# ── Per-legislator roll-call detail and member metadata ─────────────
+#
+# getBill's vote index (shape_bill's "votes") is a chamber-level tally
+# only — yea/nay counts, never who voted how. These two calls are the
+# per-member layer on top of it, and both follow the same rule getBill
+# does: expensive enough to fetch only for bills someone has flagged, at
+# refresh time, and NEVER once per search-result row.
+
+
+def get_roll_call(roll_call_id):
+    """The individual member ballots behind one roll call — the detail
+    the vote index omits. One getRollCall call, keyed by LegiScan's
+    roll_call_id.
+
+    A recorded roll call is immutable: once a vote is taken the result
+    never changes. So callers cache this permanently by roll_call_id
+    (see roll_call_votes in schema.sql, keyed by roll_call_id and NOT
+    org-scoped — public record, same as bill_diff's version cache) and
+    fetch a given roll call exactly once, ever. That's what keeps the
+    per-refresh cost near zero: only roll calls not already cached are
+    pulled."""
+    detail = legiscan_call("getRollCall", id=roll_call_id)
+    if detail.get("status") != "OK":
+        raise RuntimeError(f"LegiScan getRollCall failed: {detail}")
+    rc = detail["roll_call"]
+    return {
+        "roll_call_id": rc.get("roll_call_id"),
+        "bill_id": rc.get("bill_id"),
+        "date": rc.get("date"),
+        "chamber": rc.get("chamber"),
+        "description": rc.get("desc"),
+        "yea": rc.get("yea"),
+        "nay": rc.get("nay"),
+        "nv": rc.get("nv"),
+        "absent": rc.get("absent"),
+        "total": rc.get("total"),
+        "passed": bool(rc.get("passed")),
+        # One entry per member: how that people_id voted. vote_text is
+        # LegiScan's own label ("Yea"/"Nay"/"NV"/"Absent"); vote_id is
+        # its numeric form of the same thing.
+        "votes": [
+            {
+                "people_id": v.get("people_id"),
+                "vote_id": v.get("vote_id"),
+                "vote_text": v.get("vote_text"),
+            }
+            for v in rc.get("votes", [])
+        ],
+    }
+
+
+# LegiScan's role_id, the reliable chamber signal on a person row (the
+# text `role` varies; the id doesn't). 1 is the lower house, 2 the
+# upper — Assembly and Senate in California.
+_ROLE_CHAMBER = {1: "Assembly", 2: "Senate"}
+
+
+def get_session_people(session_id):
+    """Every legislator in one session — name, party, role, district,
+    chamber — in a single getSessionPeople call, rather than a getPerson
+    per member. This is the metadata layer for the roll-call detail:
+    getRollCall keys each ballot by people_id and carries no names, so
+    these rows are what turn a people_id into a named member with a party.
+
+    One call covers a whole session's membership, so callers refresh it
+    on a slow cadence (see ensure_session_people in db.py), not per bill.
+
+    Committee memberships are deliberately absent: LegiScan's person
+    object doesn't carry them and there's no roster endpoint, so there's
+    nothing to shape here for them."""
+    detail = legiscan_call("getSessionPeople", id=session_id)
+    if detail.get("status") != "OK":
+        raise RuntimeError(f"LegiScan getSessionPeople failed: {detail}")
+    people = (detail.get("sessionpeople") or {}).get("people", [])
+    return [
+        {
+            "people_id": p.get("people_id"),
+            "name": p.get("name"),
+            "party": p.get("party"),
+            "role": p.get("role"),
+            "district": p.get("district"),
+            "chamber": _ROLE_CHAMBER.get(p.get("role_id")),
+        }
+        for p in people
+    ]
 
 
 # ── what a search row can say about itself ──────────────────────────
