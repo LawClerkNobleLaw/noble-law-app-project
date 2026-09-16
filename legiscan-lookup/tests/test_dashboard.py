@@ -259,3 +259,89 @@ def test_summary_never_leaks_another_users_flagged_bills_or_clients(conn):
 
     assert summary["stats"]["flagged"] == 0
     assert summary["by_client"] == []
+
+# ── Cross-client position conflicts ─────────────────────────────────
+#
+# A bill the firm both supports (for one client) and opposes (for
+# another) is a compliance / client-relations risk that should lead the
+# attention queue as an active flag, not sit quietly in the by-client
+# rollup. Pure aggregation of assigned_clients — no new storage.
+
+def _client(conn, user_id, name):
+    return db.create_client(conn, user_id, {"name": name})
+
+
+def test_position_conflict_helper_only_fires_on_support_versus_oppose():
+    support = {"name": "UCSA", "position": "support"}
+    oppose = {"name": "Anthropic", "position": "oppose"}
+    watch = {"name": "Watcher", "position": "watch"}
+
+    assert db._position_conflict([oppose, support]) == (["Anthropic"], ["UCSA"])
+    assert db._position_conflict([support, watch]) is None   # watch is neutral
+    assert db._position_conflict([oppose, watch]) is None
+    assert db._position_conflict([support, {"name": "X", "position": "support"}]) is None
+
+
+def test_attention_queue_flags_a_cross_client_position_conflict(conn):
+    user_id = insert_user(conn)
+    _flag(conn, user_id, 1159, "SB1159")
+    anthropic = _client(conn, user_id, "Anthropic")
+    ucsa = _client(conn, user_id, "UCSA")
+    db.link_bill_to_client(conn, user_id, 1159, anthropic, position="oppose")
+    db.link_bill_to_client(conn, user_id, 1159, ucsa, position="support")
+
+    items = db.dashboard_summary(conn, user_id, today=TODAY)["attention"]
+    conflicts = [i for i in items if i["kind"] == "conflict"]
+
+    assert len(conflicts) == 1
+    assert conflicts[0]["title"] == "CA SB1159"
+    assert conflicts[0]["detail"] == "Client conflict — Anthropic opposing, UCSA supporting"
+    assert conflicts[0]["days"] is None
+    assert conflicts[0]["href"] == "/report?bill_id=1159"
+    # It's not left as unassigned cleanup — a conflicted bill has clients.
+    assert not any(i["kind"] == "unassigned" for i in items)
+
+
+def test_a_conflict_leads_the_queue_ahead_of_dated_work(conn):
+    user_id = insert_user(conn)
+    _flag(conn, user_id, 1, "AB1")
+    _flag(conn, user_id, 1159, "SB1159")
+    acme = _client(conn, user_id, "Acme")
+    anthropic = _client(conn, user_id, "Anthropic")
+    ucsa = _client(conn, user_id, "UCSA")
+    db.link_bill_to_client(conn, user_id, 1, acme)
+    db.link_bill_to_client(conn, user_id, 1159, anthropic, position="oppose")
+    db.link_bill_to_client(conn, user_id, 1159, ucsa, position="support")
+    _hearing(conn, 1, "2026-09-03")                 # tomorrow
+    _filing(conn, user_id, due_date="2026-08-31")   # 2 days overdue
+
+    items = db.dashboard_summary(conn, user_id, today=TODAY)["attention"]
+
+    # The conflict comes first even though a filing is already overdue.
+    assert items[0]["kind"] == "conflict"
+    assert [i["kind"] for i in items] == ["conflict", "filing", "hearing"]
+
+
+def test_agreeing_clients_are_not_a_conflict(conn):
+    user_id = insert_user(conn)
+    _flag(conn, user_id, 1, "AB1")
+    a = _client(conn, user_id, "Acme")
+    b = _client(conn, user_id, "Beta")
+    db.link_bill_to_client(conn, user_id, 1, a, position="support")
+    db.link_bill_to_client(conn, user_id, 1, b, position="watch")
+
+    items = db.dashboard_summary(conn, user_id, today=TODAY)["attention"]
+    assert not any(i["kind"] == "conflict" for i in items)
+
+
+def test_conflict_detail_caps_a_long_list_of_clients(conn):
+    user_id = insert_user(conn)
+    _flag(conn, user_id, 1, "AB1")
+    for name in ("Aco", "Bco", "Cco"):
+        db.link_bill_to_client(conn, user_id, 1, _client(conn, user_id, name), position="oppose")
+    db.link_bill_to_client(conn, user_id, 1, _client(conn, user_id, "Dco"), position="support")
+
+    conflict = [i for i in db.dashboard_summary(conn, user_id, today=TODAY)["attention"]
+                if i["kind"] == "conflict"][0]
+    # Three opponents -> first two named, then "+1 more".
+    assert conflict["detail"] == "Client conflict — Aco, Bco +1 more opposing, Dco supporting"

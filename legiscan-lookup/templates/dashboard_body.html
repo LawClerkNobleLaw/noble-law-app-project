@@ -172,9 +172,14 @@ function renderAttention(items) {
     // Today and tomorrow read as error rather than warning — same
     // distinction .next-chip.now already draws on the flagged table.
     const urgent = dated && i.days <= 1;
-    const chip = dated
-      ? `<span class="due-chip ${i.days < 0 || urgent ? 'over' : 'soon'}">${escapeText(dayLabel(i.days))}</span>`
-      : '';
+    // A conflict isn't a countdown — it gets a standing red flag rather
+    // than a day chip, reusing the same 'over' styling as an overdue item.
+    let chip = '';
+    if (i.kind === 'conflict') {
+      chip = `<span class="due-chip over">Conflict</span>`;
+    } else if (dated) {
+      chip = `<span class="due-chip ${i.days < 0 || urgent ? 'over' : 'soon'}">${escapeText(dayLabel(i.days))}</span>`;
+    }
     let detail = escapeText(i.detail);
     if (i.kind === 'hearing') {
       const where = [dateLabel(i.date), hearingTimeLabel(i.time), i.location].filter(Boolean);

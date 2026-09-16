@@ -3163,18 +3163,52 @@ def days_ago_in_california(days):
             - timedelta(days=days)).strftime("%Y-%m-%d")
 
 
-def _attention_items(flagged, filings, today, deadline=None):
-    """The one merged queue the dashboard leads with: everything with a
-    deadline attached, from whichever part of the app it came from,
-    ordered by how soon it bites.
+def _position_conflict(assigned):
+    """A cross-client position conflict on one bill: the firm holds both
+    a support and an oppose position on it, for different clients. Returns
+    (opponents, supporters) name lists when it is a conflict, else None.
+    'watch' is neutral — it can't be on either side of a conflict.
 
-    The point of merging is that these three kinds of work are only ever
-    urgent relative to each other, and until now lived on three separate
-    pages — a filing overdue by two days and a hearing on Thursday could
-    not be compared without opening both. `days` is the single sort key
-    that makes them comparable; a bill with no client assigned has no
-    date at all, so it sorts last (None → +inf) and appears as cleanup
-    once the dated work is clear rather than as an interruption."""
+    Pure function of the assigned_clients already attached to a flagged
+    bill, so it can never disagree with what the same page shows for that
+    bill — same reasoning as _client_rollup."""
+    supporters = [c.get("name") for c in assigned if c.get("position") == "support"]
+    opponents = [c.get("name") for c in assigned if c.get("position") == "oppose"]
+    if supporters and opponents:
+        return opponents, supporters
+    return None
+
+
+def _conflict_side(names, verb):
+    """"Anthropic opposing" / "Anthropic, UCSA +1 more supporting" — names
+    the clients on one side of a conflict, capped so a firm that put ten
+    clients on a hot bill doesn't overrun the row."""
+    names = [n for n in names if n]
+    shown = ", ".join(names[:2])
+    if len(names) > 2:
+        shown += f" +{len(names) - 2} more"
+    return f"{shown} {verb}"
+
+
+# Kinds that lead the attention queue regardless of any date: a
+# cross-client position conflict is a standing compliance / client-
+# relations risk, not a countdown, so it can't sort by `days` with the
+# rest and would sink to the bottom (days None) if it tried.
+_ATTENTION_PRIORITY = {"conflict": 0}
+
+
+def _attention_items(flagged, filings, today, deadline=None):
+    """The one merged queue the dashboard leads with: the dated work
+    (legislative deadline, prepared filings, hearings) ordered by how soon
+    it bites, plus two undated flags — a cross-client position conflict,
+    which leads the queue, and unassigned bills, which trail it as cleanup.
+
+    The point of merging the dated kinds is that they are only ever urgent
+    relative to each other, and until now lived on three separate pages —
+    a filing overdue by two days and a hearing on Thursday could not be
+    compared without opening both. `days` is the single sort key that
+    makes them comparable; an undated item has no date at all, so it sorts
+    by its kind's priority instead (conflicts first, unassigned last)."""
     items = []
 
     # The Legislature's own deadline, if one is close. One row rather
@@ -3227,7 +3261,20 @@ def _attention_items(flagged, filings, today, deadline=None):
                 "location": hearing.get("location"),
                 "href": f"/report?bill_id={bill['bill_id']}",
             })
-        if not bill.get("assigned_clients"):
+        assigned = bill.get("assigned_clients") or []
+        conflict = _position_conflict(assigned)
+        if conflict:
+            opponents, supporters = conflict
+            items.append({
+                "kind": "conflict",
+                "days": None,
+                "title": f"{bill['state']} {bill['bill_number']}",
+                "detail": "Client conflict — "
+                          f"{_conflict_side(opponents, 'opposing')}, "
+                          f"{_conflict_side(supporters, 'supporting')}",
+                "href": f"/report?bill_id={bill['bill_id']}",
+            })
+        if not assigned:
             items.append({
                 "kind": "unassigned",
                 "days": None,
@@ -3236,7 +3283,13 @@ def _attention_items(flagged, filings, today, deadline=None):
                 "href": f"/report?bill_id={bill['bill_id']}",
             })
 
-    items.sort(key=lambda i: (i["days"] is None, i["days"] if i["days"] is not None else 0))
+    # Conflicts lead (priority 0); then dated work by how soon it bites;
+    # then the remaining undated cleanup (unassigned) last.
+    items.sort(key=lambda i: (
+        _ATTENTION_PRIORITY.get(i["kind"], 1),
+        i["days"] is None,
+        i["days"] if i["days"] is not None else 0,
+    ))
     return items
 
 
