@@ -1972,7 +1972,29 @@ def lobbying_detail(conn, entity_id, name):
         })
     relationships.sort(key=lambda r: r.get("filed_date") or "", reverse=True)
 
-    return {"entity": entity, "name": name, "relationships": relationships}
+    return {
+        "entity": entity, "name": name, "relationships": relationships,
+        "data_as_of": calaccess_last_synced(conn),
+    }
+
+
+def calaccess_last_synced(conn):
+    """When the CAL-ACCESS lobbying data was last refreshed.
+
+    The ingestion pipeline stamps lobbying_entities.last_synced_at on
+    every upsert (see calaccess_db.upsert_entity), so the newest of those
+    is the honest "data as of" for the two surfaces built on this data —
+    Organization Search and the lobbying detail page. Entities and
+    disclosures are refreshed in the same run, and only entities carry the
+    stamp, so the entity table's newest stamp stands for the whole load.
+
+    None when nothing has been ingested yet (a fresh DB, or a deployment
+    without the pipeline); the pages then show no stamp rather than an
+    invented one."""
+    row = conn.execute(
+        "SELECT MAX(last_synced_at) AS ts FROM lobbying_entities"
+    ).fetchone()
+    return row["ts"] if row else None
 
 
 def _trigger_refresh(job_name, target_fn):
@@ -3115,7 +3137,10 @@ class Handler(BaseHTTPRequestHandler):
                 # docstring) — a full 50 back almost certainly means more
                 # exist, so the frontend can flag that rather than the
                 # list silently looking complete in a compliance search.
-                self._send_json(200, {"results": results, "truncated": len(results) >= 50})
+                self._send_json(200, {
+                    "results": results, "truncated": len(results) >= 50,
+                    "data_as_of": calaccess_last_synced(conn),
+                })
             finally:
                 conn.close()
             return
@@ -3293,6 +3318,12 @@ class Handler(BaseHTTPRequestHandler):
                     "days": days,
                     "changes": changes,
                     "clients_by_bill": clients_by_bill,
+                    # When the flagged bills this digest draws from were last
+                    # refreshed — same stamp the flagged list and dashboard
+                    # show, so an empty feed reads as "nothing moved since
+                    # <date>" rather than an ambiguous silence. None until the
+                    # firm tracks something.
+                    "data_as_of": db.last_checked_at_for_user(conn, user_id),
                 })
             finally:
                 conn.close()

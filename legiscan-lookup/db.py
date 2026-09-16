@@ -1139,6 +1139,32 @@ def list_flagged_bills(conn, user_id, today=None):
     return result
 
 
+def last_checked_at_for_user(conn, user_id):
+    """When this user's tracked bills were last refreshed against LegiScan.
+
+    The daily refresh stamps watchlist.last_checked_at on every flagged
+    bill whether or not it moved (see touch_watchlist), so the newest of
+    those stamps is the honest "data as of" for every bill-derived surface
+    — the dashboard and the alerts digest, which both show refreshed bill
+    data but don't otherwise load the flagged rows that carry the stamp.
+    The flagged list computes the same value client-side from its own rows
+    (see renderFreshness in FLAGGED_BODY); this is that value for the pages
+    that never fetch those rows.
+
+    None when the firm tracks nothing yet — there is no refresh to date,
+    and the surfaces render no stamp rather than an invented one.
+    Org-scoped exactly as list_flagged_bills is, so the answer is about
+    this firm's bills, not the shared watchlist at large."""
+    row = conn.execute(
+        f"""SELECT MAX(w.last_checked_at) AS ts
+              FROM flagged_bills f
+              JOIN watchlist w ON w.bill_id = f.bill_id
+             WHERE {_org_scope("f.user_id")} AND f.archived_at IS NULL""",
+        (user_id,),
+    ).fetchone()
+    return row["ts"] if row else None
+
+
 CAPITOL_TZ = "America/Los_Angeles"
 
 
@@ -3291,6 +3317,11 @@ def dashboard_summary(conn, user_id, today=None):
 
     return {
         "today": today,
+        # When the flagged bills behind every tile and queue on this page
+        # were last refreshed — the newest watchlist stamp across them, so
+        # the dashboard can say "as of" the same way the flagged list does.
+        # None when nothing is tracked yet; the page then shows no stamp.
+        "data_as_of": last_checked_at_for_user(conn, user_id),
         "stats": {
             "flagged": len(flagged),
             "clients": len(clients),

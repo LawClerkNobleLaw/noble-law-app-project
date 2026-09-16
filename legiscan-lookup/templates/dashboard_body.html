@@ -2,6 +2,7 @@
   <div>
     <h1>Dashboard</h1>
     <p class="sub">Everything across your flagged bills, clients and prepared filings — one read, built from what the daily refresh already found.</p>
+    <div class="sub" id="freshness"></div>
   </div>
   <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
     <a href="/flagged" class="secondary">Flagged bills →</a>
@@ -266,6 +267,11 @@ async function load() {
     renderRecent(data.recent);
     renderHearings(data.hearings);
     renderByClient(data.by_client, data.unassigned);
+    // When the bills behind this page were last refreshed — the same
+    // "Checked <stamp>" the flagged list carries, said once here rather
+    // than per tile. Empty when nothing is tracked yet (data_as_of null).
+    const fresh = document.getElementById('freshness');
+    if (fresh) fresh.textContent = data.data_as_of ? `Checked ${fmtStamp(data.data_as_of)}` : '';
     gridEl.hidden = false;
   } catch (err) {
     errorEl.textContent = err.message;
