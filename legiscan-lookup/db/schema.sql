@@ -50,11 +50,12 @@ CREATE TABLE IF NOT EXISTS bill_status_history (
 CREATE INDEX IF NOT EXISTS idx_bill_status_history_bill_id ON bill_status_history(bill_id);
 
 CREATE TABLE IF NOT EXISTS bill_sponsors (
-  id        INTEGER PRIMARY KEY AUTOINCREMENT,
-  bill_id   INTEGER NOT NULL REFERENCES bills(id),
-  name      TEXT,
-  party     TEXT,
-  role      TEXT
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  bill_id    INTEGER NOT NULL REFERENCES bills(id),
+  people_id  INTEGER,           -- LegiScan's per-legislator key; joins to legiscan_members / roll_call_votes
+  name       TEXT,
+  party      TEXT,
+  role       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_bill_sponsors_bill_id ON bill_sponsors(bill_id);
 
@@ -99,6 +100,44 @@ CREATE TABLE IF NOT EXISTS votes (
   passed       INTEGER                   -- 0/1
 );
 CREATE INDEX IF NOT EXISTS idx_votes_bill_id ON votes(bill_id);
+
+-- Per-legislator ballots behind each roll call in `votes` — the "who
+-- voted how" the tally in `votes` can't express, from getRollCall (see
+-- legiscan_client.get_roll_call). Deliberately NOT tied to votes(id) by
+-- a foreign key and NOT org-scoped: a recorded roll call is public and
+-- immutable, so this is a permanent shared cache keyed by roll_call_id
+-- (same reasoning as bill_text_versions), which must survive the
+-- DELETE/replace upsert_bill does on `votes` every refresh. people_id
+-- joins to legiscan_members for name/party.
+CREATE TABLE IF NOT EXISTS roll_call_votes (
+  roll_call_id  INTEGER NOT NULL,      -- LegiScan's roll_call_id (= votes.id), not an FK on purpose
+  people_id     INTEGER NOT NULL,      -- joins to legiscan_members.people_id
+  vote_id       INTEGER,               -- LegiScan's numeric vote code
+  vote_text     TEXT,                  -- "Yea" | "Nay" | "NV" | "Absent"
+  PRIMARY KEY (roll_call_id, people_id)
+);
+CREATE INDEX IF NOT EXISTS idx_roll_call_votes_people_id ON roll_call_votes(people_id);
+
+-- LegiScan member metadata, from getSessionPeople (see
+-- legiscan_client.get_session_people): one row per legislator keyed by
+-- LegiScan's people_id, so a people_id on a ballot or a sponsor
+-- resolves to a named member with a party, chamber and district.
+-- Distinct from the org-scoped `legislators` directory table below
+-- (crowdsourced contact details) — this is public roll-call metadata,
+-- shared and not org-scoped. session_id + synced_at let ingest refresh
+-- a whole session's roster on a slow cadence rather than per bill. No
+-- committee memberships: LegiScan doesn't expose them.
+CREATE TABLE IF NOT EXISTS legiscan_members (
+  people_id   INTEGER PRIMARY KEY,     -- LegiScan's stable per-legislator key
+  name        TEXT,
+  party       TEXT,
+  role        TEXT,
+  district    TEXT,
+  chamber     TEXT,                     -- "Assembly" | "Senate"
+  session_id  INTEGER,
+  synced_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_legiscan_members_session_id ON legiscan_members(session_id);
 
 -- What the daily refresh actually observed change on a bill: one row per
 -- change, appended, never updated.

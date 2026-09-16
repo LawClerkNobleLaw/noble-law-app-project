@@ -12,6 +12,8 @@ live response (see search_bills()'s own docstring): a dict keyed by an
 opaque result id, plus one 'summary' key alongside the results to skip.
 """
 
+import pytest
+
 import legiscan_client
 
 
@@ -256,3 +258,87 @@ def test_bill_number_search_is_never_year_filtered(monkeypatch):
     legiscan_client.smart_search("AB122", year=legiscan_client.YEAR_CURRENT_SESSION, pages=4)
     assert "year" not in seen
     assert seen["bill"] == "AB122"
+
+
+# ── Per-legislator roll-call detail and member metadata ─────────────
+#
+# get_roll_call / get_session_people fake legiscan_call the same way the
+# search tests above do; the fake responses match the shapes the
+# functions' docstrings describe (getRollCall's `roll_call.votes` keyed
+# by people_id; getSessionPeople's `sessionpeople.people`).
+
+def test_get_roll_call_shapes_per_member_ballots(monkeypatch):
+    def fake_call(op, **params):
+        assert op == "getRollCall"
+        assert params["id"] == 555
+        return {
+            "status": "OK",
+            "roll_call": {
+                "roll_call_id": 555, "bill_id": 7, "date": "2026-06-01",
+                "chamber": "Senate", "desc": "Third reading",
+                "yea": 30, "nay": 8, "nv": 1, "absent": 1, "total": 40, "passed": 1,
+                "votes": [
+                    {"people_id": 101, "vote_id": 1, "vote_text": "Yea"},
+                    {"people_id": 102, "vote_id": 2, "vote_text": "Nay"},
+                ],
+            },
+        }
+
+    monkeypatch.setattr(legiscan_client, "legiscan_call", fake_call)
+    rc = legiscan_client.get_roll_call(555)
+
+    assert rc["roll_call_id"] == 555 and rc["passed"] is True
+    assert rc["yea"] == 30 and rc["nay"] == 8
+    assert rc["votes"] == [
+        {"people_id": 101, "vote_id": 1, "vote_text": "Yea"},
+        {"people_id": 102, "vote_id": 2, "vote_text": "Nay"},
+    ]
+
+
+def test_get_roll_call_raises_on_error_status(monkeypatch):
+    monkeypatch.setattr(legiscan_client, "legiscan_call",
+                        lambda op, **p: {"status": "ERROR", "alert": {"message": "nope"}})
+    with pytest.raises(RuntimeError):
+        legiscan_client.get_roll_call(1)
+
+
+def test_get_session_people_maps_role_id_to_chamber(monkeypatch):
+    def fake_call(op, **params):
+        assert op == "getSessionPeople"
+        assert params["id"] == 2172
+        return {
+            "status": "OK",
+            "sessionpeople": {
+                "session": {"session_id": 2172},
+                "people": [
+                    {"people_id": 101, "name": "A. Senator", "party": "D",
+                     "role": "Sen", "role_id": 2, "district": "SD-1"},
+                    {"people_id": 103, "name": "B. Member", "party": "R",
+                     "role": "Rep", "role_id": 1, "district": "AD-5"},
+                ],
+            },
+        }
+
+    monkeypatch.setattr(legiscan_client, "legiscan_call", fake_call)
+    people = legiscan_client.get_session_people(2172)
+
+    assert people[0]["chamber"] == "Senate" and people[0]["party"] == "D"
+    assert people[1]["chamber"] == "Assembly" and people[1]["district"] == "AD-5"
+
+
+def test_get_session_people_raises_on_error_status(monkeypatch):
+    monkeypatch.setattr(legiscan_client, "legiscan_call",
+                        lambda op, **p: {"status": "ERROR"})
+    with pytest.raises(RuntimeError):
+        legiscan_client.get_session_people(1)
+
+
+def test_shape_bill_captures_session_id_and_sponsor_people_id():
+    shaped = legiscan_client.shape_bill({
+        "bill_id": 7, "state": "CA", "bill_number": "SB1",
+        "session": {"session_id": 2172, "session_name": "2025-2026 Regular"},
+        "sponsors": [{"people_id": 101, "name": "A. Senator", "party": "D", "role": "Primary"}],
+    })
+
+    assert shaped["session_id"] == 2172
+    assert shaped["sponsors"][0]["people_id"] == 101

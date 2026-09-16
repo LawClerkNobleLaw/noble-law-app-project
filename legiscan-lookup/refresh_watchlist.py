@@ -44,7 +44,7 @@ import time
 
 import db
 import digest
-from legiscan_client import get_bill_detail, smart_search
+from legiscan_client import get_bill_detail, get_roll_call, get_session_people, smart_search
 
 # db.DB_DIR (not a path relative to this file) so the log lives on the
 # same disk as the SQLite file — on Render, the code checkout gets
@@ -68,6 +68,37 @@ def log(message):
     # once this runs as a background thread inside app.py on Render
     # rather than as its own short-lived local process.
     print(message, flush=True)
+
+
+def sync_member_votes(conn, bill):
+    """Cache the per-legislator ballots for a bill's roll calls, plus its
+    session's member roster — the "who voted how" getBill's tally index
+    omits. Cheap by construction: only roll calls not already cached are
+    pulled (they're immutable — see db.roll_call_votes), and
+    getSessionPeople runs at most about once per session per week
+    (db.legiscan_members_fresh), so a quiet refresh makes zero extra calls.
+
+    Best-effort: any LegiScan error here is logged and swallowed. The
+    bill's own status/tally/digest are already committed by the caller,
+    and a missing roll call is simply re-attempted next run (it's still
+    absent from the cache), so enrichment never costs the daily job its
+    guaranteed work."""
+    vote_ids = [v.get("roll_call_id") for v in bill.get("votes", []) if v.get("roll_call_id") is not None]
+    have = db.roll_calls_with_detail(conn, vote_ids)
+    to_fetch = [i for i in vote_ids if i not in have]
+    session_id = bill.get("session_id")
+    need_roster = session_id is not None and not db.legiscan_members_fresh(conn, session_id)
+    if not to_fetch and not need_roster:
+        return
+    try:
+        if need_roster:
+            db.store_legiscan_members(conn, get_session_people(session_id), session_id)
+        for roll_call_id in to_fetch:
+            db.store_roll_call_votes(conn, roll_call_id, get_roll_call(roll_call_id)["votes"])
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        log(f"  note — member votes for {bill.get('bill_number') or bill.get('id')}: {e}")
 
 
 def refresh_one(conn, bill_id):
@@ -98,6 +129,12 @@ def refresh_one(conn, bill_id):
     db.record_bill_changes(conn, bill_id, digest_changes)
     db.touch_watchlist(conn, bill_id)
     conn.commit()
+    # Per-legislator roll-call detail rides on the same fresh `bill` the
+    # tallies came from — the "same point" the chamber tallies are stored
+    # — but after the commit and best-effort, since it's a public cache
+    # that catches up on the next run: a getRollCall hiccup must not cost
+    # this bill its status/tally/digest, which are already durable above.
+    sync_member_votes(conn, bill)
     changed = (not before) or before["change_hash"] != bill.get("change_hash")
     return changed, digest_changes
 
