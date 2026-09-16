@@ -966,3 +966,64 @@ def test_today_in_california_is_an_iso_date(conn):
 
     assert len(today) == 10
     assert today[4] == "-" and today[7] == "-"
+
+
+# ── last_checked_at_for_user (the dashboard/alerts "data as of") ─────────
+
+def _stamp_watchlist(conn, bill_id, stamp):
+    conn.execute(
+        "UPDATE watchlist SET last_checked_at = ? WHERE bill_id = ?", (stamp, bill_id))
+    conn.commit()
+
+
+def test_last_checked_at_for_user_returns_newest_watchlist_stamp(conn):
+    user_id = insert_user(conn)
+    older = insert_bill(conn, bill_id=1, bill_number="SB1")
+    newer = insert_bill(conn, bill_id=2, bill_number="SB2")
+    db.flag_bill(conn, user_id, older)
+    db.flag_bill(conn, user_id, newer)
+    conn.commit()
+    _stamp_watchlist(conn, older, "2026-09-15 06:00:00")
+    _stamp_watchlist(conn, newer, "2026-09-16 06:00:00")
+
+    assert db.last_checked_at_for_user(conn, user_id) == "2026-09-16 06:00:00"
+
+
+def test_last_checked_at_for_user_is_none_without_flags(conn):
+    # A firm that tracks nothing has no refresh to date — the surfaces show
+    # no stamp rather than an invented one.
+    user_id = insert_user(conn)
+
+    assert db.last_checked_at_for_user(conn, user_id) is None
+
+
+def test_last_checked_at_for_user_ignores_archived_bills(conn):
+    # Archived bills are off every derived surface (see list_flagged_bills),
+    # so an archived-only firm reads as tracking nothing — same NULL.
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    conn.commit()
+    _stamp_watchlist(conn, bill_id, "2026-09-16 06:00:00")
+    db.archive_flagged_bill(conn, user_id, bill_id)
+    conn.commit()
+
+    assert db.last_checked_at_for_user(conn, user_id) is None
+
+
+def test_last_checked_at_for_user_is_org_scoped(conn):
+    # Same clause list_flagged_bills uses: a seat sees its firm's refresh,
+    # not a stranger's.
+    org_id = db.create_organization(conn, "Firm A")
+    org_a1 = insert_user(conn, email="a1@firm.example")
+    org_a2 = insert_user(conn, email="a2@firm.example")
+    conn.execute("UPDATE users SET org_id = ? WHERE id IN (?, ?)", (org_id, org_a1, org_a2))
+    outsider = insert_user(conn, email="solo@example.com")
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, org_a1, bill_id)
+    conn.commit()
+    _stamp_watchlist(conn, bill_id, "2026-09-16 06:00:00")
+
+    # A1's firm-mate sees the same stamp; the unrelated seat sees nothing.
+    assert db.last_checked_at_for_user(conn, org_a2) == "2026-09-16 06:00:00"
+    assert db.last_checked_at_for_user(conn, outsider) is None

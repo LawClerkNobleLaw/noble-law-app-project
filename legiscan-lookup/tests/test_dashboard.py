@@ -64,6 +64,23 @@ def test_summary_of_an_empty_account_is_all_zeros_not_an_error(conn):
     assert summary["stats"]["nearest_due_days"] is None
     assert summary["attention"] == []
     assert summary["by_client"] == []
+    # Nothing tracked yet, so no refresh to date — the page shows no stamp.
+    assert summary["data_as_of"] is None
+
+
+def test_summary_reports_when_the_flagged_bills_were_last_refreshed(conn):
+    # The dashboard's "data as of" is the newest watchlist stamp across the
+    # flagged bills (see db.last_checked_at_for_user) — the same value the
+    # flagged list shows, so the two pages can't disagree about freshness.
+    user_id = insert_user(conn)
+    _flag(conn, user_id, 1, "AB1")
+    conn.execute(
+        "UPDATE watchlist SET last_checked_at = ? WHERE bill_id = 1", ("2026-09-02 06:00:00",))
+    conn.commit()
+
+    summary = db.dashboard_summary(conn, user_id, today=TODAY)
+
+    assert summary["data_as_of"] == "2026-09-02 06:00:00"
 
 
 def test_hearings_tile_counts_only_the_next_fortnight(conn):

@@ -33,6 +33,7 @@
       <div class="filter-tabs" id="digest-filters" role="group" aria-label="Filter by change type"></div>
     </div>
 
+    <div class="sub" id="digest-freshness" style="padding:0.6rem 1.15rem 0"></div>
     <div id="digest-loading" role="status" class="skeleton show" style="padding:1rem 1.15rem"><span class="sr-only">Loading…</span>{{skeleton_rows}}</div>
     <div id="digest-feed" style="padding:0.4rem 0 0.4rem"></div>
   </div>
@@ -237,6 +238,11 @@ async function loadDigest() {
       const data = await digestRes.json();
       changes = data.changes || [];
       clientsByBill = data.clients_by_bill || {};
+      // When the flagged bills this digest watches were last refreshed —
+      // so an empty feed reads as "nothing moved since <date>", not an
+      // ambiguous silence. Empty when nothing is tracked yet.
+      const fresh = document.getElementById('digest-freshness');
+      if (fresh) fresh.textContent = data.data_as_of ? `Checked ${fmtStamp(data.data_as_of)}` : '';
     }
     renderFilters();
     renderFeed();

@@ -95,6 +95,7 @@ function renderDetail(d) {
       </div>
     </div>
     <div style="margin-top:1rem">${relationshipRows(d.relationships, d.name)}</div>
+    ${d.data_as_of ? `<p class="sub" style="margin-top:0.75rem">CAL-ACCESS data as of ${fmtStamp(d.data_as_of)}.</p>` : ''}
   `;
 }
 

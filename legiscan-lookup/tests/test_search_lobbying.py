@@ -174,3 +174,38 @@ def test_cluster_attaches_client_mention_to_its_matching_registered_entity(conn)
     assert results[0]["kind"] == "entity"
     assert len(results[0].get("variants") or []) == 1
     assert results[0]["variants"][0]["name"] == "Chevron Corp & its subsidiaries"
+
+
+# ── calaccess_last_synced / lobbying_detail "data as of" ────────────────
+
+def _stamp_entity(conn, entity_id, stamp):
+    conn.execute(
+        "UPDATE lobbying_entities SET last_synced_at = ? WHERE id = ?", (stamp, entity_id))
+    conn.commit()
+
+
+def test_calaccess_last_synced_is_the_newest_entity_stamp(conn):
+    # The ingestion pipeline stamps last_synced_at on every entity upsert;
+    # the newest is the honest "data as of" for the CAL-ACCESS surfaces.
+    older = insert_entity(conn, "Older Firm")
+    newer = insert_entity(conn, "Newer Firm")
+    _stamp_entity(conn, older, "2026-09-15 06:00:00")
+    _stamp_entity(conn, newer, "2026-09-16 06:00:00")
+
+    assert app.calaccess_last_synced(conn) == "2026-09-16 06:00:00"
+
+
+def test_calaccess_last_synced_is_none_before_any_ingest(conn):
+    # A fresh DB (or a deployment without the pipeline) has no load date —
+    # the pages show no stamp rather than an invented one.
+    assert app.calaccess_last_synced(conn) is None
+
+
+def test_lobbying_detail_carries_the_calaccess_as_of_date(conn):
+    firm = insert_entity(conn, "Acme Advocacy")
+    insert_disclosure(conn, firm, "Big Client", filing_id="F1")
+    _stamp_entity(conn, firm, "2026-09-16 06:00:00")
+
+    detail = app.lobbying_detail(conn, firm, "")
+
+    assert detail["data_as_of"] == "2026-09-16 06:00:00"

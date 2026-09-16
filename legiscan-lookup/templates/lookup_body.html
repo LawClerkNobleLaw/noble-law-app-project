@@ -812,9 +812,21 @@ function renderRowsNow() {
   // summary figure — those disagree (live: it reports 119 for a search
   // whose pages return 150 distinct bills), and this page used to print
   // the smaller number above the longer list.
+  //
+  // When the result set is capped (searchMeta.complete === false, i.e. more
+  // bills match than the page cap returned — see truncationHtml), all.length
+  // is the cap, not the true total. Saying a bare "200 bills match" there
+  // reads as a hard count and hides that anything is missing, so the count
+  // line names it as a first slice; truncationHtml below carries the why.
+  const capped = searchMeta.complete === false;
+  const total = all.length.toLocaleString();
   const countLine = filtered
-    ? `${rows.length.toLocaleString()} of ${all.length.toLocaleString()} bills`
-    : `${all.length.toLocaleString()} bill${all.length === 1 ? '' : 's'} match`;
+    ? capped
+      ? `${rows.length.toLocaleString()} of the first ${total} bills`
+      : `${rows.length.toLocaleString()} of ${total} bills`
+    : capped
+      ? `First ${total} bills — more match`
+      : `${total} bill${all.length === 1 ? '' : 's'} match`;
   announceCount(countLine);
 
   resultsEl.innerHTML = `
@@ -1027,9 +1039,11 @@ function corpusNoticeHtml() {
 function truncationHtml() {
   if (searchMode === 'text') return '';
   if (searchMeta.complete !== false) return '';
-  return `<div class="result-truncated">Filtering and sorting the first
-    ${(searchMeta.count || 0).toLocaleString()} matches — LegiScan reports about
-    ${(searchMeta.reported_count || 0).toLocaleString()} in total. Narrow the search terms to cover them all.</div>`;
+  return `<div class="result-truncated">This search is capped at the first
+    ${(searchMeta.count || 0).toLocaleString()} results — LegiScan reports about
+    ${(searchMeta.reported_count || 0).toLocaleString()} in total. Add or narrow the
+    search terms to bring the rest into range; filtering and sorting below apply to
+    the first ${(searchMeta.count || 0).toLocaleString()} only.</div>`;
 }
 
 // What the user has already decided about this bill, on the row where
