@@ -136,3 +136,78 @@ def test_another_user_cannot_delete_your_letter(conn):
 
     assert db.delete_letter(conn, other, letter_id) is False
     assert db.delete_letter(conn, user_id, letter_id) is True
+
+
+# ── The argument frame (PR C): facts + structure, rationale left blank ─
+#
+# The old single "[Why this matters]" placeholder is now led by fact —
+# the code sections the bill touches and a summary line — then a
+# position-specific frame whose actual rationale is still a bracketed
+# blank. Facts are pulled from bill_code_sections (verbatim, no API) and
+# the bill's description; the app never invents the client's reasoning.
+
+_SECTIONS = [
+    {"code": "Civil Code", "section": "1798.100", "action": "amend", "citation": "Section 1798.100", "is_range": False},
+    {"code": "Civil Code", "section": "1798.150", "action": "amend", "citation": "Section 1798.150", "is_range": False},
+    {"code": "Civil Code", "section": "1798.99.80", "action": "add", "citation": "Section 1798.99.80", "is_range": False},
+]
+
+
+def test_argument_names_the_sections_grouped_and_pluralized(conn):
+    seed = letter_drafts.build_seed(BILL, {"name": "UCSA"}, "support", sections=_SECTIONS)
+
+    assert ("CA SB1159 would amend Sections 1798.100 and 1798.150 of the Civil Code "
+            "and add Section 1798.99.80 of the Civil Code.") in seed["body"]
+
+
+def test_argument_carries_a_summary_line_from_the_description(conn):
+    bill = {**BILL, "description": "An act to require transparency reports from frontier model developers."}
+    seed = letter_drafts.build_seed(bill, {"name": "UCSA"}, "support")
+
+    assert "In summary, An act to require transparency reports from frontier model developers." in seed["body"]
+
+
+def test_support_and_oppose_frame_the_client_case_differently(conn):
+    support = letter_drafts.build_seed(BILL, {"name": "Anthropic"}, "support", sections=_SECTIONS)
+    oppose = letter_drafts.build_seed(BILL, {"name": "Anthropic"}, "oppose", sections=_SECTIONS)
+
+    assert "For Anthropic, this bill would [the specific provision and how it helps" in support["body"]
+    assert "For Anthropic, the provision of concern is [the specific section]" in oppose["body"]
+    # The app never fills the actual rationale — it stays a blank to write into.
+    assert "[" in support["body"].split("Dear Member:")[1]
+
+
+def test_watch_keeps_the_fully_open_prompt_and_no_vote(conn):
+    seed = letter_drafts.build_seed(BILL, {"name": "UCSA"}, "watch", sections=_SECTIONS)
+
+    assert "[Why this bill matters to the client" in seed["body"]
+    assert "vote" not in seed["body"]
+    # Even for watch, the factual sections line is still stated.
+    assert "would amend Sections 1798.100 and 1798.150 of the Civil Code" in seed["body"]
+
+
+def test_no_sections_and_no_description_still_produces_a_frame(conn):
+    seed = letter_drafts.build_seed(BILL, {"name": "UCSA"}, "oppose")
+
+    assert "In summary," not in seed["body"]
+    assert "would amend" not in seed["body"]
+    assert "For UCSA, the provision of concern is" in seed["body"]
+
+
+def test_a_long_description_is_trimmed_at_a_word_boundary(conn):
+    long_desc = "word " * 200
+    bill = {**BILL, "description": long_desc}
+    seed = letter_drafts.build_seed(bill, {"name": "UCSA"}, "support")
+
+    summary = [ln for ln in seed["body"].splitlines() if ln.startswith("In summary,")][0]
+    assert summary.endswith("…")
+    assert len(summary) < 340        # trimmed, not the full 1000 chars
+    assert "word word" in summary    # but real content, cut at a space
+
+
+def test_add_only_bill_reads_as_add_not_amend(conn):
+    sections = [{"code": "Penal Code", "section": "290", "action": "add",
+                 "citation": "Section 290", "is_range": False}]
+    seed = letter_drafts.build_seed(BILL, {"name": "UCSA"}, "support", sections=sections)
+
+    assert "CA SB1159 would add Section 290 of the Penal Code." in seed["body"]
