@@ -114,3 +114,17 @@ def test_rollup_omits_verdict_for_unassigned_bills(conn):
 
     bill = db.list_sponsor_vote_rollup(conn, user_id)[0]["bills"][0]
     assert bill["positions"] == []
+
+
+def test_rollup_votes_carry_their_roll_call_id_for_the_whip_count(conn):
+    # The per-member breakdown is fetched lazily by roll_call_id, so each
+    # vote row has to surface the id the page requests detail with.
+    user_id = insert_user(conn)
+    bill_id = insert_bill(conn)
+    db.flag_bill(conn, user_id, bill_id)
+    _add_sponsor(conn, bill_id)
+    _add_vote(conn, bill_id, yea=40, nay=2, passed=True)
+    conn.commit()
+
+    votes = db.list_sponsor_vote_rollup(conn, user_id)[0]["bills"][0]["votes"]
+    assert votes[0]["roll_call_id"] is not None

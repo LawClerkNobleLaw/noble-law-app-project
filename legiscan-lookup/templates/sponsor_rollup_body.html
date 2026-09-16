@@ -2,7 +2,7 @@
 <div class="page-head">
   <div>
     <h1>Sponsors &amp; votes</h1>
-    <p class="sub">Every legislator who sponsored one of your flagged bills, and whether that bill's own outcome landed with or against the position you took on it. A sponsor can be a committee, not only an individual — LegiScan lists both the same way. <strong>Not shown, because this app doesn't have it:</strong> chamber, district, committee seats, or office contact for a sponsor, and no legislator's own personal vote — LegiScan's vote data here is a chamber-level tally, not a per-person ballot.</p>
+    <p class="sub">Every legislator who sponsored one of your flagged bills, and whether that bill's own outcome landed with or against the position you took on it. A sponsor can be a committee, not only an individual — LegiScan lists both the same way. Expand any roll call to see how each member voted, with their party — where LegiScan has recorded the ballot; it fills in as the daily refresh reaches each bill. <strong>Still not shown:</strong> committee seats or office contact for a legislator, which LegiScan doesn't expose.</p>
   </div>
 </div>
 
@@ -48,8 +48,61 @@ function voteRowHtml(v) {
         Yea ${v.yea || 0} · Nay ${v.nay || 0} · NV ${v.nv || 0} · Absent ${v.absent || 0}
         ${v.passed ? ' <span class="tag">Passed</span>' : ''}
       </div>
+      <button type="button" class="secondary" style="margin-top:0.3rem;font-size:0.75rem"
+              onclick="loadMembers(${v.roll_call_id}, this)">Show member votes</button>
+      <div id="members-${v.roll_call_id}" hidden style="margin-top:0.25rem"></div>
     </div>
   `;
+}
+
+// One member's name and party, as a chip in a vote block. Falls back to
+// the LegiScan people_id when the member roster hasn't named them yet
+// (the LEFT JOIN in db.roll_call_detail keeps the ballot either way).
+function memberName(m) {
+  const name = m.name ? titleCaseName(m.name) : `Member ${m.people_id}`;
+  return escapeText(name + (m.party ? ` (${m.party})` : ''));
+}
+
+// The per-legislator breakdown of one roll call, grouped into blocks so
+// the two sides read as blocks: Yea, then Nay, then anyone who didn't
+// cast one (NV / Absent), each in its own line.
+function membersHtml(members) {
+  if (!members.length) {
+    return '<span class="sub" style="margin:0;font-size:0.78rem">Per-member breakdown not recorded yet — it fills in on the next refresh.</span>';
+  }
+  const groups = {};
+  members.forEach(m => { (groups[m.vote_text] || (groups[m.vote_text] = [])).push(m); });
+  const block = (label, list) => (list && list.length)
+    ? `<div style="margin-top:0.2rem;font-size:0.78rem"><strong>${escapeText(label)} (${list.length})</strong>
+         <span class="sub" style="margin:0">${list.map(memberName).join(', ')}</span></div>`
+    : '';
+  const ordered = ['Yea', 'Nay'];
+  const rest = Object.keys(groups).filter(k => !ordered.includes(k));
+  return [...ordered, ...rest].map(k => block(k, groups[k])).join('');
+}
+
+// Lazy, and cached: the breakdown is a cheap DB read but there's no
+// reason to pull every member of every roll call up front. First click
+// fetches and shows; later clicks just toggle.
+async function loadMembers(rollCallId, btn) {
+  const el = document.getElementById(`members-${rollCallId}`);
+  if (!el.dataset.loaded) {
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/roll-call?roll_call_id=${encodeURIComponent(rollCallId)}`);
+      if (!res.ok) throw new Error('failed');
+      const data = await res.json();
+      el.innerHTML = membersHtml(data.members || []);
+      el.dataset.loaded = '1';
+    } catch (e) {
+      el.innerHTML = '<span class="sub" style="margin:0;font-size:0.78rem">Couldn\'t load member votes.</span>';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  const showing = !el.hidden;
+  el.hidden = showing;
+  btn.textContent = showing ? 'Show member votes' : 'Hide member votes';
 }
 
 // A roll call with no dissent and nobody absent says nothing about

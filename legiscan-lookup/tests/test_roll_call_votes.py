@@ -168,3 +168,53 @@ def test_sync_member_votes_swallows_legiscan_errors(conn, monkeypatch):
     # No exception escapes, and the failed batch leaves nothing half-written.
     refresh_watchlist.sync_member_votes(conn, _bill([1]))
     assert db.roll_calls_with_detail(conn, [1]) == set()
+
+
+# ── roll_call_detail_for_flagged: the org-scoped whip-count read ─────
+
+def _vote_row(conn, roll_call_id, bill_id):
+    conn.execute(
+        "INSERT INTO votes (id, bill_id, chamber, description, yea, nay, nv, absent, total, passed) "
+        "VALUES (?, ?, 'Senate', 'Third reading', 1, 0, 0, 0, 1, 1)",
+        (roll_call_id, bill_id),
+    )
+
+
+def test_roll_call_detail_for_flagged_returns_detail_for_your_bill(conn):
+    from conftest import insert_user
+    user_id = insert_user(conn)
+    insert_bill(conn, bill_id=7)
+    db.flag_bill(conn, user_id, 7)
+    _vote_row(conn, 500, 7)
+    db.store_legiscan_members(conn, [{"people_id": 101, "name": "A. Senator", "party": "D",
+                                      "chamber": "Senate"}], session_id=2172)
+    db.store_roll_call_votes(conn, 500, [{"people_id": 101, "vote_id": 1, "vote_text": "Yea"}])
+    conn.commit()
+
+    detail = db.roll_call_detail_for_flagged(conn, user_id, 500)
+    assert detail and detail[0]["people_id"] == 101 and detail[0]["party"] == "D"
+
+
+def test_roll_call_detail_for_flagged_rejects_a_roll_call_not_on_your_bills(conn):
+    from conftest import insert_user
+    user_id = insert_user(conn)
+    insert_bill(conn, bill_id=8)   # present but NOT flagged by this user
+    _vote_row(conn, 600, 8)
+    db.store_roll_call_votes(conn, 600, [{"people_id": 101, "vote_id": 1, "vote_text": "Yea"}])
+    conn.commit()
+
+    # None (route 404s), even though the detail exists — it isn't their bill.
+    assert db.roll_call_detail_for_flagged(conn, user_id, 600) is None
+
+
+def test_roll_call_detail_for_flagged_empty_when_detail_not_ingested(conn):
+    from conftest import insert_user
+    user_id = insert_user(conn)
+    insert_bill(conn, bill_id=9)
+    db.flag_bill(conn, user_id, 9)
+    _vote_row(conn, 700, 9)        # a known roll call, but no roll_call_votes yet
+    conn.commit()
+
+    # Empty list, not None: the roll call is theirs, the ballots just
+    # haven't been fetched yet.
+    assert db.roll_call_detail_for_flagged(conn, user_id, 700) == []
