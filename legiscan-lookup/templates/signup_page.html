@@ -32,7 +32,12 @@
           <input id="password" type="password" autocomplete="new-password" required minlength="8" style="width:100%">
           <button type="button" id="toggle-password" class="secondary" aria-pressed="false" aria-label="Show password" style="flex:none">Show</button>
         </div>
-        <div class="sub" id="password-hint" style="margin:0.3rem 0 0;font-size:0.78rem">8+ characters, with an uppercase letter, a lowercase letter, a number, and a special character</div>
+        <div class="sub" id="password-hint" style="margin:0.3rem 0 0;font-size:0.78rem">8+ characters</div>
+      </label>
+      <label style="flex:1 1 100%">
+        <div class="field-label">Confirm password <span class="req" aria-hidden="true">*</span></div>
+        <input id="password-confirm" type="password" autocomplete="new-password" required minlength="8" style="width:100%">
+        <div class="sub" id="confirm-hint" style="margin:0.3rem 0 0;font-size:0.78rem">Re-enter your password</div>
       </label>
       <button type="submit" class="auth-submit">Continue →</button>
     </form>
@@ -60,13 +65,11 @@ togglePasswordBtn.addEventListener('click', () => {
 });
 /* U5: the hint resolves as you type.
  *
- * The rule is the "8-4 rule": 8+ characters and all four character
- * classes. The only server-side enforcement is accounts.password_problem
- * plus a round trip, so — as with the old length-only hint — the one flow
- * every user completes exactly once could otherwise end in a rejected
- * submit for a rule that was on screen the whole time. Each requirement is
- * checked live and the still-missing ones are named; the server rejects
- * with the same rule (accounts.PASSWORD_RULE) if a user submits early.
+ * "8+ characters" was static text, and the only enforcement was
+ * minlength plus a server round trip — so the one flow every user
+ * completes exactly once could end in a rejected submit for a rule
+ * that was on screen the whole time. The message stays word-for-word
+ * what the server says; only its state changes.
  *
  * aria-live is deliberately absent: the hint is already the input's
  * description, and announcing on every keystroke would talk over the
@@ -74,27 +77,41 @@ togglePasswordBtn.addEventListener('click', () => {
  * server's identical sentence if they submit early anyway.
  */
 const passwordHint = document.getElementById('password-hint');
-const PASSWORD_CHECKS = [
-  [v => v.length >= 8, '8+ characters'],
-  [v => /[A-Z]/.test(v), 'an uppercase letter'],
-  [v => /[a-z]/.test(v), 'a lowercase letter'],
-  [v => /[0-9]/.test(v), 'a number'],
-  [v => /[^A-Za-z0-9]/.test(v), 'a special character'],
-];
+const MIN_PASSWORD = 8;
 passwordInput.setAttribute('aria-describedby', 'password-hint');
 passwordInput.addEventListener('input', () => {
-  const v = passwordInput.value;
-  if (!v) {
+  const len = passwordInput.value.length;
+  if (!len) {
     passwordHint.className = 'sub';
-    passwordHint.textContent = '8+ characters, with an uppercase letter, a lowercase letter, a number, and a special character';
+    passwordHint.textContent = '8+ characters';
     return;
   }
-  const missing = PASSWORD_CHECKS.filter(([test]) => !test(v)).map(([, label]) => label);
-  passwordHint.className = missing.length ? 'sub hint-unmet' : 'sub hint-met';
-  passwordHint.textContent = missing.length
-    ? `Still needs: ${missing.join(', ')}`
-    : '✓ Meets all requirements';
+  const ok = len >= MIN_PASSWORD;
+  passwordHint.className = ok ? 'sub hint-met' : 'sub hint-unmet';
+  passwordHint.textContent = ok
+    ? '✓ 8+ characters'
+    : `${MIN_PASSWORD - len} more character${MIN_PASSWORD - len === 1 ? '' : 's'} to go`;
 });
+
+/* The confirm field mirrors the password hint: it resolves live so the
+ * one-time signup flow never bounces off a mismatch only at submit. The
+ * message describes state, and aria-live stays absent for the same
+ * reason as the password hint — the input's description is enough. */
+const confirmInput = document.getElementById('password-confirm');
+const confirmHint = document.getElementById('confirm-hint');
+confirmInput.setAttribute('aria-describedby', 'confirm-hint');
+function refreshConfirmHint() {
+  if (!confirmInput.value) {
+    confirmHint.className = 'sub';
+    confirmHint.textContent = 'Re-enter your password';
+    return;
+  }
+  const match = confirmInput.value === passwordInput.value;
+  confirmHint.className = match ? 'sub hint-met' : 'sub hint-unmet';
+  confirmHint.textContent = match ? '✓ Passwords match' : 'Passwords don’t match yet';
+}
+confirmInput.addEventListener('input', refreshConfirmHint);
+passwordInput.addEventListener('input', refreshConfirmHint);
 
 const form = document.getElementById('f');
 const errorEl = document.getElementById('error');
@@ -104,6 +121,13 @@ form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const email = document.getElementById('email').value.trim();
   const password = document.getElementById('password').value;
+  const confirm = confirmInput.value;
+
+  if (password !== confirm) {
+    errorEl.textContent = 'Passwords don’t match.';
+    errorEl.className = 'show';
+    return;
+  }
 
   errorEl.className = ''; loadingEl.className = 'show';
   form.querySelector('button').disabled = true;
