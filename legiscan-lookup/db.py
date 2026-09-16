@@ -1298,7 +1298,8 @@ def list_sponsor_vote_rollup(conn, user_id):
 
     votes_by_bill = {}
     for r in conn.execute(
-        f"""SELECT v.bill_id, v.date, v.chamber, v.description, v.yea, v.nay, v.nv, v.absent, v.total, v.passed
+        f"""SELECT v.id AS roll_call_id, v.bill_id, v.date, v.chamber, v.description,
+                  v.yea, v.nay, v.nv, v.absent, v.total, v.passed
            FROM votes v
            JOIN flagged_bills f ON f.bill_id = v.bill_id
               AND {_org_scope("f.user_id")} AND f.archived_at IS NULL
@@ -1439,6 +1440,29 @@ def roll_call_detail(conn, roll_call_id):
         (roll_call_id,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def roll_call_detail_for_flagged(conn, user_id, roll_call_id):
+    """roll_call_detail, but only for a roll call on a bill this user's
+    org has flagged — the read behind /api/roll-call. The ballots
+    themselves are public record, but gating the endpoint to the user's
+    own bills keeps it from being a generic enumeration dump, the same
+    org-scoping every other read on this page applies.
+
+    Returns None when the roll call isn't on one of their flagged bills
+    (the route 404s); an empty list means the roll call is theirs but its
+    per-member detail hasn't been ingested yet (it fills in on the next
+    refresh — see sync_member_votes)."""
+    owned = conn.execute(
+        f"""SELECT 1 FROM votes v
+              JOIN flagged_bills f ON f.bill_id = v.bill_id
+                 AND {_org_scope("f.user_id")} AND f.archived_at IS NULL
+             WHERE v.id = ? LIMIT 1""",
+        (user_id, roll_call_id),
+    ).fetchone()
+    if not owned:
+        return None
+    return roll_call_detail(conn, roll_call_id)
 
 
 # ── The Legislature's deadline calendar (see deadlines.py) ─────────

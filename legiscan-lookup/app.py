@@ -2725,6 +2725,31 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             return
 
+        # The per-legislator breakdown of one roll call — the whip count
+        # behind a vote row on the Sponsors & votes page. Fetched on demand
+        # (a cheap DB read, no LegiScan call) rather than loaded into the
+        # rollup up front, which would be every member of every roll call.
+        if parsed.path == "/api/roll-call":
+            roll_call_id = (qs.get("roll_call_id") or [""])[0]
+            try:
+                roll_call_id = int(roll_call_id)
+            except ValueError:
+                self._send_json(400, {"error": "roll_call_id must be a number."})
+                return
+            conn = db.get_connection()
+            try:
+                user_id = self._require_user_for_api(conn, "Sign in to view member votes.")
+                if not user_id:
+                    return
+                members = db.roll_call_detail_for_flagged(conn, user_id, roll_call_id)
+                if members is None:
+                    self._send_json(404, {"error": "No such roll call on your flagged bills."})
+                    return
+                self._send_json(200, {"members": members})
+            finally:
+                conn.close()
+            return
+
         # ── Clients and the Capitol directory ───────────────────────────────
         if parsed.path == "/clients":
             if not self._require_user_for_page():
